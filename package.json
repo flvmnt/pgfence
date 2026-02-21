@@ -5,8 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "pgfence": "dist/index.js",
-    "pgfence-agent": "dist/agent/index.js"
+    "pgfence": "dist/index.js"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",

@@ -41,7 +41,7 @@ describe('CLI tests', () => {
         }
     });
 
-    it('handles optional cloud CLI arguments properly and parses --stats-file', async () => {
+    it('parses --stats-file for size-aware risk scoring', async () => {
         const fs = await import('node:fs/promises');
         const fixture = path.join(process.cwd(), 'tests', 'fixtures', 'safe-migration.sql');
         await fs.writeFile('test-stats.json', JSON.stringify([{ schemaName: "public", tableName: "test", rowCount: 1, totalBytes: 1 }]));

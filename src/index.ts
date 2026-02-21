@@ -8,14 +8,12 @@
 
 import { readFile } from 'node:fs/promises';
 import { Command } from 'commander';
-import { RISK_ORDER } from './analyzer.js';
+import { analyze, RISK_ORDER } from './analyzer.js';
 import { reportCLI } from './reporters/cli.js';
 import { reportJSON } from './reporters/json.js';
 import { reportGitHub } from './reporters/github-pr.js';
 import { RiskLevel } from './types.js';
 import type { PgfenceConfig, TableStats } from './types.js';
-import type { PgfenceCloudConfig } from './cloud/types.js';
-import { analyzeWithCloud } from './cloud/hooks.js';
 
 function parseRiskLevel(value: string): RiskLevel {
   const upper = value.toUpperCase() as RiskLevel;
@@ -45,12 +43,6 @@ program
   .option('--ci', 'CI mode — exit 1 if max risk exceeded', false)
   .option('--no-lock-timeout', 'Disable lock_timeout requirement')
   .option('--no-statement-timeout', 'Disable statement_timeout requirement')
-  .option('--api-key <key>', 'pgfence Cloud API key (or PGFENCE_API_KEY env)')
-  .option('--api-url <url>', 'pgfence Cloud API URL', 'https://api.pgfence.dev')
-  .option('--sync', 'Sync results to pgfence Cloud')
-  .option('--fetch-policies', 'Fetch org policies from cloud')
-  .option('--require-approval', 'Require cloud approval for HIGH+ risk')
-  .option('--force', 'Bypass approval requirement (logged as bypass)')
   .action(async (files: string[], opts) => {
     // Load stats file if provided (alternative to --db-url)
     let tableStats: TableStats[] | undefined;
@@ -60,7 +52,7 @@ program
       tableStats = Array.isArray(parsed) ? parsed : parsed.tables ?? parsed;
     }
 
-    const config: PgfenceCloudConfig = {
+    const config: PgfenceConfig = {
       format: opts.format as PgfenceConfig['format'],
       output: opts.output as PgfenceConfig['output'],
       dbUrl: opts.dbUrl,
@@ -69,22 +61,10 @@ program
       maxAllowedRisk: parseRiskLevel(opts.maxRisk),
       requireLockTimeout: opts.lockTimeout !== false,
       requireStatementTimeout: opts.statementTimeout !== false,
-      ...(opts.apiKey || opts.sync || opts.fetchPolicies || opts.requireApproval
-        ? {
-            auth: { apiKey: opts.apiKey },
-            cloud: {
-              apiUrl: opts.apiUrl ?? 'https://api.pgfence.dev',
-              syncResults: opts.sync ?? false,
-              fetchPolicies: opts.fetchPolicies ?? false,
-              requireApproval: opts.requireApproval ?? false,
-              force: opts.force ?? false,
-            },
-          }
-        : {}),
     };
 
     try {
-      const { results } = await analyzeWithCloud(files, config);
+      const results = await analyze(files, config);
 
       // Output
       switch (config.output) {
