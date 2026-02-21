@@ -85,13 +85,24 @@ pnpm add -g pgfence
 
 ## Usage
 
-### Install pre-commit hook
+### Install pre-commit or pre-push hook
 
-Prevent footguns locally before pushing by installing a git hook:
+Prevent footguns locally before committing or pushing by installing a git hook.
+
+To install a **pre-commit** hook:
 ```bash
 pgfence init
 ```
 *(Automatically detects `.husky/` or `.git/hooks/` and creates a pre-commit hook.)*
+
+If you prefer to run checks only when pushing to remote, simply rename the generated file:
+```bash
+# Standard Git
+mv .git/hooks/pre-commit .git/hooks/pre-push
+
+# Husky
+mv .husky/pre-commit .husky/pre-push
+```
 
 ### Analyze SQL migrations
 
