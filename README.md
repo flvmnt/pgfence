@@ -59,16 +59,17 @@ Safe Rewrites:
 Analyzed: 2 statements  |  Unanalyzable: 0  |  Coverage: 100%
 ```
 
-## Why pgfence Wins
+## Alternatives
 
-| Feature | pgfence | Squawk | Eugene | strong_migrations |
-|---------|---------|--------|--------|-------------------|
-| Language | TypeScript | Rust | Rust | Ruby |
-| Multi-ORM extraction | SQL, TypeORM, Prisma, Knex | SQL only | SQL only | ActiveRecord only |
-| Safe rewrite recipes | Full expand/contract sequences | No | No | Partial |
-| DB-size-aware scoring | Via `--stats-file` or `--db-url` | No | No | No |
-| Lock mode transparency | Every statement mapped | Partial | Yes | No |
-| CI integration | `--ci` flag + GitHub PR output | GitHub Action | CLI | Gem |
+Other tools in this space worth knowing about:
+
+| Tool | Language | Focus |
+|------|----------|-------|
+| [Squawk](https://github.com/sbdchd/squawk) | Rust | SQL linter with GitHub Action |
+| [Eugene](https://github.com/kaaveland/eugene) | Rust | DDL lint + trace modes |
+| [strong_migrations](https://github.com/ankane/strong_migrations) | Ruby | Rails/ActiveRecord migration checks |
+
+pgfence focuses on the Node.js/TypeScript ecosystem with direct ORM extraction (TypeORM, Prisma, Knex), DB-size-aware risk scoring, and copy-paste-ready safe rewrite recipes.
 
 ## Installation
 
@@ -151,35 +152,65 @@ pgfence analyze --ci --max-risk medium migrations/*.sql
 
 ## What It Catches
 
-pgfence checks 15 DDL patterns against Postgres's lock mode semantics:
+pgfence checks 28 DDL patterns against Postgres's lock mode semantics:
+
+### Lock & Safety Checks
 
 | # | Pattern | Lock Mode | Risk | Safe Alternative |
 |---|---------|-----------|------|------------------|
 | 1 | `ADD COLUMN ... NOT NULL` (no DEFAULT) | ACCESS EXCLUSIVE | HIGH | Add nullable, backfill, SET NOT NULL |
 | 2 | `ADD COLUMN ... DEFAULT <volatile>` | ACCESS EXCLUSIVE | HIGH | Add without default, backfill in batches |
 | 3 | `ADD COLUMN ... DEFAULT <constant>` (PG11+) | ACCESS EXCLUSIVE (instant) | LOW | Safe on PG11+ (metadata-only) |
-| 4 | `CREATE INDEX` (non-concurrent) | SHARE | MEDIUM | `CREATE INDEX CONCURRENTLY` |
-| 5 | `DROP INDEX` (non-concurrent) | ACCESS EXCLUSIVE | MEDIUM | `DROP INDEX CONCURRENTLY` |
-| 6 | `ALTER COLUMN TYPE` | ACCESS EXCLUSIVE | HIGH | Expand/contract pattern |
-| 7 | `ALTER COLUMN SET NOT NULL` | ACCESS EXCLUSIVE | MEDIUM | CHECK constraint NOT VALID + validate |
-| 8 | `ADD CONSTRAINT ... FOREIGN KEY` | ACCESS EXCLUSIVE | HIGH | NOT VALID + VALIDATE CONSTRAINT |
-| 9 | `ADD CONSTRAINT ... CHECK` | ACCESS EXCLUSIVE | MEDIUM | NOT VALID + VALIDATE CONSTRAINT |
-| 10 | `ADD CONSTRAINT ... UNIQUE` | ACCESS EXCLUSIVE | HIGH | CONCURRENTLY unique index + USING INDEX |
-| 11 | `DROP TABLE` | ACCESS EXCLUSIVE | CRITICAL | Separate release |
-| 12 | `TRUNCATE` | ACCESS EXCLUSIVE | CRITICAL | Batched DELETE |
-| 13 | `ADD CONSTRAINT ... EXCLUDE` | ACCESS EXCLUSIVE | HIGH | Build index concurrently first |
-| 14 | `RENAME COLUMN` | ACCESS EXCLUSIVE | LOW | Instant on PG14+ |
-| 15 | `VACUUM FULL` | ACCESS EXCLUSIVE | HIGH | Use pg_repack |
+| 4 | `ADD COLUMN ... GENERATED STORED` | ACCESS EXCLUSIVE | HIGH | Add regular column + trigger + backfill |
+| 5 | `CREATE INDEX` (non-concurrent) | SHARE | MEDIUM | `CREATE INDEX CONCURRENTLY` |
+| 6 | `DROP INDEX` (non-concurrent) | ACCESS EXCLUSIVE | MEDIUM | `DROP INDEX CONCURRENTLY` |
+| 7 | `ALTER COLUMN TYPE` | ACCESS EXCLUSIVE | HIGH | Expand/contract pattern |
+| 8 | `ALTER COLUMN SET NOT NULL` | ACCESS EXCLUSIVE | MEDIUM | CHECK constraint NOT VALID + validate |
+| 9 | `ADD CONSTRAINT ... FOREIGN KEY` | ACCESS EXCLUSIVE | HIGH | NOT VALID + VALIDATE CONSTRAINT |
+| 10 | `ADD CONSTRAINT ... CHECK` | ACCESS EXCLUSIVE | MEDIUM | NOT VALID + VALIDATE CONSTRAINT |
+| 11 | `ADD CONSTRAINT ... UNIQUE` | ACCESS EXCLUSIVE | HIGH | CONCURRENTLY unique index + USING INDEX |
+| 12 | `ADD CONSTRAINT ... EXCLUDE` | ACCESS EXCLUSIVE | HIGH | Build index concurrently first |
+| 13 | `DROP TABLE` | ACCESS EXCLUSIVE | CRITICAL | Separate release |
+| 14 | `DROP COLUMN` | ACCESS EXCLUSIVE | HIGH | Remove app references first, then drop |
+| 15 | `TRUNCATE` | ACCESS EXCLUSIVE | CRITICAL | Batched DELETE |
+| 16 | `TRUNCATE ... CASCADE` | ACCESS EXCLUSIVE | CRITICAL | Explicit per-table truncate or batched DELETE |
+| 17 | `RENAME COLUMN` | ACCESS EXCLUSIVE | LOW | Instant on PG14+ |
+| 18 | `RENAME TABLE` | ACCESS EXCLUSIVE | HIGH | Rename + create view for backwards compat |
+| 19 | `VACUUM FULL` | ACCESS EXCLUSIVE | HIGH | Use pg_repack |
+
+### Data Type Best Practices
+
+| # | Pattern | Risk | Suggestion |
+|---|---------|------|------------|
+| 20 | `ADD COLUMN ... json` | LOW | Use `jsonb` — json has no equality operator |
+| 21 | `ADD COLUMN ... serial` | MEDIUM | Use `GENERATED ALWAYS AS IDENTITY` |
+| 22 | `integer` / `int` columns | LOW | Use `bigint` to avoid future overflow + rewrite |
+| 23 | `varchar(N)` columns | LOW | Use `text` — changing varchar length requires ACCESS EXCLUSIVE |
+| 24 | `timestamp` without time zone | LOW | Use `timestamptz` to avoid timezone bugs |
+
+### Transaction & Policy Checks
+
+| # | Pattern | Severity |
+|---|---------|----------|
+| 25 | NOT VALID + VALIDATE CONSTRAINT in same transaction | error |
+| 26 | Multiple ACCESS EXCLUSIVE statements compounding | warning |
+| 27 | `CREATE INDEX CONCURRENTLY` inside transaction | error |
+| 28 | Bulk `UPDATE` without `WHERE` in migration | warning |
 
 ## Policy Checks
 
 Beyond DDL analysis, pgfence enforces operational best practices:
 
-- **Missing `SET lock_timeout`** — every migration should set a lock timeout to prevent lock queue death spirals
-- **Missing `SET statement_timeout`** — long operations need a safety net
-- **`CREATE INDEX CONCURRENTLY` inside transaction** — will fail; must run outside tx
-- **`SET application_name`** — recommended for `pg_stat_activity` visibility
-- **`SET idle_in_transaction_session_timeout`** — prevents orphaned locks
+- **Missing `SET lock_timeout`** — prevents lock queue death spirals
+- **Missing `SET statement_timeout`** — safety net for long operations
+- **Missing `SET application_name`** — enables `pg_stat_activity` visibility
+- **Missing `SET idle_in_transaction_session_timeout`** — prevents orphaned locks
+- **`CREATE INDEX CONCURRENTLY` inside transaction** — will fail at runtime
+- **NOT VALID + VALIDATE in same transaction** — defeats the purpose of NOT VALID
+- **Multiple ACCESS EXCLUSIVE statements** — compounding lock duration
+- **Bulk `UPDATE` without `WHERE`** — should run out-of-band in batches
+- **Inline ignore** — `-- pgfence: ignore <ruleId>` to suppress specific checks
+- **Visibility logic** — skips warnings for tables created in the same migration
 
 ## Safe Rewrite Recipes
 
