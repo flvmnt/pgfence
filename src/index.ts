@@ -8,7 +8,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { Command } from 'commander';
-import { analyze, RISK_ORDER } from './analyzer.js';
+import { RISK_ORDER } from './analyzer.js';
 import { reportCLI } from './reporters/cli.js';
 import { reportJSON } from './reporters/json.js';
 import { reportGitHub } from './reporters/github-pr.js';

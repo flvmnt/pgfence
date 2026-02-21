@@ -6,7 +6,7 @@
 
 import chalk from 'chalk';
 import Table from 'cli-table3';
-import type { AnalysisResult, CheckResult, PolicyViolation } from '../types.js';
+import type { AnalysisResult, CheckResult } from '../types.js';
 import { RiskLevel } from '../types.js';
 
 function riskColor(risk: RiskLevel): (s: string) => string {
