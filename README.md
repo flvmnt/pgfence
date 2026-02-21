@@ -117,11 +117,23 @@ pgfence analyze migrations/*  # detects format from file content
 
 ### DB-size-aware risk scoring
 
+You can provide table stats in two ways:
+
+- **Live connection** — pgfence connects to your database and queries `pg_stat_user_tables`:
+
 ```bash
 pgfence analyze --db-url postgres://readonly@replica:5432/mydb migrations/*.sql
 ```
 
-When connected to a database, pgfence reads `pg_stat_user_tables` to adjust risk levels:
+- **Stats snapshot file** — use a pre-generated JSON file (e.g. from your CI) so pgfence never needs DB credentials:
+
+```bash
+pgfence analyze --stats-file pgfence-stats.json migrations/*.sql
+```
+
+If both `--db-url` and `--stats-file` are provided, `--db-url` is used and the stats file is ignored.
+
+When stats are available (from either source), pgfence adjusts risk levels as follows:
 
 | Table Size | Risk Adjustment |
 |-----------|----------------|
