@@ -36,5 +36,6 @@ fi
 
 # Standard checks
 pnpm typecheck
+pnpm lint
 pnpm test
 echo "pgfence pre-push: all checks passed"
