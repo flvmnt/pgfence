@@ -5,6 +5,9 @@
  * - ADD COLUMN ... NOT NULL without DEFAULT (fails on non-empty table)
  * - ADD COLUMN with non-constant DEFAULT (table rewrite)
  * - ADD COLUMN with constant DEFAULT (instant on PG11+, LOW risk)
+ * - ADD COLUMN with type json instead of jsonb (common mistake)
+ * - ADD COLUMN with serial/bigserial instead of IDENTITY (deprecated pseudo-type)
+ * - ADD COLUMN with GENERATED ALWAYS AS ... STORED (table rewrite)
  *
  * Default detection strategy (per user feedback):
  * - Only A_Const and TypeCast(A_Const) are treated as "constant" (safe on PG11+)
@@ -17,16 +20,24 @@ import type { CheckResult, PgfenceConfig } from '../types.js';
 import { LockMode, RiskLevel, getBlockedOperations } from '../types.js';
 import { makePreview } from '../parser.js';
 
+interface TypeName {
+  names: Array<{ String: { sval: string } }>;
+  typmods?: unknown[];
+  typemod: number;
+}
+
 interface AlterTableCmd {
   AlterTableCmd: {
     subtype: string;
     def?: {
       ColumnDef?: {
         colname: string;
+        typeName?: TypeName;
         constraints?: Array<{
           Constraint: {
             contype: string;
             raw_expr?: Record<string, unknown>;
+            generated_when?: string;
           };
         }>;
       };
@@ -161,9 +172,85 @@ export function checkAddColumn(
       // Already flagged for non-constant default above, the NOT NULL compounds the issue
       // but we don't double-flag — the non-constant default recipe covers it
     }
+
+    // Type-specific checks on ADD COLUMN
+    const typeName = getTypeName(colDef.typeName);
+
+    // ADD COLUMN with json type — should use jsonb instead
+    if (typeName === 'json') {
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.LOW,
+        message: `ADD COLUMN "${colDef.colname}" with type json — use jsonb instead. json has no equality operator, cannot be used in GROUP BY, and is generally slower`,
+        ruleId: 'add-column-json',
+        appliesToNewTables: true,
+      });
+    }
+
+    // ADD COLUMN with serial/bigserial — should use IDENTITY instead
+    const serialTypes = ['serial', 'serial4', 'serial8', 'bigserial', 'smallserial', 'serial2'];
+    if (serialTypes.includes(typeName)) {
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.MEDIUM,
+        message: `ADD COLUMN "${colDef.colname}" with ${typeName} — use GENERATED ALWAYS AS IDENTITY instead. SERIAL creates an implicit sequence with unexpected ownership/permission semantics`,
+        ruleId: 'add-column-serial',
+        appliesToNewTables: true,
+        safeRewrite: {
+          description: 'Use IDENTITY columns (SQL standard) instead of SERIAL pseudo-types',
+          steps: [
+            `ALTER TABLE ${tableName} ADD COLUMN ${colDef.colname} ${typeName === 'bigserial' || typeName === 'serial8' ? 'bigint' : 'integer'} GENERATED ALWAYS AS IDENTITY;`,
+          ],
+        },
+      });
+    }
+
+    // ADD COLUMN with GENERATED ALWAYS AS ... STORED — table rewrite
+    const hasStoredGenerated = constraints.some(
+      (con) => con.Constraint.contype === 'CONSTR_GENERATED',
+    );
+    if (hasStoredGenerated) {
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.HIGH,
+        message: `ADD COLUMN "${colDef.colname}" with GENERATED ALWAYS AS ... STORED — causes a full table rewrite under ACCESS EXCLUSIVE lock`,
+        ruleId: 'add-column-stored-generated',
+        safeRewrite: {
+          description: 'Add a regular column, create a trigger to compute the value, backfill in batches',
+          steps: [
+            `-- 1. Add a regular column:`,
+            `ALTER TABLE ${tableName} ADD COLUMN ${colDef.colname} <type>;`,
+            `-- 2. Create a trigger to compute the value for new rows`,
+            `-- 3. Backfill existing rows out-of-band in batches`,
+          ],
+        },
+      });
+    }
   }
 
   return results;
+}
+
+/**
+ * Extract the final type name string from a TypeName AST node.
+ * Handles both qualified (pg_catalog.int4) and unqualified (json) forms.
+ */
+function getTypeName(tn?: TypeName): string {
+  if (!tn?.names?.length) return '';
+  // Last name entry is the actual type (first may be schema like pg_catalog)
+  return tn.names[tn.names.length - 1]?.String?.sval ?? '';
 }
 
 /**
