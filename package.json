@@ -1,5 +1,5 @@
 {
-  "name": "pgfence",
+  "name": "@flvmnt/pgfence",
   "version": "0.1.0",
   "description": "Postgres migration safety CLI — lock mode analysis, risk scoring, and safe rewrite recipes",
   "type": "module",
@@ -34,7 +34,6 @@
     "schema"
   ],
   "license": "UNLICENSED",
-  "private": true,
   "engines": {
     "node": ">=20"
   },
