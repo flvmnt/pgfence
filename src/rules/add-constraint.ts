@@ -5,6 +5,7 @@
  * - FOREIGN KEY without NOT VALID (ACCESS EXCLUSIVE on both tables)
  * - CHECK constraint without NOT VALID (ACCESS EXCLUSIVE + scan)
  * - UNIQUE constraint (ACCESS EXCLUSIVE, full table scan)
+ * - PRIMARY KEY without USING INDEX (ACCESS EXCLUSIVE, full table scan)
  * - EXCLUDE constraint (ACCESS EXCLUSIVE)
  *
  * Detection key from AST probe:
@@ -136,6 +137,27 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
             steps: [
               `CREATE UNIQUE INDEX CONCURRENTLY ${conName}_idx ON ${tableName}(...);`,
               `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} UNIQUE USING INDEX ${conName}_idx;`,
+            ],
+          },
+        });
+        break;
+      }
+
+      case 'CONSTR_PRIMARY': {
+        results.push({
+          statement: stmt.sql,
+          statementPreview: makePreview(stmt.sql),
+          tableName,
+          lockMode: LockMode.ACCESS_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          risk: RiskLevel.HIGH,
+          message: `ADD PRIMARY KEY "${conName}" without USING INDEX — acquires ACCESS EXCLUSIVE lock with full table scan`,
+          ruleId: 'add-pk-without-using-index',
+          safeRewrite: {
+            description: 'Create unique index concurrently, then add primary key using the index',
+            steps: [
+              `CREATE UNIQUE INDEX CONCURRENTLY ${conName}_idx ON ${tableName}(...);`,
+              `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} PRIMARY KEY USING INDEX ${conName}_idx;`,
             ],
           },
         });
