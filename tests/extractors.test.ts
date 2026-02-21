@@ -3,6 +3,8 @@ import { extractRawSQL } from '../src/extractors/raw-sql.js';
 import { extractPrismaSQL } from '../src/extractors/prisma.js';
 import { extractTypeORMSQL } from '../src/extractors/typeorm.js';
 import { extractKnexSQL } from '../src/extractors/knex.js';
+import { extractDrizzleSQL } from '../src/extractors/drizzle.js';
+import { extractSequelizeSQL } from '../src/extractors/sequelize.js';
 import path from 'path';
 
 const fixturesDir = path.join(process.cwd(), 'tests', 'fixtures');
@@ -77,5 +79,37 @@ describe('Extractor: Knex', () => {
         const result = await extractKnexSQL(filePath);
         expect(result.warnings).toHaveLength(1);
         expect(result.warnings[0].message).toContain('No up()');
+    });
+});
+
+describe('Extractor: Drizzle', () => {
+    it('should extract SQL correctly', async () => {
+        const filePath = path.join(fixturesDir, 'drizzle-safe.sql');
+        const result = await extractDrizzleSQL(filePath);
+        expect(result.warnings).toHaveLength(0);
+        expect(result.sql).toContain('ALTER TABLE users ADD COLUMN is_active');
+    });
+});
+
+describe('Extractor: Sequelize', () => {
+    it('should extract SQL from queryInterface.sequelize.query', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-safe.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.sql).toContain('CREATE INDEX idx_users_email');
+        expect(result.sql).toContain('DROP INDEX'); // Right now we extract all, up and down.
+    });
+
+    it('should warn on dynamic SQL', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-dynamic.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.warnings.length).toBeGreaterThan(0);
+        expect(result.warnings[0].message).toContain('Dynamic SQL');
+    });
+
+    it('should warn if no queryInterface.sequelize.query is found', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-no-query.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.warnings).toHaveLength(1);
+        expect(result.warnings[0].message).toContain('No queryInterface.sequelize.query() calls found');
     });
 });

@@ -24,6 +24,7 @@ import { checkBestPractices } from './rules/best-practices.js';
 import { checkPreferRobustStmts } from './rules/prefer-robust-stmts.js';
 import { checkPolicies } from './rules/policy.js';
 import { fetchTableStats } from './db-stats.js';
+import { getCloudHooks } from './cloud-hooks.js';
 import type {
   AnalysisResult,
   CheckResult,
@@ -76,6 +77,11 @@ export async function analyze(
   filePaths: string[],
   config: PgfenceConfig,
 ): Promise<AnalysisResult[]> {
+  const hooks = await getCloudHooks();
+  if (hooks.onAnalysisStart) {
+    await hooks.onAnalysisStart(filePaths, config);
+  }
+
   // Fetch DB stats once if needed (--db-url takes precedence, then --stats-file)
   let tableStatsMap: Map<string, TableStats> | null = null;
   let allTableStats: TableStats[] | undefined;
@@ -161,6 +167,10 @@ export async function analyze(
     });
   }
 
+  if (hooks.onAnalysisComplete) {
+    await hooks.onAnalysisComplete(results, config);
+  }
+
   return results;
 }
 
@@ -186,6 +196,10 @@ export function detectFormat(filePath: string, content: string): PgfenceConfig['
     if (filePath.includes('prisma/migrations') || filePath.includes('prisma\\migrations')) {
       return 'prisma';
     }
+    // Check if it's inside a drizzle directory
+    if (filePath.includes('drizzle') || filePath.includes('drizzle')) {
+      return 'drizzle';
+    }
     return 'sql';
   }
 
@@ -200,9 +214,13 @@ export function detectFormat(filePath: string, content: string): PgfenceConfig['
     if (hasKnexRef || hasKnexExport) {
       return 'knex';
     }
+    // Check for Sequelize markers
+    if (content.includes('queryInterface')) {
+      return 'sequelize';
+    }
     throw new Error(
       `Cannot auto-detect migration format for ${filePath}. ` +
-      `No TypeORM (MigrationInterface/queryRunner.query) or Knex (knex.raw/exports.up) markers found. ` +
+      `No TypeORM (MigrationInterface, queryRunner), Knex (knex.raw), or Sequelize (queryInterface) markers found. ` +
       `Use --format to specify explicitly.`,
     );
   }
@@ -240,6 +258,14 @@ async function extractSQL(
     case 'knex': {
       const { extractKnexSQL } = await import('./extractors/knex.js');
       return extractKnexSQL(filePath);
+    }
+    case 'drizzle': {
+      const { extractDrizzleSQL } = await import('./extractors/drizzle.js');
+      return extractDrizzleSQL(filePath);
+    }
+    case 'sequelize': {
+      const { extractSequelizeSQL } = await import('./extractors/sequelize.js');
+      return extractSequelizeSQL(filePath);
     }
     default:
       throw new Error(`Unknown format: ${format}`);

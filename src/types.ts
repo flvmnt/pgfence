@@ -120,7 +120,7 @@ export interface PgfenceConfig {
   /** Output format */
   output: 'cli' | 'json' | 'github';
   /** Migration file format */
-  format: 'sql' | 'typeorm' | 'prisma' | 'knex' | 'auto';
+  format: 'sql' | 'typeorm' | 'prisma' | 'knex' | 'drizzle' | 'sequelize' | 'auto';
 }
 
 /**
