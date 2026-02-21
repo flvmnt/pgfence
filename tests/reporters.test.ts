@@ -4,22 +4,23 @@ import { reportCLI } from '../src/reporters/cli.js';
 import { reportGitHub } from '../src/reporters/github-pr.js';
 import { AnalysisResult, RiskLevel, LockMode } from '../src/types.js';
 
+const mockCheck: AnalysisResult['checks'][0] = {
+    statement: 'ALTER TABLE users ADD COLUMN foo BOOLEAN;',
+    statementPreview: 'ALTER TABLE users ADD COLUMN foo',
+    tableName: 'users',
+    lockMode: LockMode.ACCESS_EXCLUSIVE,
+    blocks: { reads: true, writes: true, otherDdl: true },
+    risk: RiskLevel.HIGH,
+    message: 'Adding a column can be dangerous',
+    ruleId: 'add-column-not-null-no-default',
+};
+
 const mockResults: AnalysisResult[] = [
     {
         filePath: 'test.sql',
-        format: 'sql',
         statementCount: 1,
         extractionWarnings: [],
-        checks: [
-            {
-                ruleId: 'add-column',
-                lockMode: LockMode.ACCESS_EXCLUSIVE,
-                blocks: { reads: true, writes: true, otherDdl: true },
-                risk: RiskLevel.HIGH,
-                statementPreview: 'ALTER TABLE users ADD COLUMN foo',
-                message: 'Adding a column can be dangerous',
-            },
-        ],
+        checks: [mockCheck],
         policyViolations: [
             {
                 ruleId: 'missing-lock-timeout',
@@ -29,7 +30,6 @@ const mockResults: AnalysisResult[] = [
             },
         ],
         maxRisk: RiskLevel.HIGH,
-        timeMs: 10,
     },
 ];
 
@@ -97,7 +97,7 @@ describe('Reporter: CLI', () => {
             ...mockResults[0],
             checks: [
                 {
-                    ...mockResults[0].checks[0],
+                    ...mockCheck,
                     safeRewrite: {
                         description: "Test description",
                         steps: ["SELECT 1;"]
@@ -110,6 +110,26 @@ describe('Reporter: CLI', () => {
         expect(output).toContain('Safe Rewrite Recipes:');
         expect(output).toContain('Test description');
         expect(output).toContain('SELECT 1;');
+    });
+
+    it('should include coverage summary line per Trust Contract (Analyzed N statements, Unanalyzable M, Coverage P%)', () => {
+        const output = reportCLI(mockResults);
+        expect(output).toContain('=== Coverage ===');
+        expect(output).toMatch(/Analyzed: 1 statements\s+\|\s+Unanalyzable: 0\s+\|\s+Coverage: 100%/);
+    });
+
+    it('should report unanalyzable count and reduced coverage when extraction warnings present', () => {
+        const resultsWithWarnings: AnalysisResult[] = [{
+            ...mockResults[0],
+            statementCount: 3,
+            extractionWarnings: [
+                { filePath: 'test.sql', line: 10, column: 2, message: 'Dynamic SQL' },
+            ],
+        }];
+        const output = reportCLI(resultsWithWarnings);
+        expect(output).toContain('=== Coverage ===');
+        expect(output).toMatch(/Unanalyzable: 1/);
+        expect(output).toMatch(/Coverage: 67%/);
     });
 });
 
@@ -148,7 +168,7 @@ describe('Reporter: GitHub PR', () => {
             ...mockResults[0],
             checks: [
                 {
-                    ...mockResults[0].checks[0],
+                    ...mockCheck,
                     safeRewrite: {
                         description: "Test description",
                         steps: ["SELECT 1;"]
@@ -161,5 +181,27 @@ describe('Reporter: GitHub PR', () => {
         expect(output).toContain('<summary>Safe Rewrite Recipes</summary>');
         expect(output).toContain('Test description');
         expect(output).toContain('SELECT 1;');
+    });
+
+    it('should include coverage summary per Trust Contract (Analyzed N SQL statements, M dynamic not analyzable, Coverage P%)', () => {
+        const output = reportGitHub(mockResults);
+        expect(output).toContain('### Coverage');
+        expect(output).toContain('Analyzed **1** SQL statements');
+        expect(output).toContain('**0** dynamic statements not analyzable');
+        expect(output).toContain('Coverage: **100%**');
+    });
+
+    it('should report dynamic statements not analyzable and coverage percent when extraction warnings present', () => {
+        const resultsWithWarnings: AnalysisResult[] = [{
+            ...mockResults[0],
+            statementCount: 2,
+            extractionWarnings: [
+                { filePath: 'test.sql', line: 5, column: 0, message: 'Dynamic SQL' },
+            ],
+        }];
+        const output = reportGitHub(resultsWithWarnings);
+        expect(output).toContain('### Coverage');
+        expect(output).toMatch(/\*\*1\*\* dynamic statements not analyzable/);
+        expect(output).toMatch(/Coverage: \*\*50%\*\*/);
     });
 });
