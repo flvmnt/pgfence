@@ -1,0 +1,49 @@
+name: 'pgfence'
+description: 'Postgres migration safety CLI — lock mode analysis, risk scoring, and safe rewrite recipes'
+author: 'Flavius Munteanu'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  path:
+    description: 'Path or glob to SQL migration files'
+    required: true
+    default: 'migrations/*.sql'
+  format:
+    description: 'Migration format (auto, sql, typeorm, prisma, knex)'
+    required: false
+    default: 'auto'
+  max-risk:
+    description: 'Maximum permitted risk level (safe, low, medium, high, critical)'
+    required: false
+    default: 'medium'
+  db-url:
+    description: 'Database URL for reading pg_stat_user_tables (size-aware risk scoring)'
+    required: false
+  stats-file:
+    description: 'Path to db stats JSON file (alternative to db-url)'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run pgfence
+      shell: bash
+      run: |
+        ARGS="${{ inputs.path }} --ci"
+        if [ "${{ inputs.format }}" != "auto" ]; then
+          ARGS="$ARGS --format ${{ inputs.format }}"
+        fi
+        if [ "${{ inputs.max-risk }}" != "medium" ]; then
+          ARGS="$ARGS --max-risk ${{ inputs.max-risk }}"
+        fi
+        if [ -n "${{ inputs.db-url }}" ]; then
+          ARGS="$ARGS --db-url ${{ inputs.db-url }}"
+        fi
+        if [ -n "${{ inputs.stats-file }}" ]; then
+          ARGS="$ARGS --stats-file ${{ inputs.stats-file }}"
+        fi
+        
+        npx --yes pgfence analyze $ARGS

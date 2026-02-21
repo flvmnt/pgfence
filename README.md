@@ -85,6 +85,14 @@ pnpm add -g pgfence
 
 ## Usage
 
+### Install pre-commit hook
+
+Prevent footguns locally before pushing by installing a git hook:
+```bash
+pgfence init
+```
+*(Automatically detects `.husky/` or `.git/hooks/` and creates a pre-commit hook.)*
+
 ### Analyze SQL migrations
 
 ```bash
@@ -261,7 +269,10 @@ ALTER TABLE users DROP CONSTRAINT chk_email_verified;
 
 ```yaml
 - name: Check migration safety
-  run: npx pgfence analyze --ci --max-risk medium migrations/*.sql
+  uses: flvmnt/pgfence@v1
+  with:
+    path: migrations/*.sql
+    max-risk: medium
 ```
 
 ### GitHub PR Comments
