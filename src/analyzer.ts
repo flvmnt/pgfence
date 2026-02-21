@@ -21,6 +21,7 @@ import { checkAddConstraint } from './rules/add-constraint.js';
 import { checkDestructive } from './rules/destructive.js';
 import { checkRenameColumn } from './rules/rename-column.js';
 import { checkBestPractices } from './rules/best-practices.js';
+import { checkPreferRobustStmts } from './rules/prefer-robust-stmts.js';
 import { checkPolicies } from './rules/policy.js';
 import { fetchTableStats } from './db-stats.js';
 import type {
@@ -172,6 +173,7 @@ function applyRules(stmt: ParsedStatement, config: PgfenceConfig): CheckResult[]
   results.push(...checkDestructive(stmt));
   results.push(...checkRenameColumn(stmt, config));
   results.push(...checkBestPractices(stmt));
+  results.push(...checkPreferRobustStmts(stmt));
   return results;
 }
 
