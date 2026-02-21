@@ -3,6 +3,7 @@
  *
  * Detects:
  * - DROP TABLE (ACCESS EXCLUSIVE, CRITICAL)
+ * - DROP COLUMN (ACCESS EXCLUSIVE, HIGH)
  * - TRUNCATE (ACCESS EXCLUSIVE, CRITICAL)
  * - DELETE without WHERE (ROW EXCLUSIVE, HIGH)
  * - VACUUM FULL (ACCESS EXCLUSIVE, HIGH)
@@ -17,6 +18,39 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
   const results: CheckResult[] = [];
 
   switch (stmt.nodeType) {
+    case 'AlterTableStmt': {
+      const alterNode = stmt.node as {
+        relation: { relname: string };
+        cmds: Array<{ AlterTableCmd: { subtype: string; name?: string } }>;
+      };
+      const tableName = alterNode.relation?.relname ?? null;
+      for (const cmd of alterNode.cmds ?? []) {
+        if (cmd.AlterTableCmd?.subtype === 'AT_DropColumn') {
+          const colName = cmd.AlterTableCmd.name ?? '<unknown>';
+          results.push({
+            statement: stmt.sql,
+            statementPreview: makePreview(stmt.sql),
+            tableName,
+            lockMode: LockMode.ACCESS_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            risk: RiskLevel.HIGH,
+            message: `DROP COLUMN "${colName}" on "${tableName}" — acquires ACCESS EXCLUSIVE lock, may break existing clients`,
+            ruleId: 'drop-column',
+            safeRewrite: {
+              description: 'Remove all application references first, then drop in a follow-up migration',
+              steps: [
+                `-- 1. Stop reading "${colName}" in application code`,
+                `-- 2. Deploy the code change and verify in production`,
+                `-- 3. Drop the column in a separate migration:`,
+                `ALTER TABLE ${tableName} DROP COLUMN IF EXISTS ${colName};`,
+              ],
+            },
+          });
+        }
+      }
+      break;
+    }
+
     case 'DropStmt': {
       const node = stmt.node as {
         objects: Array<{ List: { items: Array<{ String: { sval: string } }> } }>;
@@ -50,25 +84,48 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
     case 'TruncateStmt': {
       const node = stmt.node as {
         relations: Array<{ RangeVar: { relname: string } }>;
+        behavior?: string;
       };
       const tableName = node.relations?.[0]?.RangeVar?.relname ?? null;
-      results.push({
-        statement: stmt.sql,
-        statementPreview: makePreview(stmt.sql),
-        tableName,
-        lockMode: LockMode.ACCESS_EXCLUSIVE,
-        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-        risk: RiskLevel.CRITICAL,
-        message: `TRUNCATE "${tableName}" — deletes all rows, acquires ACCESS EXCLUSIVE lock`,
-        ruleId: 'truncate',
-        safeRewrite: {
-          description: 'Use batched DELETE instead of TRUNCATE for safer data removal',
-          steps: [
-            `-- Delete in batches out-of-band:`,
-            `-- DELETE FROM ${tableName} WHERE ctid IN (SELECT ctid FROM ${tableName} LIMIT 1000);`,
-          ],
-        },
-      });
+      const isCascade = node.behavior === 'DROP_CASCADE';
+
+      if (isCascade) {
+        results.push({
+          statement: stmt.sql,
+          statementPreview: makePreview(stmt.sql),
+          tableName,
+          lockMode: LockMode.ACCESS_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          risk: RiskLevel.CRITICAL,
+          message: `TRUNCATE "${tableName}" CASCADE — deletes all rows in this table AND all referencing tables via foreign keys, acquires ACCESS EXCLUSIVE on all affected tables`,
+          ruleId: 'truncate-cascade',
+          safeRewrite: {
+            description: 'Remove CASCADE and explicitly truncate each table, or use batched DELETE',
+            steps: [
+              `-- Delete in batches out-of-band, table by table:`,
+              `-- DELETE FROM ${tableName} WHERE ctid IN (SELECT ctid FROM ${tableName} LIMIT 1000);`,
+            ],
+          },
+        });
+      } else {
+        results.push({
+          statement: stmt.sql,
+          statementPreview: makePreview(stmt.sql),
+          tableName,
+          lockMode: LockMode.ACCESS_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          risk: RiskLevel.CRITICAL,
+          message: `TRUNCATE "${tableName}" — deletes all rows, acquires ACCESS EXCLUSIVE lock`,
+          ruleId: 'truncate',
+          safeRewrite: {
+            description: 'Use batched DELETE instead of TRUNCATE for safer data removal',
+            steps: [
+              `-- Delete in batches out-of-band:`,
+              `-- DELETE FROM ${tableName} WHERE ctid IN (SELECT ctid FROM ${tableName} LIMIT 1000);`,
+            ],
+          },
+        });
+      }
       break;
     }
 
