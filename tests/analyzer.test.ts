@@ -333,4 +333,168 @@ describe('pgfence analyzer', () => {
   it('should throw error for unsupported extensions', () => {
     expect(() => detectFormat('test.txt', 'SELECT 1')).toThrow('Unsupported file extension');
   });
+
+  // --- P0: DROP COLUMN ---
+
+  it('should detect DROP COLUMN as HIGH risk', async () => {
+    const results = await analyze([fixture('dangerous-drop-column.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const dropCol = checks.find((c) => c.ruleId === 'drop-column');
+    expect(dropCol).toBeDefined();
+    expect(dropCol!.risk).toBe(RiskLevel.HIGH);
+    expect(dropCol!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(dropCol!.tableName).toBe('appointments');
+    expect(dropCol!.safeRewrite).toBeDefined();
+    expect(dropCol!.safeRewrite!.steps.length).toBeGreaterThan(0);
+  });
+
+  // --- P0: NOT VALID + VALIDATE in same transaction ---
+
+  it('should detect NOT VALID + VALIDATE CONSTRAINT in same transaction as error', async () => {
+    const results = await analyze([fixture('not-valid-validate-same-tx.sql')], defaultConfig);
+    const violations = results[0].policyViolations;
+
+    const sameTransaction = violations.find((v) => v.ruleId === 'not-valid-validate-same-tx');
+    expect(sameTransaction).toBeDefined();
+    expect(sameTransaction!.severity).toBe('error');
+  });
+
+  // --- P0: Statement after ACCESS EXCLUSIVE ---
+
+  it('should warn on multiple ACCESS EXCLUSIVE statements compounding danger', async () => {
+    const results = await analyze([fixture('compounding-access-exclusive.sql')], defaultConfig);
+    const violations = results[0].policyViolations;
+
+    const compounding = violations.find((v) => v.ruleId === 'statement-after-access-exclusive');
+    expect(compounding).toBeDefined();
+    expect(compounding!.severity).toBe('warning');
+  });
+
+  // --- P0: Inline ignore ---
+
+  it('should respect -- pgfence: ignore inline directives', async () => {
+    const results = await analyze([fixture('inline-ignore.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    // DROP TABLE should be suppressed
+    const dropCheck = checks.find((c) => c.ruleId === 'drop-table');
+    expect(dropCheck).toBeUndefined();
+
+    // CREATE INDEX should still be flagged
+    const indexCheck = checks.find((c) => c.ruleId === 'create-index-not-concurrent');
+    expect(indexCheck).toBeDefined();
+  });
+
+  // --- P0: Visibility logic (new tables) ---
+
+  it('should skip warnings for operations on tables created in the same migration', async () => {
+    const results = await analyze([fixture('new-table-visibility.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    // Lock/safety checks on fresh_table should not be flagged — the table was just created
+    // But best practice checks (appliesToNewTables) may still appear
+    const lockChecks = checks.filter((c) => c.tableName === 'fresh_table' && !c.appliesToNewTables);
+    expect(lockChecks).toHaveLength(0);
+  });
+
+  // --- P1: ADD COLUMN json ---
+
+  it('should detect ADD COLUMN with json type and suggest jsonb', async () => {
+    const results = await analyze([fixture('add-column-json.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const jsonCheck = checks.find((c) => c.ruleId === 'add-column-json');
+    expect(jsonCheck).toBeDefined();
+    expect(jsonCheck!.risk).toBe(RiskLevel.LOW);
+    expect(jsonCheck!.message).toContain('jsonb');
+  });
+
+  // --- P1: ADD COLUMN serial ---
+
+  it('should detect ADD COLUMN with serial and suggest IDENTITY', async () => {
+    const results = await analyze([fixture('add-column-serial.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const serialCheck = checks.find((c) => c.ruleId === 'add-column-serial');
+    expect(serialCheck).toBeDefined();
+    expect(serialCheck!.risk).toBe(RiskLevel.MEDIUM);
+    expect(serialCheck!.safeRewrite).toBeDefined();
+    expect(serialCheck!.message).toContain('IDENTITY');
+  });
+
+  // --- P1: ADD COLUMN stored generated ---
+
+  it('should detect ADD COLUMN with GENERATED ALWAYS AS STORED as HIGH risk', async () => {
+    const results = await analyze([fixture('add-column-stored-generated.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const genCheck = checks.find((c) => c.ruleId === 'add-column-stored-generated');
+    expect(genCheck).toBeDefined();
+    expect(genCheck!.risk).toBe(RiskLevel.HIGH);
+    expect(genCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(genCheck!.safeRewrite).toBeDefined();
+  });
+
+  // --- P1: RENAME TABLE ---
+
+  it('should detect RENAME TABLE as HIGH risk', async () => {
+    const results = await analyze([fixture('rename-table.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const renameCheck = checks.find((c) => c.ruleId === 'rename-table');
+    expect(renameCheck).toBeDefined();
+    expect(renameCheck!.risk).toBe(RiskLevel.HIGH);
+    expect(renameCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(renameCheck!.tableName).toBe('appointments');
+    expect(renameCheck!.safeRewrite).toBeDefined();
+  });
+
+  // --- P1: TRUNCATE CASCADE ---
+
+  it('should detect TRUNCATE CASCADE as CRITICAL risk', async () => {
+    const results = await analyze([fixture('truncate-cascade.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const cascadeCheck = checks.find((c) => c.ruleId === 'truncate-cascade');
+    expect(cascadeCheck).toBeDefined();
+    expect(cascadeCheck!.risk).toBe(RiskLevel.CRITICAL);
+    expect(cascadeCheck!.message).toContain('CASCADE');
+  });
+
+  // --- P1: Best practices — type warnings on ALTER TABLE ---
+
+  it('should detect integer, varchar(N), and timestamp as best practice warnings', async () => {
+    const results = await analyze([fixture('best-practices-types.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const intCheck = checks.find((c) => c.ruleId === 'prefer-bigint-over-int');
+    expect(intCheck).toBeDefined();
+    expect(intCheck!.risk).toBe(RiskLevel.LOW);
+
+    const varcharCheck = checks.find((c) => c.ruleId === 'prefer-text-field');
+    expect(varcharCheck).toBeDefined();
+    expect(varcharCheck!.risk).toBe(RiskLevel.LOW);
+
+    const tsCheck = checks.find((c) => c.ruleId === 'prefer-timestamptz');
+    expect(tsCheck).toBeDefined();
+    expect(tsCheck!.risk).toBe(RiskLevel.LOW);
+  });
+
+  // --- P1: Best practices fire on CREATE TABLE (appliesToNewTables) ---
+
+  it('should fire best practice warnings even on tables created in same migration', async () => {
+    const results = await analyze([fixture('best-practices-create-table.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    // Even though events is created in this migration, best practice checks should fire
+    const intCheck = checks.find((c) => c.ruleId === 'prefer-bigint-over-int' && c.tableName === 'events');
+    expect(intCheck).toBeDefined();
+
+    const varcharCheck = checks.find((c) => c.ruleId === 'prefer-text-field' && c.tableName === 'events');
+    expect(varcharCheck).toBeDefined();
+
+    const tsCheck = checks.find((c) => c.ruleId === 'prefer-timestamptz' && c.tableName === 'events');
+    expect(tsCheck).toBeDefined();
+  });
 });
