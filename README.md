@@ -2,7 +2,7 @@
 
 **Postgres migration safety CLI** — know your lock modes, risk levels, and safe rewrite recipes before you merge.
 
-[![CI](https://github.com/pgfence/pgfence/actions/workflows/ci.yml/badge.svg)](https://github.com/pgfence/pgfence/actions/workflows/ci.yml)
+[![CI](https://github.com/flvmnt/pgfence/actions/workflows/ci.yml/badge.svg)](https://github.com/flvmnt/pgfence/actions/workflows/ci.yml)
 [![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
 
