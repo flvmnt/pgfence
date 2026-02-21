@@ -1,0 +1,81 @@
+import { describe, it, expect } from 'vitest';
+import { extractRawSQL } from '../src/extractors/raw-sql.js';
+import { extractPrismaSQL } from '../src/extractors/prisma.js';
+import { extractTypeORMSQL } from '../src/extractors/typeorm.js';
+import { extractKnexSQL } from '../src/extractors/knex.js';
+import path from 'path';
+
+const fixturesDir = path.join(process.cwd(), 'tests', 'fixtures');
+
+describe('Extractor: Raw SQL', () => {
+    it('should extract raw sql correctly', async () => {
+        const filePath = path.join(fixturesDir, 'safe-migration.sql');
+        const result = await extractRawSQL(filePath);
+        expect(result.warnings).toHaveLength(0);
+        expect(result.sql).toContain('ALTER TABLE appointments ADD COLUMN');
+    });
+});
+
+describe('Extractor: Prisma', () => {
+    it('should delegate to raw sql extraction', async () => {
+        const filePath = path.join(fixturesDir, 'safe-migration.sql');
+        const result = await extractPrismaSQL(filePath);
+        expect(result.warnings).toHaveLength(0);
+        expect(result.sql).toContain('ALTER TABLE appointments ADD COLUMN');
+    });
+});
+
+describe('Extractor: TypeORM', () => {
+    it('should extract SQL from queryRunner.query', async () => {
+        const filePath = path.join(fixturesDir, 'dangerous-typeorm.ts');
+        const result = await extractTypeORMSQL(filePath);
+
+        expect(result.sql).toContain('CREATE INDEX idx_appointments_status');
+        expect(result.sql).not.toContain('DROP INDEX'); // Should skip down()
+    });
+
+    it('should issue a warning for dynamic SQL', async () => {
+        const filePath = path.join(fixturesDir, 'dynamic-typeorm.ts');
+        const result = await extractTypeORMSQL(filePath);
+
+        expect(result.warnings.length).toBeGreaterThan(0);
+        expect(result.warnings[0].message).toContain('Dynamic SQL');
+    });
+
+    it('should warn if no up() method is found', async () => {
+        const filePath = path.join(fixturesDir, 'no-up-typeorm.ts');
+        const result = await extractTypeORMSQL(filePath);
+
+        expect(result.warnings).toHaveLength(1);
+        expect(result.warnings[0].message).toContain('No up() method found');
+    });
+});
+
+describe('Extractor: Knex', () => {
+    it('should extract SQL from knex.raw()', async () => {
+        const filePath = path.join(fixturesDir, 'knex-raw.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.sql).toContain('ALTER TABLE users ADD COLUMN age INT');
+    });
+
+    it('should warn on schema builder calls', async () => {
+        const filePath = path.join(fixturesDir, 'knex-schema-builder.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.warnings.length).toBeGreaterThan(0);
+        expect(result.warnings[0].message).toContain('Schema builder call');
+    });
+
+    it('should warn on dynamic SQL', async () => {
+        const filePath = path.join(fixturesDir, 'knex-dynamic.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.warnings.length).toBeGreaterThan(0);
+        expect(result.warnings[0].message).toContain('Dynamic SQL');
+    });
+
+    it('should warn if no up() function is found', async () => {
+        const filePath = path.join(fixturesDir, 'knex-no-up.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.warnings).toHaveLength(1);
+        expect(result.warnings[0].message).toContain('No up()');
+    });
+});

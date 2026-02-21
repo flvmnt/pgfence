@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -e
+echo "pgfence pre-push: running safety checks..."
+pnpm typecheck
+pnpm test
+echo "pgfence pre-push: all checks passed"
