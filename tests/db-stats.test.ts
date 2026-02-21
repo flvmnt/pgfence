@@ -15,6 +15,7 @@ vi.mock('pg', () => {
 });
 
 describe('DB Stats Fetcher', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let mClient: any;
 
     beforeEach(async () => {

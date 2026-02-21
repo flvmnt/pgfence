@@ -3,7 +3,6 @@
  */
 
 import { stat } from 'node:fs/promises';
-import path from 'node:path';
 
 /**
  * Parse --start-after value: ISO date string (e.g. 2024-01-15 or 2024-01-15T00:00:00Z) or Unix ms.

@@ -21,7 +21,7 @@ export interface PgfenceConfigFile {
 
 function findConfigDir(startDir: string): string | null {
   let dir = path.resolve(startDir);
-  for (;;) {
+  for (; ;) {
     if (existsSync(path.join(dir, '.pgfence.toml'))) return dir;
     if (existsSync(path.join(dir, '.pgfence.json'))) return dir;
     const parent = path.dirname(dir);
@@ -31,6 +31,7 @@ function findConfigDir(startDir: string): string | null {
 }
 
 async function loadToml(configPath: string): Promise<PgfenceConfigFile> {
+  // @ts-expect-error - dynamic import of optional dependency
   const mod = await import('@iarna/toml');
   const parse = mod.parse ?? (mod.default as { parse?: (s: string) => PgfenceConfigFile })?.parse;
   if (typeof parse !== 'function') {
