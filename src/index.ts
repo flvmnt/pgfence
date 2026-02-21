@@ -107,4 +107,18 @@ program
     }
   });
 
+program
+  .command('init')
+  .description('Install pgfence git hooks (pre-commit)')
+  .action(async () => {
+    const { installHooks } = await import('./init.js');
+    try {
+      await installHooks();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`pgfence init error: ${message}\n`);
+      process.exit(1);
+    }
+  });
+
 program.parse();
