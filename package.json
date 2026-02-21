@@ -15,8 +15,14 @@
     "lint": "eslint src/ tests/",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
-    "prepush": "pnpm typecheck && pnpm test"
+    "prepush": "pnpm typecheck && pnpm lint && pnpm test"
   },
+  "files": [
+    "dist",
+    "src",
+    "!src/cloud",
+    "!src/agent"
+  ],
   "keywords": [
     "postgres",
     "postgresql",
