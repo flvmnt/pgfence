@@ -1,6 +1,40 @@
 #!/usr/bin/env bash
 set -e
+
 echo "pgfence pre-push: running safety checks..."
+
+# Block cloud/agent files from ever being pushed
+CLOUD_FILES=$(git diff --cached --name-only HEAD 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/)' || true)
+if [ -z "$CLOUD_FILES" ]; then
+  # Also check the commits being pushed
+  REMOTE="$1"
+  URL="$2"
+  while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+    if [ "$LOCAL_SHA" != "0000000000000000000000000000000000000000" ]; then
+      if [ "$REMOTE_SHA" = "0000000000000000000000000000000000000000" ]; then
+        RANGE="$LOCAL_SHA"
+      else
+        RANGE="$REMOTE_SHA..$LOCAL_SHA"
+      fi
+      CLOUD_IN_COMMITS=$(git diff --name-only "$RANGE" 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/)' || true)
+      if [ -n "$CLOUD_IN_COMMITS" ]; then
+        echo "ERROR: Push blocked — cloud/agent files detected in commits:"
+        echo "$CLOUD_IN_COMMITS"
+        echo "These files must never be pushed to the public repo."
+        exit 1
+      fi
+    fi
+  done
+fi
+
+if [ -n "$CLOUD_FILES" ]; then
+  echo "ERROR: Push blocked — cloud/agent files staged:"
+  echo "$CLOUD_FILES"
+  echo "These files must never be pushed to the public repo."
+  exit 1
+fi
+
+# Standard checks
 pnpm typecheck
 pnpm test
 echo "pgfence pre-push: all checks passed"

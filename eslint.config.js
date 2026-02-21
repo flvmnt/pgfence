@@ -5,7 +5,22 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ['dist/', 'scripts/', 'tests/fixtures/'],
+    ignores: ['dist/', 'scripts/', 'tests/fixtures/', 'tests/cloud/', 'src/cloud/', 'src/agent/'],
+  },
+  {
+    files: ['src/**/*.ts'],
+    ignores: ['src/cloud/**', 'src/agent/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['**/cloud/*', '**/cloud/**'], message: 'Cloud modules must not be imported from public code.' },
+            { group: ['**/agent/*', '**/agent/**'], message: 'Agent modules must not be imported from public code.' },
+          ],
+        },
+      ],
+    },
   },
   {
     rules: {
