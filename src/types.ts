@@ -53,6 +53,8 @@ export interface CheckResult {
   ruleId: string;
   /** Safe alternative if available */
   safeRewrite?: SafeRewrite;
+  /** If true, this check fires even on tables created in the same migration */
+  appliesToNewTables?: boolean;
 }
 
 export interface PolicyViolation {

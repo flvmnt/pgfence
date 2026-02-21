@@ -20,6 +20,7 @@ import { checkAlterColumn } from './rules/alter-column.js';
 import { checkAddConstraint } from './rules/add-constraint.js';
 import { checkDestructive } from './rules/destructive.js';
 import { checkRenameColumn } from './rules/rename-column.js';
+import { checkBestPractices } from './rules/best-practices.js';
 import { checkPolicies } from './rules/policy.js';
 import { fetchTableStats } from './db-stats.js';
 import type {
@@ -99,10 +100,31 @@ export async function analyze(
       ? await parseSQL(extraction.sql)
       : [];
 
-    // Apply statement-level rules
+    // Track tables created in this migration for visibility logic (Eugene's pattern).
+    // Operations on newly-created tables don't need safety warnings since
+    // the table has no existing data or concurrent readers.
+    const createdTables = new Set<string>();
+    for (const stmt of stmts) {
+      if (stmt.nodeType === 'CreateStmt') {
+        const createNode = stmt.node as { relation?: { relname?: string } };
+        if (createNode.relation?.relname) {
+          createdTables.add(createNode.relation.relname.toLowerCase());
+        }
+      }
+    }
+
+    // Apply statement-level rules (respecting inline ignore directives + visibility logic)
     const checks: CheckResult[] = [];
     for (const stmt of stmts) {
-      checks.push(...applyRules(stmt, config));
+      const rawChecks = applyRules(stmt, config);
+      for (const check of rawChecks) {
+        // Filter: inline ignore directives (-- pgfence: ignore <ruleId>)
+        if (stmt.ignoredRules?.includes(check.ruleId)) continue;
+        // Filter: visibility logic — skip warnings for tables created in this migration
+        // (but best-practice checks with appliesToNewTables still fire)
+        if (check.tableName && createdTables.has(check.tableName.toLowerCase()) && !check.appliesToNewTables) continue;
+        checks.push(check);
+      }
     }
 
     // Apply policy checks
@@ -149,6 +171,7 @@ function applyRules(stmt: ParsedStatement, config: PgfenceConfig): CheckResult[]
   results.push(...checkAddConstraint(stmt));
   results.push(...checkDestructive(stmt));
   results.push(...checkRenameColumn(stmt, config));
+  results.push(...checkBestPractices(stmt));
   return results;
 }
 
