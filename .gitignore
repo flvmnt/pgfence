@@ -33,3 +33,7 @@ coverage/
 
 # pgfence specific
 press-releases/
+website/
+src/cloud/
+src/agent/
+tests/cloud/
