@@ -10,8 +10,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run tests/",
+    "test:watch": "vitest tests/",
     "lint": "eslint src/ tests/",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
@@ -35,7 +35,7 @@
     "ddl",
     "schema"
   ],
-  "license": "UNLICENSED",
+  "license": "FSL-1.1-MIT",
   "engines": {
     "node": ">=20"
   },

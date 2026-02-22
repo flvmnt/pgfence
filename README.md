@@ -334,4 +334,4 @@ pnpm build       # Compile
 
 ## License
 
-FSL-1.1-MIT
+[FSL-1.1-MIT](LICENSE) © Munteanu Flavius-Ioan
