@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { reportJSON } from '../src/reporters/json.js';
 import { reportCLI } from '../src/reporters/cli.js';
 import { reportGitHub } from '../src/reporters/github-pr.js';
-import { AnalysisResult, RiskLevel, LockMode } from '../src/types.js';
+import { AnalysisResult, RiskLevel, LockMode, PgfenceConfig } from '../src/types.js';
 
 const mockCheck: AnalysisResult['checks'][0] = {
     statement: 'ALTER TABLE users ADD COLUMN foo BOOLEAN;',
@@ -32,6 +32,15 @@ const mockResults: AnalysisResult[] = [
         maxRisk: RiskLevel.HIGH,
     },
 ];
+
+const mockConfig: PgfenceConfig = {
+    minPostgresVersion: 11,
+    maxAllowedRisk: RiskLevel.CRITICAL,
+    requireLockTimeout: false,
+    requireStatementTimeout: false,
+    output: 'cli',
+    format: 'sql',
+};
 
 describe('Reporter: JSON', () => {
     it('should format output as JSON correctly', () => {
@@ -64,7 +73,7 @@ describe('Reporter: JSON', () => {
 
 describe('Reporter: CLI', () => {
     it('should format output as a CLI table', () => {
-        const output = reportCLI(mockResults);
+        const output = reportCLI(mockResults, mockConfig);
 
         expect(output).toContain('test.sql');
         expect(output).toContain('ALTER TABLE users ADD COLUMN foo');
@@ -77,7 +86,7 @@ describe('Reporter: CLI', () => {
 
     it('should output safe migrations notice', () => {
         const safeResults: AnalysisResult[] = [{ ...mockResults[0], checks: [] }];
-        const output = reportCLI(safeResults);
+        const output = reportCLI(safeResults, mockConfig);
 
         expect(output).toContain('No dangerous statements detected.');
     });
@@ -88,7 +97,7 @@ describe('Reporter: CLI', () => {
             extractionWarnings: [{ filePath: 'test.sql', line: 1, column: 0, message: 'Dynamic SQL' }],
         }];
 
-        const output = reportCLI(resultsWithWarnings);
+        const output = reportCLI(resultsWithWarnings, mockConfig);
         expect(output).toContain('Dynamic SQL');
     });
 
@@ -106,14 +115,14 @@ describe('Reporter: CLI', () => {
             ]
         }];
 
-        const output = reportCLI(resultsWithRewrites);
+        const output = reportCLI(resultsWithRewrites, mockConfig);
         expect(output).toContain('Safe Rewrite Recipes:');
         expect(output).toContain('Test description');
         expect(output).toContain('SELECT 1;');
     });
 
     it('should include coverage summary line per Trust Contract (Analyzed N statements, Unanalyzable M, Coverage P%)', () => {
-        const output = reportCLI(mockResults);
+        const output = reportCLI(mockResults, mockConfig);
         expect(output).toContain('=== Coverage ===');
         expect(output).toMatch(/Analyzed: 1 statements\s+\|\s+Unanalyzable: 0\s+\|\s+Coverage: 100%/);
     });
@@ -126,7 +135,7 @@ describe('Reporter: CLI', () => {
                 { filePath: 'test.sql', line: 10, column: 2, message: 'Dynamic SQL' },
             ],
         }];
-        const output = reportCLI(resultsWithWarnings);
+        const output = reportCLI(resultsWithWarnings, mockConfig);
         expect(output).toContain('=== Coverage ===');
         expect(output).toMatch(/Unanalyzable: 1/);
         expect(output).toMatch(/Coverage: 67%/);
