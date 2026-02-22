@@ -101,7 +101,6 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
         const preview = checkGroup[0].statementPreview;
 
         let lockMode = checkGroup[0].lockMode;
-        let blocks = checkGroup[0].blocks;
         let effectiveRisk = checkGroup[0].adjustedRisk ?? checkGroup[0].risk;
         let originalRisk = checkGroup[0].risk;
         let isAdjusted = checkGroup[0].adjustedRisk != null;
@@ -113,7 +112,6 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
             originalRisk = check.risk;
             isAdjusted = check.adjustedRisk != null;
             lockMode = check.lockMode;
-            blocks = check.blocks;
           }
         }
 
