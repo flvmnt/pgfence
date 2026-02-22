@@ -8,6 +8,7 @@
       <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/v/@flvmnt/pgfence" alt="npm" /></a>
       <a href="LICENSE"><img src="https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg" alt="License: FSL-1.1-MIT" /></a>
       <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="Node.js" /></a>
+      <a href="https://pgfence.com"><img src="https://img.shields.io/badge/website-pgfence.com-blue" alt="Website" /></a>
     </p>
   </td>
 </tr></table>
@@ -316,6 +317,8 @@ Upgrade to **pgfence Cloud** for team-grade migration safety:
 - **Migration history** — track every analyzed migration across your org
 
 pgfence Cloud **never asks for database credentials**. DB-size-aware scoring uses a stats snapshot approach — your CI runs a provided script against your read replica, outputs a JSON file, and pgfence consumes it locally.
+
+Learn more at **[pgfence.com](https://pgfence.com)**.
 
 All cloud features are **additive** — the open-source CLI works exactly the same without an API key.
 
