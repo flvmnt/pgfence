@@ -74,13 +74,13 @@ pgfence focuses on the Node.js/TypeScript ecosystem with direct ORM extraction (
 ## Installation
 
 ```bash
-npm install -g pgfence
+npm install -g @flvmnt/pgfence
 ```
 
 Or with pnpm:
 
 ```bash
-pnpm add -g pgfence
+pnpm add -g @flvmnt/pgfence
 ```
 
 ## Usage
