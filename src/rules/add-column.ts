@@ -92,9 +92,12 @@ export function checkAddColumn(
         safeRewrite: {
           description: 'Add nullable column, backfill, then add NOT NULL constraint',
           steps: [
-            `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${colDef.colname} <type>;`,
-            `-- Backfill out-of-band in batches:`,
-            `-- UPDATE ${tableName} SET ${colDef.colname} = <value> WHERE ${colDef.colname} IS NULL LIMIT 1000;`,
+            `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${colDef.colname} ${getTypeName(colDef.typeName) || '<type>'};`,
+            `-- Backfill out-of-band in batches (repeat until 0 rows updated):`,
+            `-- WITH batch AS (`,
+            `--   SELECT ctid FROM ${tableName} WHERE ${colDef.colname} IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED`,
+            `-- )`,
+            `-- UPDATE ${tableName} t SET ${colDef.colname} = <fill_value> FROM batch WHERE t.ctid = batch.ctid;`,
             `ALTER TABLE ${tableName} ADD CONSTRAINT chk_${colDef.colname}_nn CHECK (${colDef.colname} IS NOT NULL) NOT VALID;`,
             `ALTER TABLE ${tableName} VALIDATE CONSTRAINT chk_${colDef.colname}_nn;`,
             `ALTER TABLE ${tableName} ALTER COLUMN ${colDef.colname} SET NOT NULL;`,
@@ -135,10 +138,13 @@ export function checkAddColumn(
           safeRewrite: {
             description: 'Add column without default, backfill in batches, then set default',
             steps: [
-              `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${colDef.colname} <type>;`,
-              `-- Backfill out-of-band in batches:`,
-              `-- UPDATE ${tableName} SET ${colDef.colname} = <value> WHERE ${colDef.colname} IS NULL LIMIT 1000;`,
-              `ALTER TABLE ${tableName} ALTER COLUMN ${colDef.colname} SET DEFAULT <value>;`,
+              `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${colDef.colname} ${getTypeName(colDef.typeName) || '<type>'};`,
+              `-- Backfill out-of-band in batches (repeat until 0 rows updated):`,
+              `-- WITH batch AS (`,
+              `--   SELECT ctid FROM ${tableName} WHERE ${colDef.colname} IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED`,
+              `-- )`,
+              `-- UPDATE ${tableName} t SET ${colDef.colname} = <fill_value> FROM batch WHERE t.ctid = batch.ctid;`,
+              `ALTER TABLE ${tableName} ALTER COLUMN ${colDef.colname} SET DEFAULT <fill_value>;`,
             ],
           },
         });
@@ -157,10 +163,13 @@ export function checkAddColumn(
           safeRewrite: {
             description: 'Add column without default, backfill in batches, then set default',
             steps: [
-              `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${colDef.colname} <type>;`,
-              `-- Backfill out-of-band in batches:`,
-              `-- UPDATE ${tableName} SET ${colDef.colname} = <value> WHERE ${colDef.colname} IS NULL LIMIT 1000;`,
-              `ALTER TABLE ${tableName} ALTER COLUMN ${colDef.colname} SET DEFAULT <value>;`,
+              `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${colDef.colname} ${getTypeName(colDef.typeName) || '<type>'};`,
+              `-- Backfill out-of-band in batches (repeat until 0 rows updated):`,
+              `-- WITH batch AS (`,
+              `--   SELECT ctid FROM ${tableName} WHERE ${colDef.colname} IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED`,
+              `-- )`,
+              `-- UPDATE ${tableName} t SET ${colDef.colname} = <fill_value> FROM batch WHERE t.ctid = batch.ctid;`,
+              `ALTER TABLE ${tableName} ALTER COLUMN ${colDef.colname} SET DEFAULT <fill_value>;`,
             ],
           },
         });

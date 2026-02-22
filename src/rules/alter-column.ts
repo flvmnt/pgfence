@@ -52,8 +52,11 @@ export function checkAlterColumn(
           steps: [
             `-- 1. Add new column with target type`,
             `ALTER TABLE ${tableName} ADD COLUMN ${colName}_new <new_type>;`,
-            `-- 2. Backfill out-of-band in batches`,
-            `-- UPDATE ${tableName} SET ${colName}_new = ${colName}::new_type WHERE ${colName}_new IS NULL LIMIT 1000;`,
+            `-- 2. Backfill out-of-band in batches (repeat until 0 rows updated):`,
+            `-- WITH batch AS (`,
+            `--   SELECT ctid FROM ${tableName} WHERE ${colName}_new IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED`,
+            `-- )`,
+            `-- UPDATE ${tableName} t SET ${colName}_new = ${colName}::<new_type> FROM batch WHERE t.ctid = batch.ctid;`,
             `-- 3. Swap columns (application-level)`,
             `-- 4. Drop old column after verification`,
           ],
