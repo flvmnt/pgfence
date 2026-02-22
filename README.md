@@ -1,8 +1,13 @@
-# pgfence
+<p>
+  <img src=".github/logo.svg" width="48" height="48" align="left" alt="pgfence logo" />
+  <strong style="font-size:1.5em">pgfence</strong><br>
+  Postgres migration safety CLI — know your lock modes, risk levels, and safe rewrite recipes before you merge.
+</p>
 
-**Postgres migration safety CLI** — know your lock modes, risk levels, and safe rewrite recipes before you merge.
+<br>
 
 [![CI](https://github.com/flvmnt/pgfence/actions/workflows/ci.yml/badge.svg)](https://github.com/flvmnt/pgfence/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@flvmnt/pgfence)](https://www.npmjs.com/package/@flvmnt/pgfence)
 [![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
 
