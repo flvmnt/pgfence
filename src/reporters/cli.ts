@@ -63,9 +63,9 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
       const worstRisk = worstCheck.adjustedRisk ?? worstCheck.risk;
       const worstLock = worstCheck.lockMode;
       const worstBlocks = blocksStr(worstCheck).replace(/, /g, '+') || 'none';
-      const recipes = Array.from(new Set(result.checks.map(c => c.ruleId))).join(', ') || 'none';
+      const primaryRule = worstCheck.ruleId;
 
-      lines.push(chalk.dim(`  Lock:`) + ` ${worstLock} ` + chalk.dim(`| Blocks:`) + ` ${worstBlocks} ` + chalk.dim(`| Risk:`) + ` ${worstRisk} ` + chalk.dim(`| Rule:`) + ` ${recipes}`);
+      lines.push(chalk.dim(`  Lock:`) + ` ${worstLock} ` + chalk.dim(`| Blocks:`) + ` ${worstBlocks} ` + chalk.dim(`| Risk:`) + ` ${worstRisk} ` + chalk.dim(`| Rule:`) + ` ${primaryRule}`);
     }
 
     lines.push('');
@@ -135,7 +135,7 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
         ]);
 
         for (const sec of secondaryChecks) {
-          notes.push(`Statement #${i + 1}: ${sec.message}`);
+          notes.push(`Statement #${i + 1} [${sec.ruleId}]: ${sec.message}`);
         }
 
         i++;
