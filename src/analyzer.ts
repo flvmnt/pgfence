@@ -125,8 +125,9 @@ export async function analyze(
     for (const stmt of stmts) {
       const rawChecks = applyRules(stmt, config);
       for (const check of rawChecks) {
-        // Filter: inline ignore directives (-- pgfence: ignore <ruleId>)
-        if (stmt.ignoredRules?.includes(check.ruleId)) continue;
+        // Filter: inline ignore directives
+        // '*' = suppress all (bare -- pgfence-ignore), or match specific ruleId
+        if (stmt.ignoredRules?.includes('*') || stmt.ignoredRules?.includes(check.ruleId)) continue;
         // Filter: visibility logic — skip warnings for tables created in this migration
         // (but best-practice checks with appliesToNewTables still fire)
         if (check.tableName && createdTables.has(check.tableName.toLowerCase()) && !check.appliesToNewTables) continue;

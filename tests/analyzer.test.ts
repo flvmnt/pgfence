@@ -373,7 +373,7 @@ describe('pgfence analyzer', () => {
 
   // --- P0: Inline ignore ---
 
-  it('should respect -- pgfence: ignore inline directives', async () => {
+  it('should respect -- pgfence: ignore inline directives (legacy syntax)', async () => {
     const results = await analyze([fixture('inline-ignore.sql')], defaultConfig);
     const checks = results[0].checks;
 
@@ -384,6 +384,47 @@ describe('pgfence analyzer', () => {
     // CREATE INDEX should still be flagged
     const indexCheck = checks.find((c) => c.ruleId === 'create-index-not-concurrent');
     expect(indexCheck).toBeDefined();
+  });
+
+  it('should suppress ALL checks for a statement with bare -- pgfence-ignore', async () => {
+    const results = await analyze([fixture('inline-ignore-all.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    // DROP TABLE check should be fully suppressed
+    const dropCheck = checks.find((c) => c.ruleId === 'drop-table');
+    expect(dropCheck).toBeUndefined();
+
+    // CREATE INDEX on the *other* statement should still be flagged
+    const indexCheck = checks.find((c) => c.ruleId === 'create-index-not-concurrent');
+    expect(indexCheck).toBeDefined();
+  });
+
+  it('should suppress only the named rule with -- pgfence-ignore: <ruleId>', async () => {
+    const results = await analyze([fixture('inline-ignore-specific.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    // drop-table is named in the directive — should be suppressed
+    const dropCheck = checks.find((c) => c.ruleId === 'drop-table');
+    expect(dropCheck).toBeUndefined();
+
+    // create-index-not-concurrent is NOT named — should still fire
+    const indexCheck = checks.find((c) => c.ruleId === 'create-index-not-concurrent');
+    expect(indexCheck).toBeDefined();
+  });
+
+  it('should suppress multiple rules on the same statement with -- pgfence-ignore: rule1, rule2', async () => {
+    const sql = `SET lock_timeout = '2s';
+SET statement_timeout = '5min';
+-- pgfence-ignore: drop-table, prefer-robust-drop-table
+DROP TABLE old_data;`;
+    const tmpFile = '/tmp/pgfence-multi-ignore-test.sql';
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(tmpFile, sql, 'utf8');
+    const results = await analyze([tmpFile], defaultConfig);
+    const checks = results[0].checks;
+    // Both named rules suppressed
+    expect(checks.find((c) => c.ruleId === 'drop-table')).toBeUndefined();
+    expect(checks.find((c) => c.ruleId === 'prefer-robust-drop-table')).toBeUndefined();
   });
 
   // --- P0: Visibility logic (new tables) ---

@@ -12,7 +12,9 @@ export interface ParsedStatement {
   nodeType: string;
   /** Parsed AST node from libpg-query */
   node: Record<string, unknown>;
-  /** Rule IDs to ignore for this statement (from -- pgfence: ignore comments) */
+  /** Rule IDs to ignore for this statement (from inline ignore comments).
+   *  '*' means suppress all checks (bare -- pgfence-ignore).
+   */
   ignoredRules?: string[];
 }
 
@@ -35,6 +37,8 @@ export async function parseSQL(sql: string): Promise<ParsedStatement[]> {
   const stmts = result.stmts ?? [];
   const results: ParsedStatement[] = [];
 
+  let prevEnd = 0;
+
   for (let i = 0; i < stmts.length; i++) {
     const entry = stmts[i];
     const nodeType = Object.keys(entry.stmt)[0];
@@ -56,10 +60,10 @@ export async function parseSQL(sql: string): Promise<ParsedStatement[]> {
       rawSql = rawSql.slice(0, -1).trimEnd();
     }
 
-    // Extract -- pgfence: ignore comments preceding or within this statement's region.
-    // libpg-query may include preceding comments in stmt_location, so we check
-    // both the region before the statement and the raw SQL of the statement itself.
-    const ignoredRules = extractIgnoredRules(rawSql, sql, start);
+    // Extract inline ignore comments for this statement only.
+    // Pass prevEnd so the lookback is bounded to the region after the previous statement.
+    const ignoredRules = extractIgnoredRules(rawSql, sql, start, prevEnd);
+    prevEnd = end;
 
     results.push({ sql: rawSql, nodeType, node, ...(ignoredRules.length > 0 ? { ignoredRules } : {}) });
   }
@@ -68,40 +72,52 @@ export async function parseSQL(sql: string): Promise<ParsedStatement[]> {
 }
 
 /**
- * Extract rule IDs from "-- pgfence: ignore <ruleId>[, <ruleId>...]" comments.
+ * Extract rule IDs from inline ignore comments.
  *
- * Checks both:
- * 1. The raw SQL of the statement itself (libpg-query may include preceding comments
- *    in the statement's region via stmt_location)
- * 2. The region in the full SQL text just before stmt_location
+ * Supported syntax:
+ *   -- pgfence-ignore                          suppress ALL checks for this statement
+ *   -- pgfence-ignore: <ruleId>[, <ruleId>]   suppress specific rule(s)
+ *   -- pgfence: ignore <ruleId>[, <ruleId>]   legacy syntax (still supported)
+ *
+ * Checks both the statement's own text and the region immediately before it
+ * (libpg-query may or may not include preceding comments in stmt_location).
  */
-function extractIgnoredRules(rawSql: string, fullSql: string, stmtStart: number): string[] {
+function extractIgnoredRules(rawSql: string, fullSql: string, stmtStart: number, prevEnd = 0): string[] {
   const rules: string[] = [];
-  const pattern = /--\s*pgfence:\s*ignore\s+([^\n]+)/gi;
 
-  // Check the statement's own text first (comments may be included by libpg-query)
-  let m = pattern.exec(rawSql);
-  while (m !== null) {
-    for (const rule of m[1].trim().split(',')) {
-      const trimmed = rule.trim();
-      if (trimmed) rules.push(trimmed);
+  // New syntax: -- pgfence-ignore (bare) or -- pgfence-ignore: <ruleId>[, ...]
+  const newPattern = /--\s*pgfence-ignore(?:\s*:\s*([^\n]+))?/gi;
+  // Legacy syntax: -- pgfence: ignore <ruleId>[, ...]
+  const legacyPattern = /--\s*pgfence:\s*ignore\s+([^\n]+)/gi;
+
+  function applyPattern(text: string, pattern: RegExp, isNew: boolean) {
+    pattern.lastIndex = 0;
+    let m = pattern.exec(text);
+    while (m !== null) {
+      if (isNew && m[1] === undefined) {
+        // Bare -- pgfence-ignore: suppress all
+        rules.push('*');
+      } else {
+        const ruleList = (m[1] ?? '').trim();
+        for (const rule of ruleList.split(',')) {
+          const trimmed = rule.trim();
+          if (trimmed) rules.push(trimmed);
+        }
+      }
+      m = pattern.exec(text);
     }
-    m = pattern.exec(rawSql);
   }
 
-  // Also check the region between the previous statement and this one
+  // Check the statement's own text first
+  applyPattern(rawSql, newPattern, true);
+  applyPattern(rawSql, legacyPattern, false);
+
+  // If nothing found, also check the region between the previous statement and this one.
+  // prevEnd bounds the lookback so we don't bleed a comment into the next statement.
   if (rules.length === 0) {
-    const lookback = Math.max(0, stmtStart - 500);
-    const region = fullSql.slice(lookback, stmtStart);
-    pattern.lastIndex = 0;
-    m = pattern.exec(region);
-    while (m !== null) {
-      for (const rule of m[1].trim().split(',')) {
-        const trimmed = rule.trim();
-        if (trimmed) rules.push(trimmed);
-      }
-      m = pattern.exec(region);
-    }
+    const region = fullSql.slice(prevEnd, stmtStart);
+    applyPattern(region, newPattern, true);
+    applyPattern(region, legacyPattern, false);
   }
 
   return rules;
