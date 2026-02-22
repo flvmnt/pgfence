@@ -118,7 +118,7 @@ export interface PgfenceConfig {
   /** Pre-fetched table stats from --stats-file (alternative to dbUrl) */
   tableStats?: TableStats[];
   /** Output format */
-  output: 'cli' | 'json' | 'github';
+  output: 'cli' | 'json' | 'github' | 'sarif';
   /** Migration file format */
   format: 'sql' | 'typeorm' | 'prisma' | 'knex' | 'drizzle' | 'sequelize' | 'auto';
 }

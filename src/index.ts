@@ -12,6 +12,7 @@ import { analyze, RISK_ORDER } from './analyzer.js';
 import { reportCLI } from './reporters/cli.js';
 import { reportJSON } from './reporters/json.js';
 import { reportGitHub } from './reporters/github-pr.js';
+import { reportSARIF } from './reporters/sarif.js';
 import { RiskLevel } from './types.js';
 import type { PgfenceConfig, TableStats } from './types.js';
 
@@ -35,7 +36,7 @@ program
   .description('Analyze migration files for safety issues')
   .argument('<files...>', 'Migration files to analyze')
   .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, auto', 'auto')
-  .option('--output <output>', 'Output format: cli, json, github', 'cli')
+  .option('--output <output>', 'Output format: cli, json, github, sarif', 'cli')
   .option('--db-url <url>', 'Database URL for size-aware risk scoring')
   .option('--stats-file <path>', 'Path to pgfence-stats.json for size-aware risk scoring (alternative to --db-url)')
   .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume', '11')
@@ -73,6 +74,9 @@ program
           break;
         case 'github':
           process.stdout.write(reportGitHub(results) + '\n');
+          break;
+        case 'sarif':
+          process.stdout.write(reportSARIF(results) + '\n');
           break;
         case 'cli':
         default:
