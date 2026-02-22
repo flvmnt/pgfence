@@ -63,9 +63,9 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
       const worstRisk = worstCheck.adjustedRisk ?? worstCheck.risk;
       const worstLock = worstCheck.lockMode;
       const worstBlocks = blocksStr(worstCheck).replace(/, /g, '+') || 'none';
-      const recipes = Array.from(new Set(result.checks.filter(c => c.safeRewrite).map(c => c.ruleId))).join(', ') || 'none';
+      const recipes = Array.from(new Set(result.checks.map(c => c.ruleId))).join(', ') || 'none';
 
-      lines.push(chalk.dim(`  Lock:`) + ` ${worstLock} ` + chalk.dim(`| Blocks:`) + ` ${worstBlocks} ` + chalk.dim(`| Risk:`) + ` ${worstRisk} ` + chalk.dim(`| Fix:`) + ` ${recipes}`);
+      lines.push(chalk.dim(`  Lock:`) + ` ${worstLock} ` + chalk.dim(`| Blocks:`) + ` ${worstBlocks} ` + chalk.dim(`| Risk:`) + ` ${worstRisk} ` + chalk.dim(`| Rule:`) + ` ${recipes}`);
     }
 
     lines.push('');
@@ -151,12 +151,26 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
         }
       }
 
-      // Safe rewrite recipes
-      const rewrites = result.checks.filter((c) => c.safeRewrite);
-      if (rewrites.length > 0) {
+      // Safe rewrite recipes vs. Notes
+      const actualRewrites = result.checks.filter((c) => c.safeRewrite && c.risk !== RiskLevel.LOW && c.risk !== RiskLevel.SAFE);
+      const safeNotes = result.checks.filter((c) => c.safeRewrite && (c.risk === RiskLevel.LOW || c.risk === RiskLevel.SAFE));
+
+      if (actualRewrites.length > 0) {
         lines.push('');
         lines.push(chalk.bold('  Safe Rewrite Recipes:'));
-        for (const check of rewrites) {
+        for (const check of actualRewrites) {
+          lines.push('');
+          lines.push(chalk.cyan(`  ${check.ruleId}: ${check.safeRewrite!.description}`));
+          for (const step of check.safeRewrite!.steps) {
+            lines.push(chalk.dim(`    ${step}`));
+          }
+        }
+      }
+
+      if (safeNotes.length > 0) {
+        lines.push('');
+        lines.push(chalk.bold('  Notes / Why this is safe:'));
+        for (const check of safeNotes) {
           lines.push('');
           lines.push(chalk.cyan(`  ${check.ruleId}: ${check.safeRewrite!.description}`));
           for (const step of check.safeRewrite!.steps) {
