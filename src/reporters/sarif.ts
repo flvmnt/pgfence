@@ -7,7 +7,7 @@
  * See: https://docs.github.com/en/code-security/code-scanning/integrating-with-code-scanning/sarif-support-for-code-scanning
  */
 
-import type { AnalysisResult, CheckResult, PolicyViolation } from '../types.js';
+import type { AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
 
 interface SarifLocation {
