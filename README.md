@@ -1,5 +1,5 @@
 <table><tr>
-  <td><img src=".github/logo.svg" width="128" height="128" alt="pgfence logo" /></td>
+  <td><img src="https://raw.githubusercontent.com/flvmnt/pgfence/main/.github/logo.svg" width="128" height="128" alt="pgfence logo" /></td>
   <td>
     <h1>pgfence</h1>
     <p>Postgres migration safety CLI. Know your lock modes, risk levels, and safe rewrite recipes before you merge.</p>
