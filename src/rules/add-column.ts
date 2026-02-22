@@ -123,6 +123,12 @@ export function checkAddColumn(
           risk: RiskLevel.LOW,
           message: `ADD COLUMN "${colDef.colname}" with constant DEFAULT — instant metadata-only on PG11+ (ACCESS EXCLUSIVE lock is brief)`,
           ruleId: 'add-column-constant-default',
+          safeRewrite: {
+            description: 'Safe on Postgres 11+',
+            steps: [
+              `-- Note: on PG10 and below, this pattern can rewrite the entire table.`,
+            ],
+          },
         });
       } else if (!isConstant) {
         // Non-constant default → table rewrite, HIGH risk

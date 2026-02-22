@@ -40,9 +40,10 @@ export function checkCreateIndex(stmt: ParsedStatement): CheckResult[] {
       message: `CREATE INDEX "${indexName}" without CONCURRENTLY — acquires SHARE lock, blocking all writes on "${tableName}"`,
       ruleId: 'create-index-not-concurrent',
       safeRewrite: {
-        description: 'Use CREATE INDEX CONCURRENTLY to allow reads and writes during index build',
+        description: 'Use CREATE INDEX CONCURRENTLY to allow reads and writes during index build.',
         steps: [
           `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${indexName} ON ${tableName}(...);`,
+          `-- Note: CONCURRENTLY must run outside a transaction block (disable ORM transaction wrappers)`,
         ],
       },
     });

@@ -127,7 +127,7 @@ function extractIgnoredRules(rawSql: string, fullSql: string, stmtStart: number,
  * Create a truncated preview of a SQL statement for display.
  * Collapses whitespace and truncates at maxLen.
  */
-export function makePreview(sql: string, maxLen = 80): string {
+export function makePreview(sql: string, maxLen = 200): string {
   // Strip SQL comments (block /* */ and line --)
   const noComments = sql.replace(/\/\*[\s\S]*?\*\/|--[^\n]*/g, '');
   const collapsed = noComments.replace(/\s+/g, ' ').trim();

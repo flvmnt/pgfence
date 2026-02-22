@@ -221,8 +221,8 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
         if (sub === 'AT_AddConstraint' && cmd.AlterTableCmd.def?.Constraint?.skip_validation === true) continue;
         // These subtypes hold ACCESS EXCLUSIVE for significant duration
         if (sub === 'AT_DropColumn' ||
-            sub === 'AT_AlterColumnType' || sub === 'AT_SetNotNull' ||
-            sub === 'AT_AddConstraint' || sub === 'AT_DropConstraint') {
+          sub === 'AT_AlterColumnType' || sub === 'AT_SetNotNull' ||
+          sub === 'AT_AddConstraint' || sub === 'AT_DropConstraint') {
           return true;
         }
       }

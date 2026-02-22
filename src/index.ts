@@ -7,6 +7,8 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { Command } from 'commander';
 import { analyze, RISK_ORDER } from './analyzer.js';
 import { reportCLI } from './reporters/cli.js';
@@ -26,10 +28,15 @@ function parseRiskLevel(value: string): RiskLevel {
 
 const program = new Command();
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const pkgPath = path.resolve(__dirname, '../package.json');
+const pkg = JSON.parse(await readFile(pkgPath, 'utf8'));
+
 program
   .name('pgfence')
   .description('Postgres migration safety CLI — lock mode analysis, risk scoring, and safe rewrite recipes')
-  .version('0.1.1');
+  .version(pkg.version);
 
 program
   .command('analyze')
@@ -80,7 +87,7 @@ program
           break;
         case 'cli':
         default:
-          process.stdout.write(reportCLI(results) + '\n');
+          process.stdout.write(reportCLI(results, config) + '\n');
           break;
       }
 

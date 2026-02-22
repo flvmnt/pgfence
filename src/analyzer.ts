@@ -123,6 +123,16 @@ export async function analyze(
     // Apply statement-level rules (respecting inline ignore directives + visibility logic)
     const checks: CheckResult[] = [];
     for (const stmt of stmts) {
+      // Flag DO blocks and procedures as unanalyzable for coverage stats
+      if (stmt.nodeType === 'DoStmt' || stmt.nodeType === 'CreateFunctionStmt') {
+        extraction.warnings.push({
+          message: `Unanalyzable dynamic SQL block detected — manual review required`,
+          filePath,
+          line: 1,
+          column: 1,
+        });
+      }
+
       const rawChecks = applyRules(stmt, config);
       for (const check of rawChecks) {
         // Filter: inline ignore directives

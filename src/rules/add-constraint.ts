@@ -94,6 +94,7 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
             steps: [
               `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} FOREIGN KEY (...) REFERENCES ${refTable}(...) NOT VALID;`,
               `ALTER TABLE ${tableName} VALIDATE CONSTRAINT ${conName};`,
+              `-- Note: VALIDATE CONSTRAINT may take a long time, but it only requires a SHARE UPDATE EXCLUSIVE lock which does not block normal reads or writes.`,
             ],
           },
         });
