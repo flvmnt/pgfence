@@ -2,10 +2,11 @@
   <td><img src=".github/logo.svg" width="128" height="128" alt="pgfence logo" /></td>
   <td>
     <h1>pgfence</h1>
-    <p>Postgres migration safety CLI — know your lock modes, risk levels, and safe rewrite recipes before you merge.</p>
+    <p>Postgres migration safety CLI. Know your lock modes, risk levels, and safe rewrite recipes before you merge.</p>
     <p>
       <a href="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml"><img src="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
       <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/v/@flvmnt/pgfence" alt="npm" /></a>
+      <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/dw/@flvmnt/pgfence" alt="npm downloads" /></a>
       <a href="LICENSE"><img src="https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg" alt="License: FSL-1.1-MIT" /></a>
       <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="Node.js" /></a>
       <a href="https://pgfence.com"><img src="https://img.shields.io/badge/website-pgfence.com-blue" alt="Website" /></a>
@@ -29,9 +30,9 @@ pgfence analyzes your SQL migration files **before they hit production** and tel
 
 1. **What lock mode** each DDL statement acquires and **what it blocks** (reads, writes, or both)
 2. **Risk level** for each operation, optionally adjusted by actual table size from your database
-3. **Safe rewrite recipes** — the exact expand/contract sequence to run instead
+3. **Safe rewrite recipes**, the exact expand/contract sequence to run instead
 
-Works with **raw SQL**, **TypeORM**, **Prisma**, and **Knex** migrations. No Ruby, no Rust, no Go — just TypeScript.
+Works with **raw SQL**, **TypeORM**, **Prisma**, and **Knex** migrations. No Ruby, no Rust, no Go. Just TypeScript.
 
 ## Quick Demo
 
@@ -55,7 +56,7 @@ Policy Violations:
 Safe Rewrites:
   1. ADD COLUMN with NOT NULL + DEFAULT → split into expand/backfill/contract:
      • ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN;
-     • Backfill in batches: UPDATE ... WHERE email_verified IS NULL LIMIT 1000
+     • Backfill in batches: WITH batch AS (SELECT ctid FROM users WHERE email_verified IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED) UPDATE users t SET email_verified = <fill_value> FROM batch WHERE t.ctid = batch.ctid;
      • ALTER TABLE users ADD CONSTRAINT ... CHECK (email_verified IS NOT NULL) NOT VALID;
      • ALTER TABLE users VALIDATE CONSTRAINT ...;
 
@@ -65,6 +66,31 @@ Safe Rewrites:
 === Coverage ===
 Analyzed: 2 statements  |  Unanalyzable: 0  |  Coverage: 100%
 ```
+
+## Postgres Version Support
+
+pgfence is tested against **PostgreSQL 11 through 17**. The default assumption is PG 11+. Use `--min-pg-version` to set the minimum version explicitly:
+
+```bash
+pgfence analyze --min-pg-version 14 migrations/*.sql
+```
+
+Version-sensitive behavior:
+- `ADD COLUMN ... DEFAULT <constant>` is instant (metadata-only) on PG 11+, table rewrite on PG 10 and below
+- `RENAME COLUMN` is instant on PG 14+
+
+## Known Limitations
+
+pgfence performs static analysis. The following are not supported:
+
+- **Dynamic SQL**: template literals, string concatenation, runtime-computed table or column names
+- **PL/pgSQL and stored procedures**: DDL inside `DO $$ ... $$` blocks is not analyzed
+- **DDL inside functions**: `CREATE FUNCTION` bodies are not parsed for migration safety
+- **Non-migration SQL**: arbitrary application queries, not just DDL
+
+When dynamic SQL is detected (TypeORM/Knex extractors), pgfence emits a warning rather than silently skipping it. Every report includes a coverage line showing how many statements were analyzed vs. skipped.
+
+To explicitly acknowledge a statement pgfence cannot analyze, add `-- pgfence-ignore` before it — see [Suppressing warnings](#suppressing-warnings).
 
 ## Alternatives
 
@@ -76,7 +102,7 @@ Other tools in this space worth knowing about:
 | [Eugene](https://github.com/kaaveland/eugene) | Rust | DDL lint + trace modes |
 | [strong_migrations](https://github.com/ankane/strong_migrations) | Ruby | Rails/ActiveRecord migration checks |
 
-pgfence focuses on the Node.js/TypeScript ecosystem with direct ORM extraction (TypeORM, Prisma, Knex), DB-size-aware risk scoring, and copy-paste-ready safe rewrite recipes.
+pgfence focuses on the Node.js/TypeScript ecosystem with direct ORM extraction (TypeORM, Prisma, Knex), DB-size-aware risk scoring, and safe rewrite recipes.
 
 ## Installation
 
@@ -151,7 +177,7 @@ You can provide table stats in two ways:
 pgfence analyze --db-url postgres://readonly@replica:5432/mydb migrations/*.sql
 ```
 
-- **Stats snapshot file** — use a pre-generated JSON file (e.g. from your CI) so pgfence never needs DB credentials:
+- **Stats snapshot file**: use a pre-generated JSON file (e.g. from your CI) so pgfence never needs DB credentials:
 
 ```bash
 pgfence analyze --stats-file pgfence-stats.json migrations/*.sql
@@ -187,6 +213,32 @@ pgfence analyze --output github migrations/*.sql
 # Exit 1 if any check exceeds MEDIUM risk
 pgfence analyze --ci --max-risk medium migrations/*.sql
 ```
+
+### Suppressing warnings
+
+Add an inline comment immediately before a statement to suppress checks for it:
+
+```sql
+-- pgfence-ignore
+DROP TABLE old_sessions;  -- all checks suppressed for this statement
+
+-- pgfence-ignore: drop-table
+DROP TABLE old_logs;  -- only the drop-table check suppressed; others still fire
+
+-- pgfence-ignore: drop-table, prefer-robust-drop-table
+DROP TABLE old_queue;  -- multiple rules suppressed, comma-separated
+```
+
+The directive applies to the single statement immediately following the comment.
+
+| Syntax | Effect |
+|--------|--------|
+| `-- pgfence-ignore` | Suppress all checks for the next statement |
+| `-- pgfence-ignore: <ruleId>` | Suppress one specific rule |
+| `-- pgfence-ignore: <ruleId>, <ruleId>` | Suppress multiple specific rules |
+| `-- pgfence: ignore <ruleId>` | Legacy syntax, still supported |
+
+Use `--output json` to see `ruleId` values for any check you want to suppress.
 
 ## What It Catches
 
@@ -244,11 +296,11 @@ Beyond DDL analysis, pgfence enforces operational best practices:
 - **Missing `SET application_name`** — enables `pg_stat_activity` visibility
 - **Missing `SET idle_in_transaction_session_timeout`** — prevents orphaned locks
 - **`CREATE INDEX CONCURRENTLY` inside transaction** — will fail at runtime
-- **NOT VALID + VALIDATE in same transaction** — defeats the purpose of NOT VALID
-- **Multiple ACCESS EXCLUSIVE statements** — compounding lock duration
+- **NOT VALID + VALIDATE in same transaction**: defeats the purpose of NOT VALID
+- **Multiple ACCESS EXCLUSIVE statements**: compounding lock duration
 - **Bulk `UPDATE` without `WHERE`** — should run out-of-band in batches
 - **Inline ignore** — `-- pgfence: ignore <ruleId>` to suppress specific checks
-- **Visibility logic** — skips warnings for tables created in the same migration
+- **Visibility logic**: skips warnings for tables created in the same migration
 
 ## Safe Rewrite Recipes
 
@@ -270,9 +322,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN;
 -- Migration 2: Create index (non-blocking)
 CREATE INDEX CONCURRENTLY idx_users_email_verified ON users(email_verified);
 
--- Out-of-band backfill job (not in migration):
--- UPDATE users SET email_verified = false WHERE email_verified IS NULL LIMIT 1000;
--- (repeat in batches with FOR UPDATE SKIP LOCKED)
+-- Out-of-band backfill job (not in migration, repeat until 0 rows updated):
+-- WITH batch AS (
+--   SELECT ctid FROM users WHERE email_verified IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED
+-- )
+-- UPDATE users t SET email_verified = false FROM batch WHERE t.ctid = batch.ctid;
 
 -- Migration 3: Add NOT NULL constraint
 ALTER TABLE users ADD CONSTRAINT chk_email_verified CHECK (email_verified IS NOT NULL) NOT VALID;
@@ -305,22 +359,35 @@ ALTER TABLE users DROP CONSTRAINT chk_email_verified;
     path: pgfence-report.md
 ```
 
+### GitHub Code Scanning (SARIF)
+
+Upload pgfence findings to GitHub Code Scanning for inline PR annotations:
+
+```yaml
+- name: Analyze migrations
+  run: npx @flvmnt/pgfence analyze --output sarif migrations/*.sql > pgfence.sarif
+- name: Upload to GitHub Code Scanning
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: pgfence.sarif
+```
+
 ## pgfence Cloud (Coming Soon)
 
 Upgrade to **pgfence Cloud** for team-grade migration safety:
 
-- **Approval workflows** — require sign-off for HIGH+ risk migrations before merge. The primary control: "who approved this risky migration?" is always answered.
-- **Exemptions with justification + expiry** — teams can bypass warnings with a recorded reason and automatic expiration date
-- **Centralized policies** — enforce org-wide rules (e.g., "block all CRITICAL risk") that individual developers cannot override
-- **SOC2 audit logging** — immutable log of every analysis, approval, and bypass
-- **Schema drift detection** — compare your migrations against production schema
-- **Migration history** — track every analyzed migration across your org
+- **Approval workflows**: require sign-off on HIGH+ risk migrations before merge
+- **Exemptions with justification + expiry**: bypass a warning with a recorded reason and expiration date
+- **Centralized policies**: enforce org-wide rules (e.g., "block all CRITICAL risk") that individual developers cannot override
+- **SOC2 audit logging**: immutable log of every analysis, approval, and bypass
+- **Schema drift detection**: compare your migrations against production schema
+- **Migration history**: track every analyzed migration across your org
 
-pgfence Cloud **never asks for database credentials**. DB-size-aware scoring uses a stats snapshot approach — your CI runs a provided script against your read replica, outputs a JSON file, and pgfence consumes it locally.
+pgfence Cloud never asks for database credentials. DB-size-aware scoring uses a stats snapshot: your CI runs a provided script against your read replica, outputs a JSON file, and pgfence consumes it locally.
 
 Learn more at **[pgfence.com](https://pgfence.com)**.
 
-All cloud features are **additive** — the open-source CLI works exactly the same without an API key.
+All cloud features are additive. The source-available CLI works exactly the same without an API key.
 
 ## Contributing
 
@@ -344,3 +411,7 @@ pnpm build       # Compile
 ## License
 
 [FSL-1.1-MIT](LICENSE) © Munteanu Flavius-Ioan
+
+## Contact
+
+[contact@pgfence.com](mailto:contact@pgfence.com)
