@@ -7,7 +7,7 @@ const PRE_COMMIT_HOOK_CONTENT = `#!/bin/sh
 # Block commits that introduce high-risk database migrations
 
 echo "🔍 Running pgfence safety checks..."
-npx pgfence analyze --ci --max-risk medium migrations/*.sql
+npx @flvmnt/pgfence analyze --ci --max-risk medium migrations/*.sql
 
 if [ $? -ne 0 ]; then
   echo "❌ pgfence found dangerous migrations! Please fix them or use an exemption."

@@ -46,4 +46,4 @@ runs:
           ARGS="$ARGS --stats-file ${{ inputs.stats-file }}"
         fi
         
-        npx --yes pgfence analyze $ARGS
+        npx --yes @flvmnt/pgfence analyze $ARGS
