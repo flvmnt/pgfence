@@ -36,10 +36,10 @@ pgfence — Migration Safety Report
 ┌─────────────────────────────────────────────────┬──────────────────┬──────────┬────────┐
 │ Statement                                       │ Lock Mode        │ Blocks   │ Risk   │
 ├─────────────────────────────────────────────────┼──────────────────┼──────────┼────────┤
-│ ALTER TABLE users ADD COLUMN email_verified      │ ACCESS EXCLUSIVE │ R + W    │ HIGH   │
-│ BOOLEAN NOT NULL DEFAULT false                   │                  │          │        │
+│ ALTER TABLE users ADD COLUMN email_verified     │ ACCESS EXCLUSIVE │ R + W    │ HIGH   │
+│ BOOLEAN NOT NULL DEFAULT false                  │                  │          │        │
 ├─────────────────────────────────────────────────┼──────────────────┼──────────┼────────┤
-│ CREATE INDEX idx_users_email ON users(email)     │ SHARE            │ W        │ MEDIUM │
+│ CREATE INDEX idx_users_email ON users(email)    │ SHARE            │ W        │ MEDIUM │
 └─────────────────────────────────────────────────┴──────────────────┴──────────┴────────┘
 
 Policy Violations:
