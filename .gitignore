@@ -1,8 +1,35 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS and IDE
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+
+# Node
 node_modules/
+
+# Build and Testing
 dist/
+coverage/
+.nyc_output/
 *.tsbuildinfo
+
+# Environment
 .env
 .env.*
-coverage/
-.DS_Store
+!.env.example
+
+# pgfence specific
 press-releases/
