@@ -1,5 +1,10 @@
 <table><tr>
-  <td><img src="https://raw.githubusercontent.com/flvmnt/pgfence/main/.github/logo.svg" width="128" height="128" alt="pgfence logo" /></td>
+  <td>
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/flvmnt/pgfence/main/.github/logo-dark.svg">
+      <img src="https://raw.githubusercontent.com/flvmnt/pgfence/main/.github/logo.svg" width="120" alt="pgfence logo" />
+    </picture>
+  </td>
   <td>
     <h1>pgfence</h1>
     <p>Postgres migration safety CLI. Know your lock modes, risk levels, and safe rewrite recipes before you merge.</p>
@@ -242,7 +247,7 @@ Use `--output json` to see `ruleId` values for any check you want to suppress.
 
 ## What It Catches
 
-pgfence checks 28 DDL patterns against Postgres's lock mode semantics:
+pgfence checks 38 DDL patterns against Postgres's lock mode semantics:
 
 ### Lock & Safety Checks
 
@@ -270,25 +275,36 @@ pgfence checks 28 DDL patterns against Postgres's lock mode semantics:
 | 17 | `RENAME COLUMN` | ACCESS EXCLUSIVE | LOW | Instant on PG14+ |
 | 18 | `RENAME TABLE` | ACCESS EXCLUSIVE | HIGH | Rename + create view for backwards compat |
 | 19 | `VACUUM FULL` | ACCESS EXCLUSIVE | HIGH | Use pg_repack |
+| 20 | `ALTER TYPE ... ADD VALUE` (PG < 12) | ACCESS EXCLUSIVE | MEDIUM | Upgrade to PG12+ for instant enum adds |
+| | `ALTER TYPE ... ADD VALUE` (PG12+) | — (instant) | LOW | Safe; cannot run inside transaction |
+| 21 | `ATTACH PARTITION` | ACCESS EXCLUSIVE | HIGH | Create matching CHECK constraint first |
+| 22 | `DETACH PARTITION` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `DETACH PARTITION CONCURRENTLY` (PG14+) |
+| 23 | `REFRESH MATERIALIZED VIEW` | ACCESS EXCLUSIVE | HIGH | `REFRESH MATERIALIZED VIEW CONCURRENTLY` |
+| | `REFRESH MATERIALIZED VIEW CONCURRENTLY` | EXCLUSIVE | MEDIUM | Blocks writes; requires unique index |
+| 24 | `REINDEX TABLE/INDEX` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `REINDEX CONCURRENTLY` (PG12+) |
+| | `REINDEX SCHEMA/DATABASE` (non-concurrent) | ACCESS EXCLUSIVE | CRITICAL | `REINDEX CONCURRENTLY` (PG12+) |
+| 25 | `CREATE TRIGGER` | ACCESS EXCLUSIVE | MEDIUM | Use `lock_timeout` to bound lock wait |
+| 26 | `DROP TRIGGER` | ACCESS EXCLUSIVE | MEDIUM | Use `lock_timeout` to bound lock wait |
+| 27 | `ENABLE/DISABLE TRIGGER` | SHARE ROW EXCLUSIVE | LOW | Blocks concurrent DDL only |
 
 ### Data Type Best Practices
 
 | # | Pattern | Risk | Suggestion |
 |---|---------|------|------------|
-| 20 | `ADD COLUMN ... json` | LOW | Use `jsonb` — json has no equality operator |
-| 21 | `ADD COLUMN ... serial` | MEDIUM | Use `GENERATED ALWAYS AS IDENTITY` |
-| 22 | `integer` / `int` columns | LOW | Use `bigint` to avoid future overflow + rewrite |
-| 23 | `varchar(N)` columns | LOW | Use `text` — changing varchar length requires ACCESS EXCLUSIVE |
-| 24 | `timestamp` without time zone | LOW | Use `timestamptz` to avoid timezone bugs |
+| 28 | `ADD COLUMN ... json` | LOW | Use `jsonb` — json has no equality operator |
+| 29 | `ADD COLUMN ... serial` | MEDIUM | Use `GENERATED ALWAYS AS IDENTITY` |
+| 30 | `integer` / `int` columns | LOW | Use `bigint` to avoid future overflow + rewrite |
+| 31 | `varchar(N)` columns | LOW | Use `text` — changing varchar length requires ACCESS EXCLUSIVE |
+| 32 | `timestamp` without time zone | LOW | Use `timestamptz` to avoid timezone bugs |
 
 ### Transaction & Policy Checks
 
 | # | Pattern | Severity |
 |---|---------|----------|
-| 25 | NOT VALID + VALIDATE CONSTRAINT in same transaction | error |
-| 26 | Multiple ACCESS EXCLUSIVE statements compounding | warning |
-| 27 | `CREATE INDEX CONCURRENTLY` inside transaction | error |
-| 28 | Bulk `UPDATE` without `WHERE` in migration | warning |
+| 33 | NOT VALID + VALIDATE CONSTRAINT in same transaction | error |
+| 34 | Multiple ACCESS EXCLUSIVE statements compounding | warning |
+| 35 | `CREATE INDEX CONCURRENTLY` inside transaction | error |
+| 36 | Bulk `UPDATE` without `WHERE` in migration | warning |
 
 ## Policy Checks
 
@@ -391,6 +407,26 @@ pgfence Cloud never asks for database credentials. DB-size-aware scoring uses a 
 Learn more at **[pgfence.com](https://pgfence.com)**.
 
 All cloud features are additive. The source-available CLI works exactly the same without an API key.
+
+## Plugins
+
+pgfence supports custom rules via a plugin system. Create a module that exports rule or policy functions, then reference it in your config:
+
+```bash
+pgfence analyze --plugin ./my-rules.js migrations/*.sql
+```
+
+Plugin rule IDs are namespaced with `plugin:` to avoid collisions with built-in checks.
+
+## Schema Snapshots
+
+For rules that need to know your actual column types (e.g., distinguishing safe varchar widenings from cross-type rewrites), pgfence can load a schema snapshot:
+
+```bash
+pgfence analyze --schema-file pgfence-schema.json migrations/*.sql
+```
+
+This replaces heuristic guesses with definitive type classification from your database. Generate the snapshot with `pgfence extract-schema` against a read replica.
 
 ## Contributing
 
