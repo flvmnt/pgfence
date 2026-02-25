@@ -7,7 +7,7 @@ const installCommand = 'npm install -g @flvmnt/pgfence';
 
 const stats = [
   { value: '28', label: 'safety checks across lock, policy, and transaction risks' },
-  { value: '4', label: 'extractors for SQL, TypeORM, Prisma, and Knex migrations' },
+  { value: '6', label: 'extractors for SQL, TypeORM, Prisma, Knex, Drizzle, and Sequelize' },
   { value: '100%', label: 'coverage visibility with analyzable vs dynamic SQL reporting' },
 ];
 
