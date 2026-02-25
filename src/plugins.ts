@@ -92,8 +92,9 @@ export function runPluginRules(
   for (const rule of pluginRules) {
     try {
       results.push(...rule.check(stmt, config));
-    } catch {
-      // Plugin errors are swallowed — don't crash the analyzer
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`pgfence: plugin rule "${rule.ruleId}" threw: ${message}\n`);
     }
   }
   return results;
@@ -111,8 +112,9 @@ export function runPluginPolicies(
   for (const policy of pluginPolicies) {
     try {
       results.push(...policy.check(stmts, config));
-    } catch {
-      // Plugin errors are swallowed — don't crash the analyzer
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`pgfence: plugin policy "${policy.ruleId}" threw: ${message}\n`);
     }
   }
   return results;
