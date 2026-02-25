@@ -11,6 +11,7 @@
 
 import { readFile } from 'node:fs/promises';
 import type { ExtractionResult, ExtractionWarning } from '../types.js';
+import { transpileKnexSchemaCall } from './knex-transpiler.js';
 
 interface TSNode {
   type: string;
@@ -46,33 +47,60 @@ export async function extractKnexSQL(filePath: string): Promise<ExtractionResult
     return { sql: '', warnings };
   }
 
-  walkNode(upFn, (node: TSNode) => {
-    if (node.type !== 'CallExpression') return;
+  // Gap 11: track conditional depth to warn about conditional SQL
+  const conditionalTypes = new Set(['IfStatement', 'ConditionalExpression', 'SwitchCase']);
+  let conditionalDepth = 0;
 
-    if (isRawCall(node)) {
-      const args = node.arguments as TSNode[];
-      if (args.length === 0) return;
-      const extracted = extractStringValue(args[0]);
-      if (extracted !== null) {
-        queries.push(extracted);
-      } else {
-        const loc = args[0].loc?.start ?? { line: 0, column: 0 };
-        warnings.push({
-          filePath,
-          line: loc.line,
-          column: loc.column,
-          message: 'Dynamic SQL — cannot statically analyze knex.raw() argument',
-        });
+  walkNodeWithContext(upFn, {
+    enter(node: TSNode) {
+      if (conditionalTypes.has(node.type)) conditionalDepth++;
+
+      if (node.type !== 'CallExpression') return;
+
+      if (isRawCall(node)) {
+        const args = node.arguments as TSNode[];
+        if (args.length === 0) return;
+        const extracted = extractStringValue(args[0]);
+        if (extracted !== null) {
+          queries.push(extracted);
+          if (conditionalDepth > 0) {
+            const loc = node.loc?.start ?? { line: 0, column: 0 };
+            warnings.push({
+              filePath,
+              line: loc.line,
+              column: loc.column,
+              message: `Conditional SQL at line ${loc.line} — statement may or may not execute depending on runtime condition`,
+            });
+          }
+        } else {
+          const loc = args[0].loc?.start ?? { line: 0, column: 0 };
+          warnings.push({
+            filePath,
+            line: loc.line,
+            column: loc.column,
+            message: 'Dynamic SQL — cannot statically analyze knex.raw() argument',
+          });
+        }
+      } else if (isSchemaBuilderCall(node)) {
+        // Gap 13: Transpile schema builder calls to SQL
+        const result = transpileKnexSchemaCall(node, filePath);
+        if (result.sql.length > 0) {
+          queries.push(...result.sql);
+        } else {
+          const loc = node.loc?.start ?? { line: 0, column: 0 };
+          warnings.push({
+            filePath,
+            line: loc.line,
+            column: loc.column,
+            message: 'Schema builder call — could not transpile to SQL',
+          });
+        }
+        warnings.push(...result.warnings);
       }
-    } else if (isSchemaBuilderCall(node)) {
-      const loc = node.loc?.start ?? { line: 0, column: 0 };
-      warnings.push({
-        filePath,
-        line: loc.line,
-        column: loc.column,
-        message: 'Schema builder call — use knex.raw() for pgfence analysis',
-      });
-    }
+    },
+    leave(node: TSNode) {
+      if (conditionalTypes.has(node.type)) conditionalDepth--;
+    },
   });
 
   return { sql: queries.join(';\n'), warnings };
@@ -201,4 +229,25 @@ function walkNode(node: unknown, visitor: (n: TSNode) => void): void {
       walkNode(val, visitor);
     }
   }
+}
+
+function walkNodeWithContext(
+  node: unknown,
+  visitor: { enter: (n: TSNode) => void; leave: (n: TSNode) => void },
+): void {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const child of node) walkNodeWithContext(child, visitor);
+    return;
+  }
+  const n = node as TSNode;
+  if (n.type) visitor.enter(n);
+  for (const key of Object.keys(n)) {
+    if (key === 'parent') continue;
+    const val = n[key];
+    if (val && typeof val === 'object') {
+      walkNodeWithContext(val, visitor);
+    }
+  }
+  if (n.type) visitor.leave(n);
 }

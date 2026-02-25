@@ -9,6 +9,7 @@
 
 import { readFile } from 'node:fs/promises';
 import type { ExtractionResult, ExtractionWarning } from '../types.js';
+import { transpileSequelizeCall } from './sequelize-transpiler.js';
 
 interface TSNode {
     type: string;
@@ -31,30 +32,57 @@ export async function extractSequelizeSQL(filePath: string): Promise<ExtractionR
 
     let foundQuery = false;
 
-    // Walk the AST looking for queryInterface.sequelize.query()
-    walkNode(ast, (node: TSNode) => {
-        if (
-            node.type === 'CallExpression' &&
-            isSequelizeQuery(node)
-        ) {
-            foundQuery = true;
-            const args = node.arguments as TSNode[];
-            if (args.length === 0) return;
+    // Gap 11: track conditional depth to warn about conditional SQL
+    const conditionalTypes = new Set(['IfStatement', 'ConditionalExpression', 'SwitchCase']);
+    let conditionalDepth = 0;
 
-            const arg = args[0];
-            const extracted = extractStringValue(arg);
-            if (extracted !== null) {
-                queries.push(extracted);
-            } else {
-                const loc = arg.loc?.start ?? { line: 0, column: 0 };
-                warnings.push({
-                    filePath,
-                    line: loc.line,
-                    column: loc.column,
-                    message: 'Dynamic SQL — cannot statically analyze sequelize.query() argument',
-                });
+    // Walk the AST looking for queryInterface.sequelize.query()
+    walkNodeWithContext(ast, {
+        enter(node: TSNode) {
+            if (conditionalTypes.has(node.type)) conditionalDepth++;
+
+            if (node.type === 'CallExpression') {
+                if (isSequelizeQuery(node)) {
+                    foundQuery = true;
+                    const args = node.arguments as TSNode[];
+                    if (args.length === 0) return;
+
+                    const arg = args[0];
+                    const extracted = extractStringValue(arg);
+                    if (extracted !== null) {
+                        queries.push(extracted);
+                        if (conditionalDepth > 0) {
+                            const loc = node.loc?.start ?? { line: 0, column: 0 };
+                            warnings.push({
+                                filePath,
+                                line: loc.line,
+                                column: loc.column,
+                                message: `Conditional SQL at line ${loc.line} — statement may or may not execute depending on runtime condition`,
+                            });
+                        }
+                    } else {
+                        const loc = arg.loc?.start ?? { line: 0, column: 0 };
+                        warnings.push({
+                            filePath,
+                            line: loc.line,
+                            column: loc.column,
+                            message: 'Dynamic SQL — cannot statically analyze sequelize.query() argument',
+                        });
+                    }
+                } else if (isQueryInterfaceBuilder(node)) {
+                    // Gap 13: Transpile queryInterface builder calls to SQL
+                    foundQuery = true;
+                    const result = transpileSequelizeCall(node, filePath);
+                    if (result.sql.length > 0) {
+                        queries.push(...result.sql);
+                    }
+                    warnings.push(...result.warnings);
+                }
             }
-        }
+        },
+        leave(node: TSNode) {
+            if (conditionalTypes.has(node.type)) conditionalDepth--;
+        },
     });
 
     if (!foundQuery) {
@@ -62,7 +90,7 @@ export async function extractSequelizeSQL(filePath: string): Promise<ExtractionR
             filePath,
             line: 1,
             column: 0,
-            message: 'No queryInterface.sequelize.query() calls found in Sequelize migration',
+            message: 'No queryInterface.sequelize.query() or builder calls found in Sequelize migration',
         });
     }
 
@@ -88,6 +116,28 @@ function isSequelizeQuery(node: TSNode): boolean {
     return false;
 }
 
+const QUERY_INTERFACE_METHODS = new Set([
+    'createTable', 'addColumn', 'removeColumn', 'renameColumn',
+    'changeColumn', 'addIndex', 'removeIndex', 'dropTable', 'renameTable',
+]);
+
+function isQueryInterfaceBuilder(node: TSNode): boolean {
+    const callee = node.callee as TSNode;
+    if (callee?.type !== 'MemberExpression') return false;
+
+    const prop = callee.property as TSNode;
+    if (prop?.type !== 'Identifier') return false;
+    if (!QUERY_INTERFACE_METHODS.has(prop.name as string)) return false;
+
+    // Check that object is queryInterface (an identifier)
+    const obj = callee.object as TSNode;
+    if (obj?.type === 'Identifier' && (obj.name as string) === 'queryInterface') {
+        return true;
+    }
+
+    return false;
+}
+
 function extractStringValue(node: TSNode): string | null {
     if (node.type === 'Literal' && typeof node.value === 'string') {
         return node.value;
@@ -105,19 +155,23 @@ function extractStringValue(node: TSNode): string | null {
     return null;
 }
 
-function walkNode(node: unknown, visitor: (n: TSNode) => void): void {
+function walkNodeWithContext(
+    node: unknown,
+    visitor: { enter: (n: TSNode) => void; leave: (n: TSNode) => void },
+): void {
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) {
-        for (const child of node) walkNode(child, visitor);
+        for (const child of node) walkNodeWithContext(child, visitor);
         return;
     }
     const n = node as TSNode;
-    if (n.type) visitor(n);
+    if (n.type) visitor.enter(n);
     for (const key of Object.keys(n)) {
         if (key === 'parent') continue;
         const val = n[key];
         if (val && typeof val === 'object') {
-            walkNode(val, visitor);
+            walkNodeWithContext(val, visitor);
         }
     }
+    if (n.type) visitor.leave(n);
 }

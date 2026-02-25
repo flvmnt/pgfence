@@ -48,28 +48,48 @@ export async function extractTypeORMSQL(filePath: string): Promise<ExtractionRes
   }
 
   // Walk the up() method body to find <paramName>.query() calls
-  walkNode(upInfo.body, (node: TSNode) => {
-    if (
-      node.type === 'CallExpression' &&
-      isQueryRunnerQuery(node, upInfo.paramName)
-    ) {
-      const args = node.arguments as TSNode[];
-      if (args.length === 0) return;
+  // Gap 11: track conditional depth to warn about conditional SQL
+  const conditionalTypes = new Set(['IfStatement', 'ConditionalExpression', 'SwitchCase']);
+  let conditionalDepth = 0;
 
-      const arg = args[0];
-      const extracted = extractStringValue(arg);
-      if (extracted !== null) {
-        queries.push(extracted);
-      } else {
-        const loc = arg.loc?.start ?? { line: 0, column: 0 };
-        warnings.push({
-          filePath,
-          line: loc.line,
-          column: loc.column,
-          message: 'Dynamic SQL — cannot statically analyze queryRunner.query() argument',
-        });
+  walkNodeWithContext(upInfo.body, {
+    enter(node: TSNode) {
+      if (conditionalTypes.has(node.type)) conditionalDepth++;
+
+      if (
+        node.type === 'CallExpression' &&
+        isQueryRunnerQuery(node, upInfo.paramName)
+      ) {
+        const args = node.arguments as TSNode[];
+        if (args.length === 0) return;
+
+        const arg = args[0];
+        const extracted = extractStringValue(arg);
+        if (extracted !== null) {
+          queries.push(extracted);
+          if (conditionalDepth > 0) {
+            const loc = node.loc?.start ?? { line: 0, column: 0 };
+            warnings.push({
+              filePath,
+              line: loc.line,
+              column: loc.column,
+              message: `Conditional SQL at line ${loc.line} — statement may or may not execute depending on runtime condition`,
+            });
+          }
+        } else {
+          const loc = arg.loc?.start ?? { line: 0, column: 0 };
+          warnings.push({
+            filePath,
+            line: loc.line,
+            column: loc.column,
+            message: 'Dynamic SQL — cannot statically analyze queryRunner.query() argument',
+          });
+        }
       }
-    }
+    },
+    leave(node: TSNode) {
+      if (conditionalTypes.has(node.type)) conditionalDepth--;
+    },
   });
 
   return { sql: queries.join(';\n'), warnings, autoCommit: upInfo.autoCommit };
@@ -173,4 +193,25 @@ function walkNode(node: unknown, visitor: (n: TSNode) => void): void {
       walkNode(val, visitor);
     }
   }
+}
+
+function walkNodeWithContext(
+  node: unknown,
+  visitor: { enter: (n: TSNode) => void; leave: (n: TSNode) => void },
+): void {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const child of node) walkNodeWithContext(child, visitor);
+    return;
+  }
+  const n = node as TSNode;
+  if (n.type) visitor.enter(n);
+  for (const key of Object.keys(n)) {
+    if (key === 'parent') continue;
+    const val = n[key];
+    if (val && typeof val === 'object') {
+      walkNodeWithContext(val, visitor);
+    }
+  }
+  if (n.type) visitor.leave(n);
 }
