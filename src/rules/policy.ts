@@ -449,6 +449,17 @@ function getStatementLockMode(stmt: ParsedStatement): LockMode | null {
     }
     case 'UpdateStmt':
       return 'ROW EXCLUSIVE' as LockMode;
+    case 'DropStmt': {
+      const n = stmt.node as { removeType?: string };
+      if (n.removeType === 'OBJECT_TABLE' || n.removeType === 'OBJECT_INDEX' || n.removeType === 'OBJECT_TRIGGER') {
+        return 'ACCESS EXCLUSIVE' as LockMode;
+      }
+      return null;
+    }
+    case 'TruncateStmt':
+      return 'ACCESS EXCLUSIVE' as LockMode;
+    case 'RenameStmt':
+      return 'ACCESS EXCLUSIVE' as LockMode;
     default:
       return null;
   }

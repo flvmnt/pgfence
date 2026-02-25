@@ -55,7 +55,25 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
       const node = stmt.node as {
         objects: Array<{ List: { items: Array<{ String: { sval: string } }> } }>;
         removeType: string;
+        behavior?: string;
       };
+      if (node.removeType === 'OBJECT_SCHEMA') {
+        const schemaName = extractDropTableName(node.objects);
+        const isCascade = node.behavior === 'DROP_CASCADE';
+        results.push({
+          statement: stmt.sql,
+          statementPreview: makePreview(stmt.sql),
+          tableName: null,
+          lockMode: LockMode.ACCESS_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          risk: RiskLevel.CRITICAL,
+          message: isCascade
+            ? `DROP SCHEMA "${schemaName}" CASCADE — drops the schema and ALL objects within it, irreversible data loss`
+            : `DROP SCHEMA "${schemaName}" — drops the schema, acquires ACCESS EXCLUSIVE lock`,
+          ruleId: isCascade ? 'drop-schema-cascade' : 'drop-schema',
+        });
+        break;
+      }
       if (node.removeType !== 'OBJECT_TABLE') break;
 
       const tableName = extractDropTableName(node.objects);

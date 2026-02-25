@@ -215,6 +215,20 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
         });
         break;
       }
+
+      default: {
+        results.push({
+          statement: stmt.sql,
+          statementPreview: makePreview(stmt.sql),
+          tableName,
+          lockMode: LockMode.ACCESS_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          risk: RiskLevel.MEDIUM,
+          message: `ADD CONSTRAINT "${conName}" with unrecognized type "${constraint.contype}" — pgfence cannot determine the exact risk, assuming ACCESS EXCLUSIVE`,
+          ruleId: 'add-constraint-unknown-type',
+        });
+        break;
+      }
     }
   }
 
