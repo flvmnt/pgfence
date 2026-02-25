@@ -713,13 +713,13 @@ DROP TABLE old_data;`;
     expect(refreshCheck!.safeRewrite).toBeDefined();
   });
 
-  it('should detect REFRESH MATERIALIZED VIEW CONCURRENTLY as MEDIUM risk', async () => {
+  it('should detect REFRESH MATERIALIZED VIEW CONCURRENTLY as LOW risk', async () => {
     const results = await analyze([fixture('refresh-matview.sql')], defaultConfig);
     const checks = results[0].checks;
     const concurrentCheck = checks.find((c) => c.ruleId === 'refresh-matview-concurrent');
     expect(concurrentCheck).toBeDefined();
-    expect(concurrentCheck!.risk).toBe(RiskLevel.MEDIUM);
-    expect(concurrentCheck!.lockMode).toBe(LockMode.EXCLUSIVE);
+    expect(concurrentCheck!.risk).toBe(RiskLevel.LOW);
+    expect(concurrentCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
   });
 
   // --- Gap 6: Triggers ---

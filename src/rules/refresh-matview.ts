@@ -3,7 +3,7 @@
  *
  * Detects:
  * - REFRESH MATERIALIZED VIEW (non-concurrent): HIGH risk, ACCESS EXCLUSIVE
- * - REFRESH MATERIALIZED VIEW CONCURRENTLY: MEDIUM risk, EXCLUSIVE (allows reads, blocks writes)
+ * - REFRESH MATERIALIZED VIEW CONCURRENTLY: LOW risk, SHARE UPDATE EXCLUSIVE (allows reads and writes, blocks DDL)
  */
 
 import type { ParsedStatement } from '../parser.js';
@@ -27,10 +27,10 @@ export function checkRefreshMatView(stmt: ParsedStatement): CheckResult[] {
       statement: stmt.sql,
       statementPreview: makePreview(stmt.sql),
       tableName: viewName,
-      lockMode: LockMode.EXCLUSIVE,
-      blocks: getBlockedOperations(LockMode.EXCLUSIVE),
-      risk: RiskLevel.MEDIUM,
-      message: `REFRESH MATERIALIZED VIEW CONCURRENTLY "${viewName}" — acquires EXCLUSIVE lock (allows reads, blocks writes)`,
+      lockMode: LockMode.SHARE_UPDATE_EXCLUSIVE,
+      blocks: getBlockedOperations(LockMode.SHARE_UPDATE_EXCLUSIVE),
+      risk: RiskLevel.LOW,
+      message: `REFRESH MATERIALIZED VIEW CONCURRENTLY "${viewName}" — acquires SHARE UPDATE EXCLUSIVE lock (allows reads and writes, blocks only DDL)`,
       ruleId: 'refresh-matview-concurrent',
     }];
   }
