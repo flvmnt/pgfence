@@ -22,15 +22,23 @@ import { checkDestructive } from './rules/destructive.js';
 import { checkRenameColumn } from './rules/rename-column.js';
 import { checkBestPractices } from './rules/best-practices.js';
 import { checkPreferRobustStmts } from './rules/prefer-robust-stmts.js';
+import { checkAlterEnum } from './rules/alter-enum.js';
+import { checkReindex } from './rules/reindex.js';
+import { checkRefreshMatView } from './rules/refresh-matview.js';
+import { checkTrigger } from './rules/trigger.js';
+import { checkPartition } from './rules/partition.js';
 import { checkPolicies } from './rules/policy.js';
 import { fetchTableStats } from './db-stats.js';
 import { getCloudHooks } from './cloud-hooks.js';
+import { loadPlugins, runPluginRules, runPluginPolicies } from './plugins.js';
+import type { LoadedPlugins } from './plugins.js';
 import type {
   AnalysisResult,
   CheckResult,
   ExtractionResult,
   PgfenceConfig,
   RiskLevel as RiskLevelType,
+  RulesConfig,
   TableStats,
 } from './types.js';
 import { RiskLevel } from './types.js';
@@ -82,6 +90,12 @@ export async function analyze(
     await hooks.onAnalysisStart(filePaths, config);
   }
 
+  // Gap 14: Load plugins once
+  let plugins: LoadedPlugins = { rules: [], policies: [] };
+  if (config.plugins && config.plugins.length > 0) {
+    plugins = await loadPlugins(config.plugins);
+  }
+
   // Fetch DB stats once if needed (--db-url takes precedence, then --stats-file)
   let tableStatsMap: Map<string, TableStats> | null = null;
   let allTableStats: TableStats[] | undefined;
@@ -101,6 +115,10 @@ export async function analyze(
 
   const results: AnalysisResult[] = [];
 
+  // Gap 8: Cross-file migration state — track tables created across files
+  // so that operations on newly-created tables in later files are suppressed.
+  const crossFileCreatedTables = new Set<string>();
+
   for (const filePath of filePaths) {
     const extraction = await extractSQL(filePath, config);
     const stmts = extraction.sql.trim()
@@ -110,12 +128,15 @@ export async function analyze(
     // Track tables created in this migration for visibility logic (Eugene's pattern).
     // Operations on newly-created tables don't need safety warnings since
     // the table has no existing data or concurrent readers.
-    const createdTables = new Set<string>();
+    // Gap 8: merge cross-file created tables from earlier files in the batch.
+    const createdTables = new Set<string>(crossFileCreatedTables);
     for (const stmt of stmts) {
       if (stmt.nodeType === 'CreateStmt') {
         const createNode = stmt.node as { relation?: { relname?: string } };
         if (createNode.relation?.relname) {
-          createdTables.add(createNode.relation.relname.toLowerCase());
+          const name = createNode.relation.relname.toLowerCase();
+          createdTables.add(name);
+          crossFileCreatedTables.add(name);
         }
       }
     }
@@ -133,7 +154,12 @@ export async function analyze(
         });
       }
 
-      const rawChecks = applyRules(stmt, config);
+      const builtInChecks = applyRules(stmt, config);
+      // Gap 14: Run plugin rules alongside built-in rules
+      if (plugins.rules.length > 0) {
+        builtInChecks.push(...runPluginRules(plugins.rules, stmt, config));
+      }
+      const rawChecks = filterByRulesConfig(builtInChecks, config.rules);
       for (const check of rawChecks) {
         // Filter: inline ignore directives
         // '*' = suppress all (bare -- pgfence-ignore), or match specific ruleId
@@ -146,9 +172,12 @@ export async function analyze(
     }
 
     // Apply policy checks
-    const policyViolations = checkPolicies(stmts, config, {
-      autoCommit: extraction.autoCommit,
-    });
+    const builtInPolicies = checkPolicies(stmts, config, { autoCommit: extraction.autoCommit });
+    // Gap 14: Run plugin policies alongside built-in policies
+    if (plugins.policies.length > 0) {
+      builtInPolicies.push(...runPluginPolicies(plugins.policies, stmts, config));
+    }
+    const policyViolations = filterByRulesConfig(builtInPolicies, config.rules);
 
     // Adjust risk if DB stats available
     if (tableStatsMap) {
@@ -187,6 +216,28 @@ export async function analyze(
   return results;
 }
 
+/**
+ * Filter checks/violations by per-rule enable/disable config.
+ * `enable` acts as whitelist (only listed rules run).
+ * `disable` acts as blacklist (listed rules suppressed).
+ */
+function filterByRulesConfig<T extends { ruleId: string }>(items: T[], rules?: RulesConfig): T[] {
+  if (!rules) return items;
+  let filtered = items;
+
+  if (rules.enable && rules.enable.length > 0) {
+    const enableSet = new Set(rules.enable);
+    filtered = filtered.filter((item) => enableSet.has(item.ruleId));
+  }
+
+  if (rules.disable && rules.disable.length > 0) {
+    const disableSet = new Set(rules.disable);
+    filtered = filtered.filter((item) => !disableSet.has(item.ruleId));
+  }
+
+  return filtered;
+}
+
 function applyRules(stmt: ParsedStatement, config: PgfenceConfig): CheckResult[] {
   const results: CheckResult[] = [];
   results.push(...checkAddColumn(stmt, config));
@@ -197,6 +248,11 @@ function applyRules(stmt: ParsedStatement, config: PgfenceConfig): CheckResult[]
   results.push(...checkRenameColumn(stmt, config));
   results.push(...checkBestPractices(stmt));
   results.push(...checkPreferRobustStmts(stmt));
+  results.push(...checkAlterEnum(stmt, config));
+  results.push(...checkReindex(stmt));
+  results.push(...checkRefreshMatView(stmt));
+  results.push(...checkTrigger(stmt));
+  results.push(...checkPartition(stmt, config));
   return results;
 }
 
