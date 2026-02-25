@@ -31,19 +31,22 @@ runs:
   steps:
     - name: Run pgfence
       shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_MAX_RISK: ${{ inputs.max-risk }}
+        INPUT_DB_URL: ${{ inputs.db-url }}
+        INPUT_STATS_FILE: ${{ inputs.stats-file }}
       run: |
-        ARGS="${{ inputs.path }} --ci"
-        if [ "${{ inputs.format }}" != "auto" ]; then
-          ARGS="$ARGS --format ${{ inputs.format }}"
+        ARGS=("$INPUT_PATH" "--ci" "--max-risk" "$INPUT_MAX_RISK")
+        if [ "$INPUT_FORMAT" != "auto" ]; then
+          ARGS+=("--format" "$INPUT_FORMAT")
         fi
-        if [ "${{ inputs.max-risk }}" != "medium" ]; then
-          ARGS="$ARGS --max-risk ${{ inputs.max-risk }}"
+        if [ -n "$INPUT_DB_URL" ]; then
+          ARGS+=("--db-url" "$INPUT_DB_URL")
         fi
-        if [ -n "${{ inputs.db-url }}" ]; then
-          ARGS="$ARGS --db-url ${{ inputs.db-url }}"
+        if [ -n "$INPUT_STATS_FILE" ]; then
+          ARGS+=("--stats-file" "$INPUT_STATS_FILE")
         fi
-        if [ -n "${{ inputs.stats-file }}" ]; then
-          ARGS="$ARGS --stats-file ${{ inputs.stats-file }}"
-        fi
-        
-        npx --yes @flvmnt/pgfence analyze $ARGS
+
+        npx --yes @flvmnt/pgfence analyze "${ARGS[@]}"
