@@ -6,7 +6,7 @@
  * and safe rewrite recipes before you merge.
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { Command } from 'commander';
@@ -15,6 +15,7 @@ import { reportCLI } from './reporters/cli.js';
 import { reportJSON } from './reporters/json.js';
 import { reportGitHub } from './reporters/github-pr.js';
 import { reportSARIF } from './reporters/sarif.js';
+import { loadConfigFile, mergeConfig } from './config.js';
 import { RiskLevel } from './types.js';
 import type { PgfenceConfig, TableStats } from './types.js';
 
@@ -51,16 +52,27 @@ program
   .option('--ci', 'CI mode — exit 1 if max risk exceeded', false)
   .option('--no-lock-timeout', 'Disable lock_timeout requirement')
   .option('--no-statement-timeout', 'Disable statement_timeout requirement')
+  .option('--max-lock-timeout <ms>', 'Maximum allowed lock_timeout in ms (default: 5000)')
+  .option('--max-statement-timeout <ms>', 'Maximum allowed statement_timeout in ms (default: 600000)')
+  .option('--disable-rules <rules...>', 'Disable specific rules by ID')
+  .option('--enable-rules <rules...>', 'Enable only specific rules by ID (whitelist)')
+  .option('--snapshot <path>', 'Schema snapshot JSON for definitive type analysis')
+  .option('--plugin <paths...>', 'Plugin file paths for custom rules')
   .action(async (files: string[], opts) => {
+    // Load config file (.pgfence.toml or .pgfence.json)
+    const fileConfig = await loadConfigFile(process.cwd());
+
     // Load stats file if provided (alternative to --db-url)
     let tableStats: TableStats[] | undefined;
-    if (opts.statsFile) {
-      const raw = await readFile(opts.statsFile, 'utf8');
+    const statsFilePath = opts.statsFile ?? fileConfig?.['stats-file'];
+    if (statsFilePath) {
+      const raw = await readFile(statsFilePath, 'utf8');
       const parsed = JSON.parse(raw);
       tableStats = Array.isArray(parsed) ? parsed : parsed.tables ?? parsed;
     }
 
-    const config: PgfenceConfig = {
+    // Build CLI overrides
+    const cliOverrides: Partial<PgfenceConfig> = {
       format: opts.format as PgfenceConfig['format'],
       output: opts.output as PgfenceConfig['output'],
       dbUrl: opts.dbUrl,
@@ -70,6 +82,18 @@ program
       requireLockTimeout: opts.lockTimeout !== false,
       requireStatementTimeout: opts.statementTimeout !== false,
     };
+
+    if (opts.maxLockTimeout) cliOverrides.maxLockTimeoutMs = parseInt(opts.maxLockTimeout, 10);
+    if (opts.maxStatementTimeout) cliOverrides.maxStatementTimeoutMs = parseInt(opts.maxStatementTimeout, 10);
+    if (opts.snapshot) cliOverrides.snapshotFile = opts.snapshot;
+    if (opts.plugin) cliOverrides.plugins = opts.plugin;
+    if (opts.disableRules || opts.enableRules) {
+      cliOverrides.rules = {};
+      if (opts.disableRules) cliOverrides.rules.disable = opts.disableRules;
+      if (opts.enableRules) cliOverrides.rules.enable = opts.enableRules;
+    }
+
+    const config = mergeConfig(fileConfig, cliOverrides);
 
     try {
       const results = await analyze(files, config);
@@ -115,6 +139,24 @@ program
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence error: ${message}\n`);
       process.exit(2);
+    }
+  });
+
+program
+  .command('snapshot')
+  .description('Generate schema snapshot from a live database')
+  .requiredOption('--db-url <url>', 'Database URL for schema snapshot')
+  .option('--output <path>', 'Output file path', 'pgfence-snapshot.json')
+  .action(async (opts) => {
+    try {
+      const { fetchSchemaSnapshot } = await import('./schema-snapshot.js');
+      const snapshot = await fetchSchemaSnapshot(opts.dbUrl);
+      await writeFile(opts.output, JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
+      process.stdout.write(`Schema snapshot written to ${opts.output} (${snapshot.tables.length} tables)\n`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`pgfence snapshot error: ${message}\n`);
+      process.exit(1);
     }
   });
 
