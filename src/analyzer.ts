@@ -121,9 +121,20 @@ export async function analyze(
 
   for (const filePath of filePaths) {
     const extraction = await extractSQL(filePath, config);
-    const stmts = extraction.sql.trim()
-      ? await parseSQL(extraction.sql)
-      : [];
+    let stmts: ParsedStatement[] = [];
+    if (extraction.sql.trim()) {
+      try {
+        stmts = await parseSQL(extraction.sql);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        extraction.warnings.push({
+          message: `SQL parse error: ${message} — this file could not be analyzed`,
+          filePath,
+          line: 1,
+          column: 1,
+        });
+      }
+    }
 
     // Track tables created in this migration for visibility logic (Eugene's pattern).
     // Operations on newly-created tables don't need safety warnings since
@@ -144,8 +155,8 @@ export async function analyze(
     // Apply statement-level rules (respecting inline ignore directives + visibility logic)
     const checks: CheckResult[] = [];
     for (const stmt of stmts) {
-      // Flag DO blocks and procedures as unanalyzable for coverage stats
-      if (stmt.nodeType === 'DoStmt' || stmt.nodeType === 'CreateFunctionStmt') {
+      // Flag DO blocks, functions, and procedures as unanalyzable for coverage stats
+      if (stmt.nodeType === 'DoStmt' || stmt.nodeType === 'CreateFunctionStmt' || stmt.nodeType === 'CreateProcedureStmt') {
         extraction.warnings.push({
           message: `Unanalyzable dynamic SQL block detected — manual review required`,
           filePath,
@@ -191,11 +202,15 @@ export async function analyze(
       }
     }
 
-    // Compute max risk (use adjustedRisk when available)
+    // Compute max risk (use adjustedRisk when available, include policy violations)
     let maxRisk: RiskLevelType = RiskLevel.SAFE;
     for (const check of checks) {
       const effective = check.adjustedRisk ?? check.risk;
       maxRisk = maxRiskLevel(maxRisk, effective);
+    }
+    for (const v of policyViolations) {
+      if (v.severity === 'error') maxRisk = maxRiskLevel(maxRisk, RiskLevel.HIGH);
+      else if (v.severity === 'warning') maxRisk = maxRiskLevel(maxRisk, RiskLevel.MEDIUM);
     }
 
     results.push({
@@ -266,7 +281,7 @@ export function detectFormat(filePath: string, content: string): PgfenceConfig['
       return 'prisma';
     }
     // Check if it's inside a drizzle directory
-    if (filePath.includes('drizzle') || filePath.includes('drizzle')) {
+    if (filePath.includes('drizzle/') || filePath.includes('drizzle\\')) {
       return 'drizzle';
     }
     return 'sql';
