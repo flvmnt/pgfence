@@ -32,7 +32,7 @@ pgfence analyzes your SQL migration files **before they hit production** and tel
 2. **Risk level** for each operation, optionally adjusted by actual table size from your database
 3. **Safe rewrite recipes**, the exact expand/contract sequence to run instead
 
-Works with **raw SQL**, **TypeORM**, **Prisma**, and **Knex** migrations. No Ruby, no Rust, no Go. Just TypeScript.
+Works with **raw SQL**, **TypeORM**, **Prisma**, **Knex**, **Drizzle**, and **Sequelize** migrations. No Ruby, no Rust, no Go. Just TypeScript.
 
 ## Quick Demo
 
@@ -102,7 +102,7 @@ Other tools in this space worth knowing about:
 | [Eugene](https://github.com/kaaveland/eugene) | Rust | DDL lint + trace modes |
 | [strong_migrations](https://github.com/ankane/strong_migrations) | Ruby | Rails/ActiveRecord migration checks |
 
-pgfence focuses on the Node.js/TypeScript ecosystem with direct ORM extraction (TypeORM, Prisma, Knex), DB-size-aware risk scoring, and safe rewrite recipes.
+pgfence focuses on the Node.js/TypeScript ecosystem with direct ORM extraction (TypeORM, Prisma, Knex, Drizzle, Sequelize), DB-size-aware risk scoring, and safe rewrite recipes.
 
 ## Installation
 
@@ -254,12 +254,15 @@ pgfence checks 28 DDL patterns against Postgres's lock mode semantics:
 | 4 | `ADD COLUMN ... GENERATED STORED` | ACCESS EXCLUSIVE | HIGH | Add regular column + trigger + backfill |
 | 5 | `CREATE INDEX` (non-concurrent) | SHARE | MEDIUM | `CREATE INDEX CONCURRENTLY` |
 | 6 | `DROP INDEX` (non-concurrent) | ACCESS EXCLUSIVE | MEDIUM | `DROP INDEX CONCURRENTLY` |
-| 7 | `ALTER COLUMN TYPE` | ACCESS EXCLUSIVE | HIGH | Expand/contract pattern |
+| 7 | `ALTER COLUMN TYPE` (text/varchar widening) | ACCESS EXCLUSIVE | LOW | Metadata-only, no table rewrite |
+| | `ALTER COLUMN TYPE varchar(N)` | ACCESS EXCLUSIVE | MEDIUM | Safe if widening; verify with schema |
+| | `ALTER COLUMN TYPE` (cross-family) | ACCESS EXCLUSIVE | HIGH | Expand/contract pattern |
 | 8 | `ALTER COLUMN SET NOT NULL` | ACCESS EXCLUSIVE | MEDIUM | CHECK constraint NOT VALID + validate |
 | 9 | `ADD CONSTRAINT ... FOREIGN KEY` | ACCESS EXCLUSIVE | HIGH | NOT VALID + VALIDATE CONSTRAINT |
 | 10 | `ADD CONSTRAINT ... CHECK` | ACCESS EXCLUSIVE | MEDIUM | NOT VALID + VALIDATE CONSTRAINT |
 | 11 | `ADD CONSTRAINT ... UNIQUE` | ACCESS EXCLUSIVE | HIGH | CONCURRENTLY unique index + USING INDEX |
-| 12 | `ADD CONSTRAINT ... EXCLUDE` | ACCESS EXCLUSIVE | HIGH | Build index concurrently first |
+| | `ADD CONSTRAINT ... UNIQUE USING INDEX` | ACCESS EXCLUSIVE | LOW | Instant — attaches pre-built index |
+| 12 | `ADD CONSTRAINT ... EXCLUDE` | ACCESS EXCLUSIVE | HIGH | No concurrent alternative; use lock_timeout |
 | 13 | `DROP TABLE` | ACCESS EXCLUSIVE | CRITICAL | Separate release |
 | 14 | `DROP COLUMN` | ACCESS EXCLUSIVE | HIGH | Remove app references first, then drop |
 | 15 | `TRUNCATE` | ACCESS EXCLUSIVE | CRITICAL | Batched DELETE |
