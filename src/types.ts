@@ -122,6 +122,23 @@ export interface PgfenceConfig {
   output: 'cli' | 'json' | 'github' | 'sarif';
   /** Migration file format */
   format: 'sql' | 'typeorm' | 'prisma' | 'knex' | 'drizzle' | 'sequelize' | 'auto';
+  /** Maximum lock_timeout value in ms before warning (default: 5000) */
+  maxLockTimeoutMs?: number;
+  /** Maximum statement_timeout value in ms before warning (default: 600000) */
+  maxStatementTimeoutMs?: number;
+  /** Per-rule enable/disable */
+  rules?: RulesConfig;
+  /** Plugin file paths */
+  plugins?: string[];
+  /** Schema snapshot file for definitive type change analysis */
+  snapshotFile?: string;
+}
+
+export interface RulesConfig {
+  /** If set, only these rules are enabled (all others disabled) */
+  enable?: string[];
+  /** Rules to disable (applied after enable) */
+  disable?: string[];
 }
 
 /**

@@ -17,6 +17,12 @@ export interface PgfenceConfigFile {
   'max-risk'?: string;
   'require-lock-timeout'?: boolean;
   'require-statement-timeout'?: boolean;
+  'max-lock-timeout'?: number;
+  'max-statement-timeout'?: number;
+  'disable-rules'?: string[];
+  'enable-rules'?: string[];
+  snapshot?: string;
+  plugins?: string[];
 }
 
 function findConfigDir(startDir: string): string | null {
@@ -91,6 +97,16 @@ export function mergeConfig(
     }
     if (fileConfig['require-lock-timeout'] != null) base.requireLockTimeout = fileConfig['require-lock-timeout'];
     if (fileConfig['require-statement-timeout'] != null) base.requireStatementTimeout = fileConfig['require-statement-timeout'];
+    if (fileConfig['max-lock-timeout'] != null) base.maxLockTimeoutMs = fileConfig['max-lock-timeout'];
+    if (fileConfig['max-statement-timeout'] != null) base.maxStatementTimeoutMs = fileConfig['max-statement-timeout'];
+    if (fileConfig['disable-rules'] != null) {
+      base.rules = { ...base.rules, disable: fileConfig['disable-rules'] };
+    }
+    if (fileConfig['enable-rules'] != null) {
+      base.rules = { ...base.rules, enable: fileConfig['enable-rules'] };
+    }
+    if (fileConfig.snapshot != null) base.snapshotFile = fileConfig.snapshot;
+    if (fileConfig.plugins != null) base.plugins = fileConfig.plugins;
   }
 
   return { ...base, ...overrides };
