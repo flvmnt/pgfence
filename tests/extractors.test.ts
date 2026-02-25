@@ -84,11 +84,12 @@ describe('Extractor: Knex', () => {
         expect(result.sql).toContain('ALTER TABLE users ADD COLUMN age INT');
     });
 
-    it('should warn on schema builder calls', async () => {
+    it('should transpile schema builder calls to SQL (Gap 13)', async () => {
         const filePath = path.join(fixturesDir, 'knex-schema-builder.ts');
         const result = await extractKnexSQL(filePath);
-        expect(result.warnings.length).toBeGreaterThan(0);
-        expect(result.warnings[0].message).toContain('Schema builder call');
+        // Schema builder is now transpiled to SQL instead of generating a warning
+        expect(result.sql).toContain('ALTER TABLE');
+        expect(result.sql).toContain('age');
     });
 
     it('should warn on dynamic SQL', async () => {
@@ -130,10 +131,10 @@ describe('Extractor: Sequelize', () => {
         expect(result.warnings[0].message).toContain('Dynamic SQL');
     });
 
-    it('should warn if no queryInterface.sequelize.query is found', async () => {
+    it('should transpile queryInterface builder calls to SQL (Gap 13)', async () => {
         const filePath = path.join(fixturesDir, 'sequelize-no-query.js');
         const result = await extractSequelizeSQL(filePath);
-        expect(result.warnings).toHaveLength(1);
-        expect(result.warnings[0].message).toContain('No queryInterface.sequelize.query() calls found');
+        // Now recognized as a builder call and transpiled (empty table, but still detected)
+        expect(result.warnings).toHaveLength(0);
     });
 });
