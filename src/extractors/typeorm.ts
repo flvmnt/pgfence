@@ -157,7 +157,17 @@ function isQueryRunnerQuery(node: TSNode, paramName: string): boolean {
   const prop = callee.property as TSNode;
   if (prop?.type !== 'Identifier' || (prop.name as string) !== 'query') return false;
   const obj = callee.object as TSNode;
+  // queryRunner.query()
   if (obj?.type === 'Identifier' && (obj.name as string) === paramName) return true;
+  // queryRunner.manager.query()
+  if (obj?.type === 'MemberExpression') {
+    const innerObj = obj.object as TSNode;
+    const innerProp = obj.property as TSNode;
+    if (innerObj?.type === 'Identifier' && (innerObj.name as string) === paramName &&
+        innerProp?.type === 'Identifier' && (innerProp.name as string) === 'manager') {
+      return true;
+    }
+  }
   return false;
 }
 

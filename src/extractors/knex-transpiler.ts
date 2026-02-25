@@ -219,6 +219,13 @@ function transpileDropTable(args: TSNode[], ifExists: boolean): TranspileResult 
   if (tableName) {
     const ifE = ifExists ? ' IF EXISTS' : '';
     sql.push(`DROP TABLE${ifE} ${tableName}`);
+  } else {
+    warnings.push({
+      filePath: '',
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table name in dropTable — cannot statically analyze',
+    });
   }
 
   return { sql, warnings };
@@ -233,6 +240,13 @@ function transpileRenameTable(args: TSNode[]): TranspileResult {
   const to = getStringArg(args[1]);
   if (from && to) {
     sql.push(`ALTER TABLE ${from} RENAME TO ${to}`);
+  } else {
+    warnings.push({
+      filePath: '',
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table name in renameTable — cannot statically analyze',
+    });
   }
 
   return { sql, warnings };
@@ -424,8 +438,9 @@ function extractDefaultValue(node: TSNode): string {
     if (typeof node.value === 'boolean') return String(node.value);
     if (node.value === null) return 'NULL';
   }
-  // For complex expressions, return a placeholder
-  return 'NULL';
+  // For complex expressions (e.g. knex.fn.now()), use a volatile marker
+  // so the analyzer treats it as a non-constant default
+  return 'pgfence_volatile_expr()';
 }
 
 function walkNode(node: unknown, visitor: (n: TSNode) => void): void {

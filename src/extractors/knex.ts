@@ -21,7 +21,7 @@ interface TSNode {
 
 const SCHEMA_BUILDER_METHODS = new Set([
   'createTable', 'alterTable', 'dropTable', 'renameTable',
-  'hasTable', 'hasColumn', 'dropColumn', 'renameColumn',
+  'dropColumn', 'renameColumn',
 ]);
 
 export async function extractKnexSQL(filePath: string): Promise<ExtractionResult> {

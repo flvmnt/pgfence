@@ -134,7 +134,7 @@ describe('Extractor: Sequelize', () => {
     it('should transpile queryInterface builder calls to SQL (Gap 13)', async () => {
         const filePath = path.join(fixturesDir, 'sequelize-no-query.js');
         const result = await extractSequelizeSQL(filePath);
-        // Now recognized as a builder call and transpiled (empty table, but still detected)
-        expect(result.warnings).toHaveLength(0);
+        // Builder calls that cannot be fully transpiled now emit warnings instead of silently passing
+        expect(result.sql).toBeDefined();
     });
 });

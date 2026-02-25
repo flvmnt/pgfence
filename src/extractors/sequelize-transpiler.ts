@@ -86,6 +86,12 @@ export function transpileSequelizeCall(
     case 'renameTable':
       return transpileRenameTable(args);
     default:
+      warnings.push({
+        filePath,
+        line: callNode.loc?.start?.line ?? 0,
+        column: callNode.loc?.start?.column ?? 0,
+        message: `Unsupported Sequelize queryInterface method: ${methodName}`,
+      });
       return { sql, warnings };
   }
 }
@@ -288,7 +294,15 @@ function transpileAddColumn(args: TSNode[], filePath: string): TranspileResult {
   if (args.length < 3) return { sql, warnings };
   const tableName = getStringArg(args[0]);
   const colName = getStringArg(args[1]);
-  if (!tableName || !colName) return { sql, warnings };
+  if (!tableName || !colName) {
+    warnings.push({
+      filePath,
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table/column name in addColumn — cannot statically analyze',
+    });
+    return { sql, warnings };
+  }
 
   const colDef = parseSequelizeColumnDef(args[2], filePath, warnings);
   if (colDef) {
@@ -300,35 +314,59 @@ function transpileAddColumn(args: TSNode[], filePath: string): TranspileResult {
 
 function transpileRemoveColumn(args: TSNode[]): TranspileResult {
   const sql: string[] = [];
-  if (args.length < 2) return { sql, warnings: [] };
+  const warnings: ExtractionWarning[] = [];
+  if (args.length < 2) return { sql, warnings };
   const tableName = getStringArg(args[0]);
   const colName = getStringArg(args[1]);
   if (tableName && colName) {
     sql.push(`ALTER TABLE ${tableName} DROP COLUMN ${colName}`);
+  } else {
+    warnings.push({
+      filePath: '',
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table/column name in removeColumn — cannot statically analyze',
+    });
   }
-  return { sql, warnings: [] };
+  return { sql, warnings };
 }
 
 function transpileRenameColumn(args: TSNode[]): TranspileResult {
   const sql: string[] = [];
-  if (args.length < 3) return { sql, warnings: [] };
+  const warnings: ExtractionWarning[] = [];
+  if (args.length < 3) return { sql, warnings };
   const tableName = getStringArg(args[0]);
   const from = getStringArg(args[1]);
   const to = getStringArg(args[2]);
   if (tableName && from && to) {
     sql.push(`ALTER TABLE ${tableName} RENAME COLUMN ${from} TO ${to}`);
+  } else {
+    warnings.push({
+      filePath: '',
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table/column name in renameColumn — cannot statically analyze',
+    });
   }
-  return { sql, warnings: [] };
+  return { sql, warnings };
 }
 
-function transpileChangeColumn(args: TSNode[], _filePath: string): TranspileResult {
+function transpileChangeColumn(args: TSNode[], filePath: string): TranspileResult {
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
 
   if (args.length < 3) return { sql, warnings };
   const tableName = getStringArg(args[0]);
   const colName = getStringArg(args[1]);
-  if (!tableName || !colName) return { sql, warnings };
+  if (!tableName || !colName) {
+    warnings.push({
+      filePath,
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table/column name in changeColumn — cannot statically analyze',
+    });
+    return { sql, warnings };
+  }
 
   const typeDef = args[2];
   const resolvedType = resolveSequelizeType(typeDef);
@@ -337,6 +375,7 @@ function transpileChangeColumn(args: TSNode[], _filePath: string): TranspileResu
   } else if (typeDef.type === 'ObjectExpression') {
     // Object with type property
     const props = typeDef.properties as TSNode[];
+    let found = false;
     for (const prop of props) {
       if (prop.type !== 'Property') continue;
       const key = prop.key as TSNode;
@@ -344,9 +383,25 @@ function transpileChangeColumn(args: TSNode[], _filePath: string): TranspileResu
         const resolved = resolveSequelizeType(prop.value as TSNode);
         if (resolved) {
           sql.push(`ALTER TABLE ${tableName} ALTER COLUMN ${colName} TYPE ${resolved}`);
+          found = true;
         }
       }
     }
+    if (!found) {
+      warnings.push({
+        filePath,
+        line: typeDef.loc?.start?.line ?? 0,
+        column: typeDef.loc?.start?.column ?? 0,
+        message: `Could not resolve type in changeColumn for "${tableName}"."${colName}" — cannot statically analyze`,
+      });
+    }
+  } else {
+    warnings.push({
+      filePath,
+      line: typeDef.loc?.start?.line ?? 0,
+      column: typeDef.loc?.start?.column ?? 0,
+      message: `Unsupported type argument in changeColumn for "${tableName}"."${colName}" — cannot statically analyze`,
+    });
   }
 
   return { sql, warnings };

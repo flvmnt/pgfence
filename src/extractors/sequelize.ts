@@ -75,6 +75,14 @@ export async function extractSequelizeSQL(filePath: string): Promise<ExtractionR
                     const result = transpileSequelizeCall(node, filePath);
                     if (result.sql.length > 0) {
                         queries.push(...result.sql);
+                    } else if (result.warnings.length === 0) {
+                        const loc = node.loc?.start ?? { line: 0, column: 0 };
+                        warnings.push({
+                            filePath,
+                            line: loc.line,
+                            column: loc.column,
+                            message: 'queryInterface builder call could not be transpiled to SQL — manual review required',
+                        });
                     }
                     warnings.push(...result.warnings);
                 }
