@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "generatedAt": "2025-01-01T00:00:00.000Z",
+  "tables": [
+    {
+      "schemaName": "public",
+      "tableName": "users",
+      "columns": [
+        {
+          "columnName": "id",
+          "dataType": "bigint",
+          "udtName": "int8",
+          "characterMaximumLength": null,
+          "numericPrecision": 64,
+          "numericScale": 0,
+          "isNullable": false,
+          "columnDefault": "nextval('users_id_seq'::regclass)"
+        },
+        {
+          "columnName": "email",
+          "dataType": "character varying",
+          "udtName": "varchar",
+          "characterMaximumLength": 255,
+          "numericPrecision": null,
+          "numericScale": null,
+          "isNullable": false,
+          "columnDefault": null
+        },
+        {
+          "columnName": "name",
+          "dataType": "character varying",
+          "udtName": "varchar",
+          "characterMaximumLength": 100,
+          "numericPrecision": null,
+          "numericScale": null,
+          "isNullable": true,
+          "columnDefault": null
+        }
+      ],
+      "constraints": [
+        {
+          "constraintName": "users_pkey",
+          "constraintType": "PRIMARY KEY",
+          "columns": ["id"]
+        }
+      ],
+      "indexes": [
+        {
+          "indexName": "users_pkey",
+          "indexDef": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)",
+          "isUnique": true
+        },
+        {
+          "indexName": "users_email_idx",
+          "indexDef": "CREATE UNIQUE INDEX users_email_idx ON public.users USING btree (email)",
+          "isUnique": true
+        }
+      ]
+    },
+    {
+      "schemaName": "public",
+      "tableName": "orders",
+      "columns": [
+        {
+          "columnName": "id",
+          "dataType": "bigint",
+          "udtName": "int8",
+          "characterMaximumLength": null,
+          "numericPrecision": 64,
+          "numericScale": 0,
+          "isNullable": false,
+          "columnDefault": null
+        },
+        {
+          "columnName": "user_id",
+          "dataType": "bigint",
+          "udtName": "int8",
+          "characterMaximumLength": null,
+          "numericPrecision": 64,
+          "numericScale": 0,
+          "isNullable": false,
+          "columnDefault": null
+        },
+        {
+          "columnName": "status",
+          "dataType": "character varying",
+          "udtName": "varchar",
+          "characterMaximumLength": 36,
+          "numericPrecision": null,
+          "numericScale": null,
+          "isNullable": false,
+          "columnDefault": "'pending'::character varying"
+        }
+      ],
+      "constraints": [
+        {
+          "constraintName": "orders_pkey",
+          "constraintType": "PRIMARY KEY",
+          "columns": ["id"]
+        }
+      ],
+      "indexes": [
+        {
+          "indexName": "orders_pkey",
+          "indexDef": "CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (id)",
+          "isUnique": true
+        }
+      ]
+    }
+  ]
+}
