@@ -49,7 +49,11 @@ async function loadToml(configPath: string): Promise<PgfenceConfigFile> {
 
 async function loadJson(configPath: string): Promise<PgfenceConfigFile> {
   const raw = await readFile(configPath, 'utf8');
-  return JSON.parse(raw) as PgfenceConfigFile;
+  const parsed = JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`Invalid config file ${configPath}: expected a JSON object`);
+  }
+  return parsed as PgfenceConfigFile;
 }
 
 /**

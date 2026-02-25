@@ -32,8 +32,10 @@ export async function filterFilesByStartAfter(
     try {
       const st = await stat(fp);
       if (st.mtimeMs >= startAfterMs) result.push(fp);
-    } catch {
-      // File may not exist (e.g. from git diff with deleted files); skip
+    } catch (err) {
+      const error = err as { code?: string };
+      if (error.code === 'ENOENT') continue;
+      throw new Error(`Cannot stat migration file "${fp}": ${error.code ?? err}`);
     }
   }
   return result;

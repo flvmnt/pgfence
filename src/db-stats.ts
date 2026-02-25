@@ -19,8 +19,9 @@ export async function fetchTableStats(dbUrl: string): Promise<TableStats[]> {
   try {
     const pg = await import('pg');
     Client = (pg.default?.Client ?? pg.Client) as typeof Client;
-  } catch {
-    throw new Error('Install pg to use --db-url: pnpm add pg');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Cannot load pg module (needed for --db-url): ${message}. Try: pnpm add pg`);
   }
 
   const client = new Client({ connectionString: dbUrl, connectionTimeoutMillis: 5000 });

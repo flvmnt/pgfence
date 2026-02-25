@@ -32,7 +32,13 @@ const program = new Command();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const pkgPath = path.resolve(__dirname, '../package.json');
-const pkg = JSON.parse(await readFile(pkgPath, 'utf8'));
+let pkg: { version: string };
+try {
+  pkg = JSON.parse(await readFile(pkgPath, 'utf8'));
+} catch {
+  process.stderr.write('pgfence: could not read package.json\n');
+  process.exit(2);
+}
 
 program
   .name('pgfence')
@@ -69,6 +75,15 @@ program
       const raw = await readFile(statsFilePath, 'utf8');
       const parsed = JSON.parse(raw);
       tableStats = Array.isArray(parsed) ? parsed : parsed.tables ?? parsed;
+      if (tableStats && tableStats.length > 0) {
+        const sample = tableStats[0];
+        if (typeof sample.tableName !== 'string' || typeof sample.rowCount !== 'number') {
+          throw new Error(
+            `Invalid stats file format. Expected objects with {schemaName, tableName, rowCount, totalBytes}. ` +
+            `Got: ${JSON.stringify(sample).slice(0, 200)}`,
+          );
+        }
+      }
     }
 
     // Build CLI overrides

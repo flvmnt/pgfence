@@ -40,8 +40,8 @@ export async function getCloudHooks(): Promise<CloudHooks> {
         // Anything else might be a compilation error inside the cloud module.
         const error = err as { code?: string, message?: string };
         const isNotFound = error.code === 'MODULE_NOT_FOUND' || error.code === 'ERR_MODULE_NOT_FOUND';
-        if (!isNotFound && process.env.DEBUG) {
-            console.warn('pgfence [debug]: Failed to load cloud hooks:', error.message);
+        if (!isNotFound) {
+            process.stderr.write(`pgfence: failed to load cloud hooks: ${error.message}. Cloud features are disabled.\n`);
         }
     }
 
