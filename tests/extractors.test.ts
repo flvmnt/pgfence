@@ -51,6 +51,30 @@ describe('Extractor: TypeORM', () => {
         expect(result.warnings).toHaveLength(1);
         expect(result.warnings[0].message).toContain('No up() method found');
     });
+
+    it('should extract SQL when parameter is named something other than queryRunner', async () => {
+        const filePath = path.join(fixturesDir, 'typeorm-qr-parameter.ts');
+        const result = await extractTypeORMSQL(filePath);
+
+        expect(result.warnings).toHaveLength(0);
+        expect(result.sql).toContain('ALTER TABLE users ADD COLUMN age integer');
+        expect(result.sql).toContain('SET lock_timeout');
+    });
+
+    it('should detect transaction = false and set autoCommit', async () => {
+        const filePath = path.join(fixturesDir, 'typeorm-transaction-false.ts');
+        const result = await extractTypeORMSQL(filePath);
+
+        expect(result.autoCommit).toBe(true);
+        expect(result.sql).toContain('ALTER TABLE foo ADD CONSTRAINT fk_bar');
+    });
+
+    it('should not set autoCommit when transaction property is absent', async () => {
+        const filePath = path.join(fixturesDir, 'dangerous-typeorm.ts');
+        const result = await extractTypeORMSQL(filePath);
+
+        expect(result.autoCommit).toBe(false);
+    });
 });
 
 describe('Extractor: Knex', () => {

@@ -53,7 +53,7 @@ describe('pgfence analyzer', () => {
     expect(fkCheck!.risk).toBe(RiskLevel.HIGH);
   });
 
-  it('should detect ALTER COLUMN TYPE as HIGH risk', async () => {
+  it('should detect ALTER COLUMN TYPE (cross-family) as HIGH risk', async () => {
     const results = await analyze([fixture('dangerous-alter-column.sql')], defaultConfig);
     expect(results).toHaveLength(1);
     const checks = results[0].checks;
@@ -62,6 +62,7 @@ describe('pgfence analyzer', () => {
     expect(typeCheck).toBeDefined();
     expect(typeCheck!.risk).toBe(RiskLevel.HIGH);
     expect(typeCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(typeCheck!.safeRewrite).toBeDefined();
   });
 
   it('should detect ALTER COLUMN SET NOT NULL as MEDIUM risk', async () => {
@@ -371,6 +372,32 @@ describe('pgfence analyzer', () => {
     expect(compounding!.severity).toBe('warning');
   });
 
+  it('should NOT warn on compounding ACCESS EXCLUSIVE when TypeORM transaction = false', async () => {
+    const results = await analyze(
+      [fixture('typeorm-transaction-false.ts')],
+      { ...defaultConfig, format: 'typeorm' },
+    );
+    const violations = results[0].policyViolations;
+
+    const compounding = violations.find((v) => v.ruleId === 'statement-after-access-exclusive');
+    expect(compounding).toBeUndefined();
+  });
+
+  it('should extract SQL from TypeORM migrations with non-standard parameter names', async () => {
+    const results = await analyze(
+      [fixture('typeorm-qr-parameter.ts')],
+      { ...defaultConfig, format: 'typeorm' },
+    );
+    expect(results).toHaveLength(1);
+    // Should have extracted the ALTER TABLE statement
+    expect(results[0].statementCount).toBeGreaterThan(0);
+    // Should not have missing lock_timeout since the fixture sets it
+    const missingLockTimeout = results[0].policyViolations.find(
+      (v) => v.ruleId === 'missing-lock-timeout',
+    );
+    expect(missingLockTimeout).toBeUndefined();
+  });
+
   // --- P0: Inline ignore ---
 
   it('should respect -- pgfence: ignore inline directives (legacy syntax)', async () => {
@@ -537,5 +564,91 @@ DROP TABLE old_data;`;
 
     const tsCheck = checks.find((c) => c.ruleId === 'prefer-timestamptz' && c.tableName === 'events');
     expect(tsCheck).toBeDefined();
+  });
+
+  // --- FP #1: ALTER COLUMN TYPE — safe type changes ---
+
+  it('should detect ALTER COLUMN TYPE to text as LOW risk (metadata-only)', async () => {
+    const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
+    const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
+
+    const textChange = checks.find((c) => c.message.includes('target is text'));
+    expect(textChange).toBeDefined();
+    expect(textChange!.risk).toBe(RiskLevel.LOW);
+    expect(textChange!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(textChange!.safeRewrite).toBeUndefined();
+  });
+
+  it('should detect ALTER COLUMN TYPE to varchar (no length) as LOW risk', async () => {
+    const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
+    const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
+
+    const varcharNoLen = checks.find((c) => c.message.includes('removing varchar length constraint'));
+    expect(varcharNoLen).toBeDefined();
+    expect(varcharNoLen!.risk).toBe(RiskLevel.LOW);
+    expect(varcharNoLen!.safeRewrite).toBeUndefined();
+  });
+
+  it('should detect ALTER COLUMN TYPE to varchar(N) as MEDIUM risk (needs schema to verify)', async () => {
+    const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
+    const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
+
+    const varcharWithLen = checks.filter((c) => c.risk === RiskLevel.MEDIUM);
+    // Two varchar(N) statements: varchar(64) and varchar(255)
+    expect(varcharWithLen).toHaveLength(2);
+    expect(varcharWithLen[0].message).toContain('safe if widening');
+    expect(varcharWithLen[0].safeRewrite).toBeDefined();
+  });
+
+  it('should detect ALTER COLUMN TYPE cross-family change as HIGH risk', async () => {
+    const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
+    const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
+
+    const highRisk = checks.filter((c) => c.risk === RiskLevel.HIGH);
+    expect(highRisk).toHaveLength(1);
+    expect(highRisk[0].message).toContain('rewrites the entire table');
+    expect(highRisk[0].safeRewrite).toBeDefined();
+  });
+
+  // --- FP #2: UNIQUE/PK USING INDEX should be LOW risk ---
+
+  it('should detect ADD UNIQUE USING INDEX as LOW risk (instant metadata operation)', async () => {
+    const results = await analyze([fixture('safe-constraint-using-index.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const uniqueCheck = checks.find((c) => c.ruleId === 'add-constraint-unique-using-index');
+    expect(uniqueCheck).toBeDefined();
+    expect(uniqueCheck!.risk).toBe(RiskLevel.LOW);
+    expect(uniqueCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(uniqueCheck!.tableName).toBe('businesses');
+    expect(uniqueCheck!.safeRewrite).toBeUndefined();
+  });
+
+  it('should detect ADD PRIMARY KEY USING INDEX as LOW risk (instant metadata operation)', async () => {
+    const results = await analyze([fixture('safe-constraint-using-index.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const pkCheck = checks.find((c) => c.ruleId === 'add-pk-using-index');
+    expect(pkCheck).toBeDefined();
+    expect(pkCheck!.risk).toBe(RiskLevel.LOW);
+    expect(pkCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(pkCheck!.tableName).toBe('users');
+    expect(pkCheck!.safeRewrite).toBeUndefined();
+  });
+
+  // --- FP #3: EXCLUDE safeRewrite should not suggest invalid USING INDEX syntax ---
+
+  it('should provide honest EXCLUDE safeRewrite without invalid USING INDEX syntax', async () => {
+    const results = await analyze([fixture('dangerous-constraint.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const excludeCheck = checks.find((c) => c.ruleId === 'add-constraint-exclude');
+    expect(excludeCheck).toBeDefined();
+    expect(excludeCheck!.safeRewrite).toBeDefined();
+    expect(excludeCheck!.safeRewrite!.description).toContain('No concurrent alternative');
+    // Must NOT contain invalid USING INDEX syntax
+    const allSteps = excludeCheck!.safeRewrite!.steps.join('\n');
+    expect(allSteps).not.toContain('USING INDEX');
+    expect(allSteps).toContain('lock_timeout');
   });
 });

@@ -23,6 +23,7 @@ import { makePreview } from '../parser.js';
 interface ConstraintDef {
   contype: string;
   conname?: string;
+  indexname?: string;
   skip_validation?: boolean;
   initially_valid?: boolean;
   pktable?: { relname: string };
@@ -124,44 +125,70 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
       }
 
       case 'CONSTR_UNIQUE': {
-        results.push({
-          statement: stmt.sql,
-          statementPreview: makePreview(stmt.sql),
-          tableName,
-          lockMode: LockMode.ACCESS_EXCLUSIVE,
-          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-          risk: RiskLevel.HIGH,
-          message: `ADD UNIQUE "${conName}" — acquires ACCESS EXCLUSIVE lock with full table scan`,
-          ruleId: 'add-constraint-unique',
-          safeRewrite: {
-            description: 'Create unique index concurrently, then add constraint using the index',
-            steps: [
-              `CREATE UNIQUE INDEX CONCURRENTLY ${conName}_idx ON ${tableName}(...);`,
-              `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} UNIQUE USING INDEX ${conName}_idx;`,
-            ],
-          },
-        });
+        if (constraint.indexname) {
+          results.push({
+            statement: stmt.sql,
+            statementPreview: makePreview(stmt.sql),
+            tableName,
+            lockMode: LockMode.ACCESS_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            risk: RiskLevel.LOW,
+            message: `ADD UNIQUE "${conName}" USING INDEX "${constraint.indexname}" — instant metadata operation, index already built`,
+            ruleId: 'add-constraint-unique-using-index',
+          });
+        } else {
+          results.push({
+            statement: stmt.sql,
+            statementPreview: makePreview(stmt.sql),
+            tableName,
+            lockMode: LockMode.ACCESS_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            risk: RiskLevel.HIGH,
+            message: `ADD UNIQUE "${conName}" — acquires ACCESS EXCLUSIVE lock with full table scan`,
+            ruleId: 'add-constraint-unique',
+            safeRewrite: {
+              description: 'Create unique index concurrently, then add constraint using the index',
+              steps: [
+                `CREATE UNIQUE INDEX CONCURRENTLY ${conName}_idx ON ${tableName}(...);`,
+                `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} UNIQUE USING INDEX ${conName}_idx;`,
+              ],
+            },
+          });
+        }
         break;
       }
 
       case 'CONSTR_PRIMARY': {
-        results.push({
-          statement: stmt.sql,
-          statementPreview: makePreview(stmt.sql),
-          tableName,
-          lockMode: LockMode.ACCESS_EXCLUSIVE,
-          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-          risk: RiskLevel.HIGH,
-          message: `ADD PRIMARY KEY "${conName}" without USING INDEX — acquires ACCESS EXCLUSIVE lock with full table scan`,
-          ruleId: 'add-pk-without-using-index',
-          safeRewrite: {
-            description: 'Create unique index concurrently, then add primary key using the index',
-            steps: [
-              `CREATE UNIQUE INDEX CONCURRENTLY ${conName}_idx ON ${tableName}(...);`,
-              `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} PRIMARY KEY USING INDEX ${conName}_idx;`,
-            ],
-          },
-        });
+        if (constraint.indexname) {
+          results.push({
+            statement: stmt.sql,
+            statementPreview: makePreview(stmt.sql),
+            tableName,
+            lockMode: LockMode.ACCESS_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            risk: RiskLevel.LOW,
+            message: `ADD PRIMARY KEY "${conName}" USING INDEX "${constraint.indexname}" — instant metadata operation, index already built`,
+            ruleId: 'add-pk-using-index',
+          });
+        } else {
+          results.push({
+            statement: stmt.sql,
+            statementPreview: makePreview(stmt.sql),
+            tableName,
+            lockMode: LockMode.ACCESS_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            risk: RiskLevel.HIGH,
+            message: `ADD PRIMARY KEY "${conName}" without USING INDEX — acquires ACCESS EXCLUSIVE lock with full table scan`,
+            ruleId: 'add-pk-without-using-index',
+            safeRewrite: {
+              description: 'Create unique index concurrently, then add primary key using the index',
+              steps: [
+                `CREATE UNIQUE INDEX CONCURRENTLY ${conName}_idx ON ${tableName}(...);`,
+                `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} PRIMARY KEY USING INDEX ${conName}_idx;`,
+              ],
+            },
+          });
+        }
         break;
       }
 
@@ -176,12 +203,13 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
           message: `ADD EXCLUDE "${conName}" — acquires ACCESS EXCLUSIVE lock`,
           ruleId: 'add-constraint-exclude',
           safeRewrite: {
-            description: 'Build exclusion index concurrently, then add constraint using the index',
+            description: 'No concurrent alternative exists for EXCLUDE constraints. Minimize lock duration.',
             steps: [
-              `-- 1. Build the underlying index concurrently`,
-              `CREATE INDEX CONCURRENTLY ${conName}_idx ON ${tableName} USING gist (...);`,
-              `-- 2. Add the exclusion constraint using the pre-built index`,
-              `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} EXCLUDE USING INDEX ${conName}_idx (...);`,
+              `-- EXCLUDE constraints always require ACCESS EXCLUSIVE lock with no safe alternative.`,
+              `-- Minimize impact by setting a low lock_timeout:`,
+              `SET lock_timeout = '2s';`,
+              `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} EXCLUDE USING gist (...);`,
+              `-- Retry in a loop if lock_timeout expires.`,
             ],
           },
         });

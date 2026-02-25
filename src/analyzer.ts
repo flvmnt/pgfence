@@ -146,7 +146,9 @@ export async function analyze(
     }
 
     // Apply policy checks
-    const policyViolations = checkPolicies(stmts, config);
+    const policyViolations = checkPolicies(stmts, config, {
+      autoCommit: extraction.autoCommit,
+    });
 
     // Adjust risk if DB stats available
     if (tableStatsMap) {

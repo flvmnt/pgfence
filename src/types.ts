@@ -85,6 +85,7 @@ export interface ExtractionWarning {
 export interface ExtractionResult {
   sql: string;
   warnings: ExtractionWarning[];
+  autoCommit?: boolean;
 }
 
 export interface AnalysisResult {

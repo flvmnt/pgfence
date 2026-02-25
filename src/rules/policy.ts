@@ -21,6 +21,7 @@ import type { PgfenceConfig, PolicyViolation } from '../types.js';
 export function checkPolicies(
   stmts: ParsedStatement[],
   config: PgfenceConfig,
+  options?: { autoCommit?: boolean },
 ): PolicyViolation[] {
   const violations: PolicyViolation[] = [];
 
@@ -72,8 +73,10 @@ export function checkPolicies(
     }
 
     // Track ACCESS EXCLUSIVE statements for compounding danger (Eugene E4)
-    // These are statements that take ACCESS EXCLUSIVE on existing tables
-    if (isAccessExclusiveStatement(stmt)) {
+    // These are statements that take ACCESS EXCLUSIVE on existing tables.
+    // Skip when autoCommit is true (e.g. TypeORM transaction = false) since
+    // each statement auto-commits and locks don't compound across statements.
+    if (!options?.autoCommit && isAccessExclusiveStatement(stmt)) {
       if (hasAccessExclusive) {
         // Second ACCESS EXCLUSIVE statement in same transaction — compounding danger
         violations.push({

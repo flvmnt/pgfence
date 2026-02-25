@@ -16,6 +16,12 @@ interface TSNode {
   [key: string]: unknown;
 }
 
+interface UpMethodInfo {
+  body: TSNode;
+  paramName: string;
+  autoCommit: boolean;
+}
+
 export async function extractTypeORMSQL(filePath: string): Promise<ExtractionResult> {
   const source = await readFile(filePath, 'utf8');
   const warnings: ExtractionWarning[] = [];
@@ -30,8 +36,8 @@ export async function extractTypeORMSQL(filePath: string): Promise<ExtractionRes
   }) as unknown as TSNode;
 
   // Find the up() method in the class
-  const upMethod = findUpMethod(ast);
-  if (!upMethod) {
+  const upInfo = findUpMethod(ast);
+  if (!upInfo) {
     warnings.push({
       filePath,
       line: 1,
@@ -41,11 +47,11 @@ export async function extractTypeORMSQL(filePath: string): Promise<ExtractionRes
     return { sql: '', warnings };
   }
 
-  // Walk the up() method body to find queryRunner.query() calls
-  walkNode(upMethod, (node: TSNode) => {
+  // Walk the up() method body to find <paramName>.query() calls
+  walkNode(upInfo.body, (node: TSNode) => {
     if (
       node.type === 'CallExpression' &&
-      isQueryRunnerQuery(node)
+      isQueryRunnerQuery(node, upInfo.paramName)
     ) {
       const args = node.arguments as TSNode[];
       if (args.length === 0) return;
@@ -66,31 +72,72 @@ export async function extractTypeORMSQL(filePath: string): Promise<ExtractionRes
     }
   });
 
-  return { sql: queries.join(';\n'), warnings };
+  return { sql: queries.join(';\n'), warnings, autoCommit: upInfo.autoCommit };
 }
 
-function findUpMethod(ast: TSNode): TSNode | null {
-  let result: TSNode | null = null;
+function findUpMethod(ast: TSNode): UpMethodInfo | null {
+  let body: TSNode | null = null;
+  let paramName = 'queryRunner';
+  let autoCommit = false;
+  let classBody: TSNode | null = null;
+
   walkNode(ast, (node: TSNode) => {
-    if (result) return;
+    // Track the class body so we can check for `transaction = false`
+    if (node.type === 'ClassBody') {
+      classBody = node;
+    }
+
+    if (body) return;
     if (
       node.type === 'MethodDefinition' &&
       (node.key as TSNode)?.type === 'Identifier' &&
       ((node.key as TSNode).name as string) === 'up'
     ) {
-      result = node.value as TSNode;
+      const method = node.value as TSNode;
+      body = method;
+
+      // Extract the first parameter name (e.g. `qr` from `up(qr: QueryRunner)`)
+      const params = method.params as TSNode[] | undefined;
+      if (params && params.length > 0) {
+        const firstParam = params[0];
+        if (firstParam.type === 'Identifier') {
+          paramName = firstParam.name as string;
+        }
+      }
     }
   });
-  return result;
+
+  if (!body) return null;
+
+  // Check for `transaction = false` class property
+  if (classBody) {
+    const members = (classBody as TSNode).body as TSNode[] | undefined;
+    if (members) {
+      for (const member of members) {
+        if (
+          member.type === 'PropertyDefinition' &&
+          (member.key as TSNode)?.type === 'Identifier' &&
+          ((member.key as TSNode).name as string) === 'transaction' &&
+          (member.value as TSNode)?.type === 'Literal' &&
+          (member.value as TSNode).value === false
+        ) {
+          autoCommit = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return { body, paramName, autoCommit };
 }
 
-function isQueryRunnerQuery(node: TSNode): boolean {
+function isQueryRunnerQuery(node: TSNode, paramName: string): boolean {
   const callee = node.callee as TSNode;
   if (callee?.type !== 'MemberExpression') return false;
   const prop = callee.property as TSNode;
   if (prop?.type !== 'Identifier' || (prop.name as string) !== 'query') return false;
   const obj = callee.object as TSNode;
-  if (obj?.type === 'Identifier' && (obj.name as string) === 'queryRunner') return true;
+  if (obj?.type === 'Identifier' && (obj.name as string) === paramName) return true;
   return false;
 }
 
