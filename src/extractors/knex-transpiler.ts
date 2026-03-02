@@ -174,7 +174,22 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
   // Walk the callback body for column definitions and alterations
   const columns = extractColumnDefs(callback, paramName, filePath, warnings);
   for (const col of columns) {
-    sql.push(`ALTER TABLE "${tableName}" ADD COLUMN "${col.name}" ${col.type}${col.modifiers}`);
+    if (col.modifiers.includes('__PGFENCE_ALTER__')) {
+      // .alter() means modify existing column, not add new one
+      const cleanMods = col.modifiers.replace(' __PGFENCE_ALTER__', '');
+      sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${col.name}" TYPE ${col.type}`);
+      if (cleanMods.includes('NOT NULL')) {
+        sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${col.name}" SET NOT NULL`);
+      }
+      if (cleanMods.includes('DEFAULT ')) {
+        const defMatch = cleanMods.match(/DEFAULT\s+(\S+(?:\([^)]*\))?)/);
+        if (defMatch) {
+          sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${col.name}" SET DEFAULT ${defMatch[1]}`);
+        }
+      }
+    } else {
+      sql.push(`ALTER TABLE "${tableName}" ADD COLUMN "${col.name}" ${col.type}${col.modifiers}`);
+    }
   }
 
   // Look for dropColumn calls
@@ -196,6 +211,14 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
           sql.push(`ALTER TABLE "${tableName}" DROP COLUMN "${colName}"`);
         }
       }
+    } else if (method === 'dropColumns') {
+      const callArgs = node.arguments as TSNode[];
+      for (const arg of callArgs) {
+        const colName = getStringArg(arg);
+        if (colName) {
+          sql.push(`ALTER TABLE "${tableName}" DROP COLUMN "${colName}"`);
+        }
+      }
     } else if (method === 'renameColumn') {
       const callArgs = node.arguments as TSNode[];
       if (callArgs.length >= 2) {
@@ -203,6 +226,22 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
         const to = getStringArg(callArgs[1]);
         if (from && to) {
           sql.push(`ALTER TABLE "${tableName}" RENAME COLUMN "${from}" TO "${to}"`);
+        }
+      }
+    } else if (method === 'setNullable') {
+      const callArgs = node.arguments as TSNode[];
+      if (callArgs.length > 0) {
+        const colName = getStringArg(callArgs[0]);
+        if (colName) {
+          sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" DROP NOT NULL`);
+        }
+      }
+    } else if (method === 'dropNullable') {
+      const callArgs = node.arguments as TSNode[];
+      if (callArgs.length > 0) {
+        const colName = getStringArg(callArgs[0]);
+        if (colName) {
+          sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" SET NOT NULL`);
         }
       }
     }
@@ -290,7 +329,9 @@ function extractColumnDefs(
   const columns: ColumnDef[] = [];
 
   walkNode(callback, (node: TSNode) => {
-    if (node.type !== 'ExpressionStatement' && node.type !== 'CallExpression') return;
+    // Only process ExpressionStatements to avoid parsing the same chain multiple times
+    // via nested CallExpression nodes
+    if (node.type !== 'ExpressionStatement') return;
 
     // Find the root call in a chain: t.string('name').notNullable().defaultTo('...')
     const rootCall = findRootColumnCall(node, paramName);
@@ -367,7 +408,7 @@ function parseColumnChain(
   if (pgType === undefined) return null; // Not a column type method
 
   // Skip methods that aren't column definitions (like dropColumn, renameColumn)
-  if (['dropColumn', 'renameColumn', 'index', 'unique', 'primary', 'dropUnique', 'dropPrimary', 'dropIndex', 'dropForeign'].includes(knexType)) {
+  if (['dropColumn', 'dropColumns', 'renameColumn', 'setNullable', 'dropNullable', 'index', 'unique', 'primary', 'dropUnique', 'dropPrimary', 'dropIndex', 'dropForeign'].includes(knexType)) {
     return null;
   }
 
@@ -447,6 +488,9 @@ function parseColumnChain(
             modifiers += ` ${prefix} ${action.toUpperCase()}`;
           }
         }
+        break;
+      case 'alter':
+        modifiers += ' __PGFENCE_ALTER__';
         break;
       case 'comment':
         // Skip comments in SQL generation
