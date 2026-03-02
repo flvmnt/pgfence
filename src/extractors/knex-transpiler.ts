@@ -70,6 +70,7 @@ export function transpileKnexSchemaCall(
     case 'createTableIfNotExists':
       return transpileCreateTable(args, filePath, methodName === 'createTableIfNotExists');
     case 'alterTable':
+    case 'table':
       return transpileAlterTable(args, filePath);
     case 'dropTable':
     case 'dropTableIfExists':
@@ -139,8 +140,8 @@ function transpileCreateTable(
 
   const columns = extractColumnDefs(callback, paramName, filePath, warnings);
   const ifNE = ifNotExists ? ' IF NOT EXISTS' : '';
-  const colDefs = columns.map((c) => `${c.name} ${c.type}${c.modifiers}`).join(', ');
-  sql.push(`CREATE TABLE${ifNE} ${tableName} (${colDefs})`);
+  const colDefs = columns.map((c) => `"${c.name}" ${c.type}${c.modifiers}`).join(', ');
+  sql.push(`CREATE TABLE${ifNE} "${tableName}" (${colDefs})`);
 
   return { sql, warnings };
 }
@@ -173,7 +174,7 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
   // Walk the callback body for column definitions and alterations
   const columns = extractColumnDefs(callback, paramName, filePath, warnings);
   for (const col of columns) {
-    sql.push(`ALTER TABLE ${tableName} ADD COLUMN ${col.name} ${col.type}${col.modifiers}`);
+    sql.push(`ALTER TABLE "${tableName}" ADD COLUMN "${col.name}" ${col.type}${col.modifiers}`);
   }
 
   // Look for dropColumn calls
@@ -192,7 +193,7 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
       if (callArgs.length > 0) {
         const colName = getStringArg(callArgs[0]);
         if (colName) {
-          sql.push(`ALTER TABLE ${tableName} DROP COLUMN ${colName}`);
+          sql.push(`ALTER TABLE "${tableName}" DROP COLUMN "${colName}"`);
         }
       }
     } else if (method === 'renameColumn') {
@@ -201,7 +202,7 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
         const from = getStringArg(callArgs[0]);
         const to = getStringArg(callArgs[1]);
         if (from && to) {
-          sql.push(`ALTER TABLE ${tableName} RENAME COLUMN ${from} TO ${to}`);
+          sql.push(`ALTER TABLE "${tableName}" RENAME COLUMN "${from}" TO "${to}"`);
         }
       }
     }
@@ -218,7 +219,7 @@ function transpileDropTable(args: TSNode[], ifExists: boolean): TranspileResult 
   const tableName = getStringArg(args[0]);
   if (tableName) {
     const ifE = ifExists ? ' IF EXISTS' : '';
-    sql.push(`DROP TABLE${ifE} ${tableName}`);
+    sql.push(`DROP TABLE${ifE} "${tableName}"`);
   } else {
     warnings.push({
       filePath: '',
@@ -239,7 +240,7 @@ function transpileRenameTable(args: TSNode[]): TranspileResult {
   const from = getStringArg(args[0]);
   const to = getStringArg(args[1]);
   if (from && to) {
-    sql.push(`ALTER TABLE ${from} RENAME TO ${to}`);
+    sql.push(`ALTER TABLE "${from}" RENAME TO "${to}"`);
   } else {
     warnings.push({
       filePath: '',
@@ -266,6 +267,20 @@ function getCallbackParamName(callback: TSNode): string | null {
   return null;
 }
 
+function isTimestampsCall(node: TSNode, paramName: string): boolean {
+  if (node.type !== 'CallExpression') return false;
+  const callee = node.callee as TSNode;
+  if (callee?.type !== 'MemberExpression') return false;
+  const obj = callee.object as TSNode;
+  const prop = callee.property as TSNode;
+  return (
+    obj?.type === 'Identifier' &&
+    (obj.name as string) === paramName &&
+    prop?.type === 'Identifier' &&
+    (prop.name as string) === 'timestamps'
+  );
+}
+
 function extractColumnDefs(
   callback: TSNode,
   paramName: string,
@@ -280,6 +295,13 @@ function extractColumnDefs(
     // Find the root call in a chain: t.string('name').notNullable().defaultTo('...')
     const rootCall = findRootColumnCall(node, paramName);
     if (!rootCall) return;
+
+    // Handle timestamps() specially: it creates two columns
+    if (isTimestampsCall(rootCall, paramName)) {
+      columns.push({ name: 'created_at', type: 'timestamp', modifiers: '' });
+      columns.push({ name: 'updated_at', type: 'timestamp', modifiers: '' });
+      return;
+    }
 
     const col = parseColumnChain(rootCall, paramName, filePath, warnings);
     if (col) columns.push(col);
@@ -377,6 +399,7 @@ function parseColumnChain(
 
   // Parse modifiers from chain
   let modifiers = '';
+  let pendingRef: string | null = null;
   for (let i = 1; i < chain.length; i++) {
     const call = chain[i];
     switch (call.method) {
@@ -403,11 +426,17 @@ function parseColumnChain(
       case 'references':
         if (call.args.length > 0) {
           const ref = getStringArg(call.args[0]);
-          if (ref) modifiers += ` REFERENCES ${ref}`;
+          if (ref) pendingRef = ref;
         }
         break;
       case 'inTable':
-        // Part of references chain
+        if (call.args.length > 0 && pendingRef) {
+          const tbl = getStringArg(call.args[0]);
+          if (tbl) {
+            modifiers += ` REFERENCES "${tbl}"("${pendingRef}")`;
+            pendingRef = null;
+          }
+        }
         break;
       case 'onDelete':
       case 'onUpdate':
@@ -428,12 +457,17 @@ function parseColumnChain(
     }
   }
 
+  // If references() was called without inTable(), emit as-is
+  if (pendingRef) {
+    modifiers += ` REFERENCES "${pendingRef}"`;
+  }
+
   return { name: colName, type, modifiers };
 }
 
 function extractDefaultValue(node: TSNode): string {
   if (node.type === 'Literal') {
-    if (typeof node.value === 'string') return `'${node.value}'`;
+    if (typeof node.value === 'string') return `'${node.value.replace(/'/g, "''")}'`;
     if (typeof node.value === 'number') return String(node.value);
     if (typeof node.value === 'boolean') return String(node.value);
     if (node.value === null) return 'NULL';
