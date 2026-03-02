@@ -23,19 +23,34 @@ interface UpMethodInfo {
 }
 
 const TYPEORM_BUILDER_METHODS = new Set([
-  'createTable',
-  'addColumn',
-  'dropColumn',
-  'changeColumn',
+  // Table operations
+  'createTable', 'dropTable', 'renameTable', 'clearTable',
+  // Column operations (singular + plural)
+  'addColumn', 'addColumns',
+  'dropColumn', 'dropColumns',
+  'changeColumn', 'changeColumns',
   'renameColumn',
-  'createIndex',
-  'dropIndex',
-  'addUniqueConstraint',
-  'dropUniqueConstraint',
-  'createForeignKey',
-  'dropForeignKey',
-  'createPrimaryKey',
-  'dropPrimaryKey',
+  // Index operations (singular + plural)
+  'createIndex', 'createIndices',
+  'dropIndex', 'dropIndices',
+  // Unique constraint (singular + plural)
+  'createUniqueConstraint', 'createUniqueConstraints',
+  'dropUniqueConstraint', 'dropUniqueConstraints',
+  // Foreign key (singular + plural)
+  'createForeignKey', 'createForeignKeys',
+  'dropForeignKey', 'dropForeignKeys',
+  // Primary key
+  'createPrimaryKey', 'dropPrimaryKey', 'updatePrimaryKeys',
+  // Check constraint (singular + plural)
+  'createCheckConstraint', 'createCheckConstraints',
+  'dropCheckConstraint', 'dropCheckConstraints',
+  // Exclusion constraint (singular + plural)
+  'createExclusionConstraint', 'createExclusionConstraints',
+  'dropExclusionConstraint', 'dropExclusionConstraints',
+  // View operations
+  'createView', 'dropView',
+  // Schema/database operations
+  'createSchema', 'dropSchema',
 ]);
 
 export async function extractTypeORMSQL(filePath: string): Promise<ExtractionResult> {
