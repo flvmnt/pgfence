@@ -22,6 +22,22 @@ interface UpMethodInfo {
   autoCommit: boolean;
 }
 
+const TYPEORM_BUILDER_METHODS = new Set([
+  'createTable',
+  'addColumn',
+  'dropColumn',
+  'changeColumn',
+  'renameColumn',
+  'createIndex',
+  'dropIndex',
+  'addUniqueConstraint',
+  'dropUniqueConstraint',
+  'createForeignKey',
+  'dropForeignKey',
+  'createPrimaryKey',
+  'dropPrimaryKey',
+]);
+
 export async function extractTypeORMSQL(filePath: string): Promise<ExtractionResult> {
   const source = await readFile(filePath, 'utf8');
   const warnings: ExtractionWarning[] = [];
@@ -56,34 +72,54 @@ export async function extractTypeORMSQL(filePath: string): Promise<ExtractionRes
     enter(node: TSNode) {
       if (conditionalTypes.has(node.type)) conditionalDepth++;
 
-      if (
-        node.type === 'CallExpression' &&
-        isQueryRunnerQuery(node, upInfo.paramName)
-      ) {
-        const args = node.arguments as TSNode[];
-        if (args.length === 0) return;
-
-        const arg = args[0];
-        const extracted = extractStringValue(arg);
-        if (extracted !== null) {
-          queries.push(extracted);
-          if (conditionalDepth > 0) {
-            const loc = node.loc?.start ?? { line: 0, column: 0 };
-            warnings.push({
-              filePath,
-              line: loc.line,
-              column: loc.column,
-              message: `Conditional SQL at line ${loc.line} — statement may or may not execute depending on runtime condition`,
-            });
-          }
-        } else {
-          const loc = arg.loc?.start ?? { line: 0, column: 0 };
+      if (node.type === 'CallExpression') {
+        // Check for builder API calls (queryRunner.createTable(), etc.)
+        const callee = node.callee as TSNode;
+        if (
+          callee?.type === 'MemberExpression' &&
+          (callee.object as TSNode)?.type === 'Identifier' &&
+          ((callee.object as TSNode).name as string) === upInfo.paramName &&
+          (callee.property as TSNode)?.type === 'Identifier' &&
+          TYPEORM_BUILDER_METHODS.has((callee.property as TSNode).name as string)
+        ) {
+          const methodName = (callee.property as TSNode).name as string;
+          const loc = node.loc?.start ?? { line: 0, column: 0 };
           warnings.push({
             filePath,
             line: loc.line,
             column: loc.column,
-            message: 'Dynamic SQL — cannot statically analyze queryRunner.query() argument',
+            message: `TypeORM builder API detected (${upInfo.paramName}.${methodName}) -- pgfence can only analyze ${upInfo.paramName}.query() raw SQL calls`,
           });
+          return;
+        }
+
+        // Check for queryRunner.query() calls
+        if (isQueryRunnerQuery(node, upInfo.paramName)) {
+          const args = node.arguments as TSNode[];
+          if (args.length === 0) return;
+
+          const arg = args[0];
+          const extracted = extractStringValue(arg);
+          if (extracted !== null) {
+            queries.push(extracted);
+            if (conditionalDepth > 0) {
+              const loc = node.loc?.start ?? { line: 0, column: 0 };
+              warnings.push({
+                filePath,
+                line: loc.line,
+                column: loc.column,
+                message: `Conditional SQL at line ${loc.line} -- statement may or may not execute depending on runtime condition`,
+              });
+            }
+          } else {
+            const loc = arg.loc?.start ?? { line: 0, column: 0 };
+            warnings.push({
+              filePath,
+              line: loc.line,
+              column: loc.column,
+              message: 'Dynamic SQL -- cannot statically analyze queryRunner.query() argument',
+            });
+          }
         }
       }
     },
