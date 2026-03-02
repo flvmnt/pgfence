@@ -199,4 +199,66 @@ describe('Extractor: TypeORM builder API', () => {
         expect(builderWarnings[0].message).toContain('createTable');
         expect(builderWarnings[1].message).toContain('addColumn');
     });
+
+    it('should warn on expanded builder methods: dropTable, clearTable, renameTable, createCheckConstraint, createView', async () => {
+        const filePath = path.join(fixturesDir, 'typeorm-builder-expanded.ts');
+        const result = await extractTypeORMSQL(filePath);
+        const builderWarnings = result.warnings.filter(w =>
+            w.message.includes('TypeORM builder API detected')
+        );
+        expect(builderWarnings.length).toBe(5);
+        expect(builderWarnings[0].message).toContain('dropTable');
+        expect(builderWarnings[1].message).toContain('clearTable');
+        expect(builderWarnings[2].message).toContain('renameTable');
+        expect(builderWarnings[3].message).toContain('createCheckConstraint');
+        expect(builderWarnings[4].message).toContain('createView');
+    });
+});
+
+describe('Extractor: Knex .alter() modifier', () => {
+    it('should emit ALTER COLUMN TYPE instead of ADD COLUMN', async () => {
+        const filePath = path.join(fixturesDir, 'knex-alter-modifier.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.sql).toContain('ALTER COLUMN "name" TYPE varchar(500)');
+        expect(result.sql).toContain('ALTER COLUMN "email" SET NOT NULL');
+        expect(result.sql).not.toContain('ADD COLUMN');
+    });
+});
+
+describe('Extractor: Knex setNullable/dropNullable', () => {
+    it('should emit ALTER COLUMN SET/DROP NOT NULL', async () => {
+        const filePath = path.join(fixturesDir, 'knex-set-nullable.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.sql).toContain('ALTER COLUMN "email" DROP NOT NULL');
+        expect(result.sql).toContain('ALTER COLUMN "username" SET NOT NULL');
+    });
+});
+
+describe('Extractor: Knex dropColumns (plural)', () => {
+    it('should emit DROP COLUMN for each column', async () => {
+        const filePath = path.join(fixturesDir, 'knex-drop-columns.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.sql).toContain('DROP COLUMN "temp1"');
+        expect(result.sql).toContain('DROP COLUMN "temp2"');
+    });
+});
+
+describe('Extractor: Sequelize addIndex with options', () => {
+    it('should handle concurrently, unique, and name options', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-add-index-options.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.sql).toContain('CREATE UNIQUE INDEX CONCURRENTLY');
+        expect(result.sql).toContain('idx_users_email_unique');
+    });
+});
+
+describe('Extractor: Sequelize addConstraint with onDelete/onUpdate', () => {
+    it('should include ON DELETE and ON UPDATE clauses', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-constraint-cascade.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.sql).toContain('FOREIGN KEY');
+        expect(result.sql).toContain('ON DELETE CASCADE');
+        expect(result.sql).toContain('ON UPDATE SET NULL');
+        expect(result.sql).not.toContain('DROP CONSTRAINT');
+    });
 });
