@@ -443,15 +443,43 @@ function transpileAddIndex(args: TSNode[], _filePath: string): TranspileResult {
   if (!tableName) return { sql, warnings: [] };
 
   const colsArg = args[1];
-  if (colsArg.type === 'ArrayExpression') {
-    const cols = (colsArg.elements as TSNode[])
-      .map((e) => getStringArg(e))
-      .filter((c): c is string => c !== null);
-    if (cols.length > 0) {
-      const idxName = `idx_${tableName}_${cols.join('_')}`;
-      sql.push(`CREATE INDEX "${idxName}" ON "${tableName}" (${cols.map(c => `"${c}"`).join(', ')})`);
+  if (colsArg.type !== 'ArrayExpression') return { sql, warnings: [] };
+
+  const cols = (colsArg.elements as TSNode[])
+    .map((e) => getStringArg(e))
+    .filter((c): c is string => c !== null);
+  if (cols.length === 0) return { sql, warnings: [] };
+
+  // Parse options (third argument)
+  let concurrently = false;
+  let unique = false;
+  let idxName = `idx_${tableName}_${cols.join('_')}`;
+
+  if (args.length >= 3 && args[2].type === 'ObjectExpression') {
+    for (const prop of args[2].properties as TSNode[]) {
+      if (prop.type !== 'Property') continue;
+      const key = prop.key as TSNode;
+      const keyName = key.type === 'Identifier' ? (key.name as string) : null;
+      const value = prop.value as TSNode;
+      if (keyName === 'concurrently' && value.type === 'Literal' && value.value === true) {
+        concurrently = true;
+      }
+      if (keyName === 'unique' && value.type === 'Literal' && value.value === true) {
+        unique = true;
+      }
+      if (keyName === 'name') {
+        const name = getStringArg(value);
+        if (name) idxName = name;
+      }
     }
   }
+
+  const parts = ['CREATE'];
+  if (unique) parts.push('UNIQUE');
+  parts.push('INDEX');
+  if (concurrently) parts.push('CONCURRENTLY');
+  parts.push(`"${idxName}" ON "${tableName}" (${cols.map(c => `"${c}"`).join(', ')})`);
+  sql.push(parts.join(' '));
 
   return { sql, warnings: [] };
 }
@@ -534,6 +562,8 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
   let refTable = '';
   let refFields: string[] = [];
   let whereClause = '';
+  let onDelete = '';
+  let onUpdate = '';
 
   for (const prop of props) {
     if (prop.type !== 'Property') continue;
@@ -580,6 +610,12 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
           whereClause = ' WHERE ...';
         }
         break;
+      case 'onDelete':
+        onDelete = getStringArg(value)?.toUpperCase() ?? '';
+        break;
+      case 'onUpdate':
+        onUpdate = getStringArg(value)?.toUpperCase() ?? '';
+        break;
     }
   }
 
@@ -595,7 +631,10 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
     case 'foreign key':
       if (refTable && refFields.length > 0) {
         const quotedRefFields = refFields.map(f => `"${f}"`).join(', ');
-        sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT ${nameClause}FOREIGN KEY (${quotedFields}) REFERENCES "${refTable}" (${quotedRefFields})`);
+        let fkSql = `ALTER TABLE "${tableName}" ADD CONSTRAINT ${nameClause}FOREIGN KEY (${quotedFields}) REFERENCES "${refTable}" (${quotedRefFields})`;
+        if (onDelete) fkSql += ` ON DELETE ${onDelete}`;
+        if (onUpdate) fkSql += ` ON UPDATE ${onUpdate}`;
+        sql.push(fkSql);
       }
       break;
     case 'check':
