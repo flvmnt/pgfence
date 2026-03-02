@@ -72,19 +72,23 @@ export function transpileSequelizeCall(
     case 'addColumn':
       return transpileAddColumn(args, filePath);
     case 'removeColumn':
-      return transpileRemoveColumn(args);
+      return transpileRemoveColumn(args, filePath);
     case 'renameColumn':
-      return transpileRenameColumn(args);
+      return transpileRenameColumn(args, filePath);
     case 'changeColumn':
       return transpileChangeColumn(args, filePath);
     case 'addIndex':
-      return transpileAddIndex(args);
+      return transpileAddIndex(args, filePath);
     case 'removeIndex':
-      return transpileRemoveIndex(args);
+      return transpileRemoveIndex(args, filePath);
     case 'dropTable':
-      return transpileDropTable(args);
+      return transpileDropTable(args, filePath);
     case 'renameTable':
-      return transpileRenameTable(args);
+      return transpileRenameTable(args, filePath);
+    case 'addConstraint':
+      return transpileAddConstraint(args, filePath);
+    case 'removeConstraint':
+      return transpileRemoveConstraint(args, filePath);
     default:
       warnings.push({
         filePath,
@@ -187,12 +191,12 @@ function transpileCreateTable(args: TSNode[], filePath: string): TranspileResult
     const value = prop.value as TSNode;
     const colDef = parseSequelizeColumnDef(value, filePath, warnings);
     if (colDef) {
-      columns.push(`${colName} ${colDef}`);
+      columns.push(`"${colName}" ${colDef}`);
     }
   }
 
   if (columns.length > 0) {
-    sql.push(`CREATE TABLE ${tableName} (${columns.join(', ')})`);
+    sql.push(`CREATE TABLE "${tableName}" (${columns.join(', ')})`);
   }
 
   return { sql, warnings };
@@ -232,10 +236,25 @@ function parseSequelizeColumnDef(
           break;
         case 'defaultValue':
           if (value.type === 'Literal') {
-            if (typeof value.value === 'string') modifiers += ` DEFAULT '${value.value}'`;
+            if (typeof value.value === 'string') modifiers += ` DEFAULT '${value.value.replace(/'/g, "''")}'`;
             else if (typeof value.value === 'number') modifiers += ` DEFAULT ${value.value}`;
             else if (typeof value.value === 'boolean') modifiers += ` DEFAULT ${value.value}`;
             else if (value.value === null) modifiers += ' DEFAULT NULL';
+          } else if (value.type === 'CallExpression') {
+            const defCallee = value.callee as TSNode;
+            if (
+              defCallee?.type === 'MemberExpression' &&
+              (defCallee.property as TSNode)?.type === 'Identifier' &&
+              ((defCallee.property as TSNode).name as string) === 'literal'
+            ) {
+              const literalArgs = value.arguments as TSNode[];
+              const literalStr = literalArgs.length > 0 ? getStringArg(literalArgs[0]) : null;
+              if (literalStr) {
+                modifiers += ` DEFAULT pgfence_volatile_expr(${literalStr})`;
+              } else {
+                modifiers += ' DEFAULT pgfence_volatile_expr()';
+              }
+            }
           }
           break;
         case 'primaryKey':
@@ -267,10 +286,20 @@ function parseSequelizeColumnDef(
               }
             }
             if (refTable && refCol) {
-              modifiers += ` REFERENCES ${refTable}(${refCol})`;
+              modifiers += ` REFERENCES "${refTable}"("${refCol}")`;
             }
           }
           break;
+        case 'onDelete': {
+          const action = getStringArg(value);
+          if (action) modifiers += ` ON DELETE ${action.toUpperCase()}`;
+          break;
+        }
+        case 'onUpdate': {
+          const action = getStringArg(value);
+          if (action) modifiers += ` ON UPDATE ${action.toUpperCase()}`;
+          break;
+        }
       }
     }
 
@@ -306,32 +335,32 @@ function transpileAddColumn(args: TSNode[], filePath: string): TranspileResult {
 
   const colDef = parseSequelizeColumnDef(args[2], filePath, warnings);
   if (colDef) {
-    sql.push(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${colDef}`);
+    sql.push(`ALTER TABLE "${tableName}" ADD COLUMN "${colName}" ${colDef}`);
   }
 
   return { sql, warnings };
 }
 
-function transpileRemoveColumn(args: TSNode[]): TranspileResult {
+function transpileRemoveColumn(args: TSNode[], filePath: string): TranspileResult {
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
   if (args.length < 2) return { sql, warnings };
   const tableName = getStringArg(args[0]);
   const colName = getStringArg(args[1]);
   if (tableName && colName) {
-    sql.push(`ALTER TABLE ${tableName} DROP COLUMN ${colName}`);
+    sql.push(`ALTER TABLE "${tableName}" DROP COLUMN "${colName}"`);
   } else {
     warnings.push({
-      filePath: '',
+      filePath,
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
-      message: 'Dynamic table/column name in removeColumn — cannot statically analyze',
+      message: 'Dynamic table/column name in removeColumn, cannot statically analyze',
     });
   }
   return { sql, warnings };
 }
 
-function transpileRenameColumn(args: TSNode[]): TranspileResult {
+function transpileRenameColumn(args: TSNode[], filePath: string): TranspileResult {
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
   if (args.length < 3) return { sql, warnings };
@@ -339,13 +368,13 @@ function transpileRenameColumn(args: TSNode[]): TranspileResult {
   const from = getStringArg(args[1]);
   const to = getStringArg(args[2]);
   if (tableName && from && to) {
-    sql.push(`ALTER TABLE ${tableName} RENAME COLUMN ${from} TO ${to}`);
+    sql.push(`ALTER TABLE "${tableName}" RENAME COLUMN "${from}" TO "${to}"`);
   } else {
     warnings.push({
-      filePath: '',
+      filePath,
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
-      message: 'Dynamic table/column name in renameColumn — cannot statically analyze',
+      message: 'Dynamic table/column name in renameColumn, cannot statically analyze',
     });
   }
   return { sql, warnings };
@@ -371,7 +400,7 @@ function transpileChangeColumn(args: TSNode[], filePath: string): TranspileResul
   const typeDef = args[2];
   const resolvedType = resolveSequelizeType(typeDef);
   if (resolvedType) {
-    sql.push(`ALTER TABLE ${tableName} ALTER COLUMN ${colName} TYPE ${resolvedType}`);
+    sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" TYPE ${resolvedType}`);
   } else if (typeDef.type === 'ObjectExpression') {
     // Object with type property
     const props = typeDef.properties as TSNode[];
@@ -382,7 +411,7 @@ function transpileChangeColumn(args: TSNode[], filePath: string): TranspileResul
       if (key.type === 'Identifier' && (key.name as string) === 'type') {
         const resolved = resolveSequelizeType(prop.value as TSNode);
         if (resolved) {
-          sql.push(`ALTER TABLE ${tableName} ALTER COLUMN ${colName} TYPE ${resolved}`);
+          sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" TYPE ${resolved}`);
           found = true;
         }
       }
@@ -407,7 +436,7 @@ function transpileChangeColumn(args: TSNode[], filePath: string): TranspileResul
   return { sql, warnings };
 }
 
-function transpileAddIndex(args: TSNode[]): TranspileResult {
+function transpileAddIndex(args: TSNode[], _filePath: string): TranspileResult {
   const sql: string[] = [];
   if (args.length < 2) return { sql, warnings: [] };
   const tableName = getStringArg(args[0]);
@@ -420,14 +449,14 @@ function transpileAddIndex(args: TSNode[]): TranspileResult {
       .filter((c): c is string => c !== null);
     if (cols.length > 0) {
       const idxName = `idx_${tableName}_${cols.join('_')}`;
-      sql.push(`CREATE INDEX ${idxName} ON ${tableName} (${cols.join(', ')})`);
+      sql.push(`CREATE INDEX "${idxName}" ON "${tableName}" (${cols.map(c => `"${c}"`).join(', ')})`);
     }
   }
 
   return { sql, warnings: [] };
 }
 
-function transpileRemoveIndex(args: TSNode[]): TranspileResult {
+function transpileRemoveIndex(args: TSNode[], _filePath: string): TranspileResult {
   const sql: string[] = [];
   if (args.length < 2) return { sql, warnings: [] };
   const tableName = getStringArg(args[0]);
@@ -436,37 +465,168 @@ function transpileRemoveIndex(args: TSNode[]): TranspileResult {
   // Second arg can be string (index name) or array (columns)
   const secondArg = args[1];
   if (secondArg.type === 'Literal' && typeof secondArg.value === 'string') {
-    sql.push(`DROP INDEX ${secondArg.value}`);
+    sql.push(`DROP INDEX "${secondArg.value}"`);
   } else if (secondArg.type === 'ArrayExpression') {
     const cols = (secondArg.elements as TSNode[])
       .map((e) => getStringArg(e))
       .filter((c): c is string => c !== null);
     if (cols.length > 0) {
       const idxName = `idx_${tableName}_${cols.join('_')}`;
-      sql.push(`DROP INDEX ${idxName}`);
+      sql.push(`DROP INDEX "${idxName}"`);
     }
   }
 
   return { sql, warnings: [] };
 }
 
-function transpileDropTable(args: TSNode[]): TranspileResult {
+function transpileDropTable(args: TSNode[], _filePath: string): TranspileResult {
   const sql: string[] = [];
   if (args.length < 1) return { sql, warnings: [] };
   const tableName = getStringArg(args[0]);
   if (tableName) {
-    sql.push(`DROP TABLE IF EXISTS ${tableName}`);
+    sql.push(`DROP TABLE IF EXISTS "${tableName}"`);
   }
   return { sql, warnings: [] };
 }
 
-function transpileRenameTable(args: TSNode[]): TranspileResult {
+function transpileRenameTable(args: TSNode[], _filePath: string): TranspileResult {
   const sql: string[] = [];
   if (args.length < 2) return { sql, warnings: [] };
   const from = getStringArg(args[0]);
   const to = getStringArg(args[1]);
   if (from && to) {
-    sql.push(`ALTER TABLE ${from} RENAME TO ${to}`);
+    sql.push(`ALTER TABLE "${from}" RENAME TO "${to}"`);
   }
   return { sql, warnings: [] };
+}
+
+function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResult {
+  const sql: string[] = [];
+  const warnings: ExtractionWarning[] = [];
+
+  if (args.length < 2) return { sql, warnings };
+  const tableName = getStringArg(args[0]);
+  if (!tableName) {
+    warnings.push({
+      filePath,
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table name in addConstraint, cannot statically analyze',
+    });
+    return { sql, warnings };
+  }
+
+  const optsArg = args[1];
+  if (optsArg.type !== 'ObjectExpression') {
+    warnings.push({
+      filePath,
+      line: optsArg.loc?.start?.line ?? 0,
+      column: optsArg.loc?.start?.column ?? 0,
+      message: 'Non-object options in addConstraint, cannot transpile',
+    });
+    return { sql, warnings };
+  }
+
+  const props = optsArg.properties as TSNode[];
+  let constraintType = '';
+  let constraintName = '';
+  let fields: string[] = [];
+  let refTable = '';
+  let refFields: string[] = [];
+  let whereClause = '';
+
+  for (const prop of props) {
+    if (prop.type !== 'Property') continue;
+    const key = prop.key as TSNode;
+    const keyName = key.type === 'Identifier' ? (key.name as string) : null;
+    const value = prop.value as TSNode;
+
+    switch (keyName) {
+      case 'type':
+        constraintType = getStringArg(value)?.toLowerCase() ?? '';
+        break;
+      case 'name':
+        constraintName = getStringArg(value) ?? '';
+        break;
+      case 'fields':
+        if (value.type === 'ArrayExpression') {
+          fields = (value.elements as TSNode[])
+            .map((e) => getStringArg(e))
+            .filter((c): c is string => c !== null);
+        }
+        break;
+      case 'references':
+        if (value.type === 'ObjectExpression') {
+          for (const refProp of value.properties as TSNode[]) {
+            if (refProp.type !== 'Property') continue;
+            const rk = refProp.key as TSNode;
+            const rv = refProp.value as TSNode;
+            const rkName = rk.type === 'Identifier' ? (rk.name as string) : null;
+            if (rkName === 'table') refTable = getStringArg(rv) ?? '';
+            if (rkName === 'field') {
+              const f = getStringArg(rv);
+              if (f) refFields = [f];
+            }
+            if (rkName === 'fields' && rv.type === 'ArrayExpression') {
+              refFields = (rv.elements as TSNode[])
+                .map((e) => getStringArg(e))
+                .filter((c): c is string => c !== null);
+            }
+          }
+        }
+        break;
+      case 'where':
+        if (value.type === 'ObjectExpression') {
+          whereClause = ' WHERE ...';
+        }
+        break;
+    }
+  }
+
+  if (fields.length === 0) return { sql, warnings };
+
+  const quotedFields = fields.map(f => `"${f}"`).join(', ');
+  const nameClause = constraintName ? `"${constraintName}" ` : '';
+
+  switch (constraintType) {
+    case 'unique':
+      sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT ${nameClause}UNIQUE (${quotedFields})`);
+      break;
+    case 'foreign key':
+      if (refTable && refFields.length > 0) {
+        const quotedRefFields = refFields.map(f => `"${f}"`).join(', ');
+        sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT ${nameClause}FOREIGN KEY (${quotedFields}) REFERENCES "${refTable}" (${quotedRefFields})`);
+      }
+      break;
+    case 'check':
+      sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT ${nameClause}CHECK ${whereClause || '(...)'}`);
+      break;
+    default:
+      if (constraintType) {
+        sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT ${nameClause}${constraintType.toUpperCase()} (${quotedFields})`);
+      }
+      break;
+  }
+
+  return { sql, warnings };
+}
+
+function transpileRemoveConstraint(args: TSNode[], filePath: string): TranspileResult {
+  const sql: string[] = [];
+  const warnings: ExtractionWarning[] = [];
+
+  if (args.length < 2) return { sql, warnings };
+  const tableName = getStringArg(args[0]);
+  const constraintName = getStringArg(args[1]);
+  if (tableName && constraintName) {
+    sql.push(`ALTER TABLE "${tableName}" DROP CONSTRAINT "${constraintName}"`);
+  } else {
+    warnings.push({
+      filePath,
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table/constraint name in removeConstraint, cannot statically analyze',
+    });
+  }
+  return { sql, warnings };
 }

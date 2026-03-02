@@ -30,14 +30,25 @@ export async function extractSequelizeSQL(filePath: string): Promise<ExtractionR
         jsx: false,
     }) as unknown as TSNode;
 
+    const upFn = findUpFunction(ast);
+    if (!upFn) {
+        warnings.push({
+            filePath,
+            line: 1,
+            column: 0,
+            message: 'No up() function found in Sequelize migration',
+        });
+        return { sql: '', warnings };
+    }
+
     let foundQuery = false;
 
     // Gap 11: track conditional depth to warn about conditional SQL
     const conditionalTypes = new Set(['IfStatement', 'ConditionalExpression', 'SwitchCase']);
     let conditionalDepth = 0;
 
-    // Walk the AST looking for queryInterface.sequelize.query()
-    walkNodeWithContext(ast, {
+    // Walk the up() function body looking for queryInterface.sequelize.query()
+    walkNodeWithContext(upFn, {
         enter(node: TSNode) {
             if (conditionalTypes.has(node.type)) conditionalDepth++;
 
@@ -127,6 +138,7 @@ function isSequelizeQuery(node: TSNode): boolean {
 const QUERY_INTERFACE_METHODS = new Set([
     'createTable', 'addColumn', 'removeColumn', 'renameColumn',
     'changeColumn', 'addIndex', 'removeIndex', 'dropTable', 'renameTable',
+    'addConstraint', 'removeConstraint',
 ]);
 
 function isQueryInterfaceBuilder(node: TSNode): boolean {
@@ -161,6 +173,102 @@ function extractStringValue(node: TSNode): string | null {
         return null;
     }
     return null;
+}
+
+function findUpFunction(ast: TSNode): TSNode | null {
+    let result: TSNode | null = null;
+    walkNode(ast, (node: TSNode) => {
+        if (result) return;
+        // export async function up(queryInterface, Sequelize) { ... }
+        if (node.type === 'FunctionDeclaration') {
+            const id = node.id as TSNode | null;
+            if (id?.type === 'Identifier' && (id.name as string) === 'up') {
+                result = node;
+            }
+        }
+        // module.exports = { async up(queryInterface, Sequelize) { ... } }
+        // or module.exports = { up: async (queryInterface, Sequelize) => { ... } }
+        if (node.type === 'Property') {
+            const key = node.key as TSNode;
+            if (
+                key?.type === 'Identifier' &&
+                (key.name as string) === 'up'
+            ) {
+                const val = node.value as TSNode;
+                if (
+                    val &&
+                    (val.type === 'FunctionExpression' ||
+                     val.type === 'ArrowFunctionExpression')
+                ) {
+                    result = val;
+                }
+            }
+        }
+        // export const up = async (queryInterface) => { ... }
+        if (node.type === 'VariableDeclarator') {
+            const id = node.id as TSNode | null;
+            const init = node.init as TSNode | null;
+            if (
+                id?.type === 'Identifier' &&
+                (id.name as string) === 'up' &&
+                init &&
+                (init.type === 'ArrowFunctionExpression' || init.type === 'FunctionExpression')
+            ) {
+                result = init;
+            }
+        }
+        // exports.up = async function(...)
+        if (node.type === 'AssignmentExpression') {
+            const left = node.left as TSNode;
+            if (
+                left?.type === 'MemberExpression' &&
+                (left.object as TSNode)?.type === 'Identifier' &&
+                ((left.object as TSNode).name as string) === 'exports' &&
+                (left.property as TSNode)?.type === 'Identifier' &&
+                ((left.property as TSNode).name as string) === 'up'
+            ) {
+                result = node.right as TSNode;
+            }
+        }
+        // module.exports.up = ...
+        if (node.type === 'AssignmentExpression') {
+            const left = node.left as TSNode;
+            if (
+                left?.type === 'MemberExpression' &&
+                (left.object as TSNode)?.type === 'MemberExpression'
+            ) {
+                const outerObj = left.object as TSNode;
+                if (
+                    (outerObj.object as TSNode)?.type === 'Identifier' &&
+                    ((outerObj.object as TSNode).name as string) === 'module' &&
+                    (outerObj.property as TSNode)?.type === 'Identifier' &&
+                    ((outerObj.property as TSNode).name as string) === 'exports' &&
+                    (left.property as TSNode)?.type === 'Identifier' &&
+                    ((left.property as TSNode).name as string) === 'up'
+                ) {
+                    result = node.right as TSNode;
+                }
+            }
+        }
+    });
+    return result;
+}
+
+function walkNode(node: unknown, visitor: (n: TSNode) => void): void {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+        for (const child of node) walkNode(child, visitor);
+        return;
+    }
+    const n = node as TSNode;
+    if (n.type) visitor(n);
+    for (const key of Object.keys(n)) {
+        if (key === 'parent') continue;
+        const val = n[key];
+        if (val && typeof val === 'object') {
+            walkNode(val, visitor);
+        }
+    }
 }
 
 function walkNodeWithContext(
