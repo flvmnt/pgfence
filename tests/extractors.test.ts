@@ -84,10 +84,9 @@ describe('Extractor: Knex', () => {
         expect(result.sql).toContain('ALTER TABLE users ADD COLUMN age INT');
     });
 
-    it('should transpile schema builder calls to SQL (Gap 13)', async () => {
+    it('should transpile schema builder calls to SQL', async () => {
         const filePath = path.join(fixturesDir, 'knex-schema-builder.ts');
         const result = await extractKnexSQL(filePath);
-        // Schema builder is now transpiled to SQL instead of generating a warning
         expect(result.sql).toContain('ALTER TABLE');
         expect(result.sql).toContain('age');
     });
@@ -105,6 +104,34 @@ describe('Extractor: Knex', () => {
         expect(result.warnings).toHaveLength(1);
         expect(result.warnings[0].message).toContain('No up()');
     });
+
+    it('should fix references().inTable() chain and escape quotes in defaults', async () => {
+        const filePath = path.join(fixturesDir, 'knex-references-intable.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.sql).toContain('REFERENCES "users"("id")');
+        expect(result.sql).toContain('ON DELETE CASCADE');
+        expect(result.sql).toContain("it''s pending");
+    });
+
+    it('should handle knex.schema.table() alias for alterTable', async () => {
+        const filePath = path.join(fixturesDir, 'knex-table-alias.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.sql).toContain('ALTER TABLE');
+        expect(result.sql).toContain('nickname');
+    });
+
+    it('should handle createTableIfNotExists and dropTableIfExists', async () => {
+        const filePath = path.join(fixturesDir, 'knex-if-exists.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.sql).toContain('CREATE TABLE IF NOT EXISTS');
+    });
+
+    it('should handle timestamps() method producing two columns', async () => {
+        const filePath = path.join(fixturesDir, 'knex-timestamps.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.sql).toContain('created_at');
+        expect(result.sql).toContain('updated_at');
+    });
 });
 
 describe('Extractor: Drizzle', () => {
@@ -121,7 +148,7 @@ describe('Extractor: Sequelize', () => {
         const filePath = path.join(fixturesDir, 'sequelize-safe.js');
         const result = await extractSequelizeSQL(filePath);
         expect(result.sql).toContain('CREATE INDEX idx_users_email');
-        expect(result.sql).toContain('DROP INDEX'); // Right now we extract all, up and down.
+        expect(result.sql).not.toContain('DROP INDEX');
     });
 
     it('should warn on dynamic SQL', async () => {
@@ -131,10 +158,45 @@ describe('Extractor: Sequelize', () => {
         expect(result.warnings[0].message).toContain('Dynamic SQL');
     });
 
-    it('should transpile queryInterface builder calls to SQL (Gap 13)', async () => {
+    it('should transpile queryInterface builder calls to SQL', async () => {
         const filePath = path.join(fixturesDir, 'sequelize-no-query.js');
         const result = await extractSequelizeSQL(filePath);
-        // Builder calls that cannot be fully transpiled now emit warnings instead of silently passing
         expect(result.sql).toBeDefined();
+    });
+
+    it('should only extract from up() method, not down()', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-up-only.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.sql).toContain('ADD COLUMN');
+        expect(result.sql).not.toContain('DROP COLUMN');
+    });
+
+    it('should handle addConstraint and removeConstraint', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-add-constraint.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.sql).toContain('UNIQUE');
+        expect(result.sql).toContain('FOREIGN KEY');
+        expect(result.sql).toContain('REFERENCES "users"');
+        expect(result.sql).not.toContain('DROP CONSTRAINT');
+    });
+
+    it('should detect Sequelize.literal() as volatile default', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-literal-default.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.sql).toContain('pgfence_volatile_expr');
+    });
+});
+
+describe('Extractor: TypeORM builder API', () => {
+    it('should warn on builder API usage', async () => {
+        const filePath = path.join(fixturesDir, 'typeorm-builder-api.ts');
+        const result = await extractTypeORMSQL(filePath);
+        expect(result.warnings.length).toBeGreaterThan(0);
+        const builderWarnings = result.warnings.filter(w =>
+            w.message.includes('TypeORM builder API detected')
+        );
+        expect(builderWarnings.length).toBeGreaterThanOrEqual(2);
+        expect(builderWarnings[0].message).toContain('createTable');
+        expect(builderWarnings[1].message).toContain('addColumn');
     });
 });
