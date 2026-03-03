@@ -12,7 +12,7 @@
       <a href="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml"><img src="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
       <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/v/@flvmnt/pgfence" alt="npm" /></a>
       <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/dw/@flvmnt/pgfence" alt="npm downloads" /></a>
-      <a href="LICENSE"><img src="https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg" alt="License: FSL-1.1-MIT" /></a>
+      <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
       <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="Node.js" /></a>
       <a href="https://pgfence.com"><img src="https://img.shields.io/badge/website-pgfence.com-blue" alt="Website" /></a>
     </p>
@@ -449,7 +449,7 @@ pnpm build       # Compile
 
 ## License
 
-[FSL-1.1-MIT](LICENSE) © Munteanu Flavius-Ioan
+[MIT](LICENSE) © Munteanu Flavius-Ioan
 
 ## Contact
 
