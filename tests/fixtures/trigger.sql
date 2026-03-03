@@ -3,7 +3,7 @@ SET statement_timeout = '5min';
 SET application_name = 'migrate:trigger';
 SET idle_in_transaction_session_timeout = '30s';
 
--- CREATE TRIGGER (ACCESS EXCLUSIVE)
+-- CREATE TRIGGER (SHARE ROW EXCLUSIVE)
 CREATE TRIGGER audit_trigger BEFORE INSERT ON appointments FOR EACH ROW EXECUTE FUNCTION audit_func();
 
 -- DROP TRIGGER (ACCESS EXCLUSIVE)

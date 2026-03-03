@@ -374,7 +374,8 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
     case 'RenameStmt':
       return true;
     case 'CreateTrigStmt':
-      return true;
+      // CREATE TRIGGER takes SHARE ROW EXCLUSIVE, not ACCESS EXCLUSIVE
+      return false;
     case 'ReindexStmt': {
       const node = stmt.node as { params?: Array<{ DefElem: { defname: string } }> };
       return !(node.params ?? []).some((p) => p.DefElem?.defname === 'concurrently');
@@ -460,6 +461,8 @@ function getStatementLockMode(stmt: ParsedStatement): LockMode | null {
       return 'ACCESS EXCLUSIVE' as LockMode;
     case 'RenameStmt':
       return 'ACCESS EXCLUSIVE' as LockMode;
+    case 'CreateTrigStmt':
+      return 'SHARE ROW EXCLUSIVE' as LockMode;
     default:
       return null;
   }

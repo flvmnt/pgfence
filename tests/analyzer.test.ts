@@ -719,18 +719,28 @@ DROP TABLE old_data;`;
     const concurrentCheck = checks.find((c) => c.ruleId === 'refresh-matview-concurrent');
     expect(concurrentCheck).toBeDefined();
     expect(concurrentCheck!.risk).toBe(RiskLevel.LOW);
-    expect(concurrentCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
+    expect(concurrentCheck!.lockMode).toBe(LockMode.EXCLUSIVE);
+  });
+
+  it('should report REFRESH MATVIEW CONCURRENTLY blocks writes but not reads (EXCLUSIVE)', async () => {
+    const results = await analyze([fixture('refresh-matview.sql')], defaultConfig);
+    const checks = results[0].checks;
+    const concurrentCheck = checks.find((c) => c.ruleId === 'refresh-matview-concurrent');
+    expect(concurrentCheck).toBeDefined();
+    expect(concurrentCheck!.blocks.reads).toBe(false);
+    expect(concurrentCheck!.blocks.writes).toBe(true);
+    expect(concurrentCheck!.blocks.otherDdl).toBe(true);
   });
 
   // --- Gap 6: Triggers ---
 
-  it('should detect CREATE TRIGGER as MEDIUM risk with ACCESS EXCLUSIVE', async () => {
+  it('should detect CREATE TRIGGER as MEDIUM risk with SHARE ROW EXCLUSIVE', async () => {
     const results = await analyze([fixture('trigger.sql')], defaultConfig);
     const checks = results[0].checks;
     const createTrigger = checks.find((c) => c.ruleId === 'create-trigger');
     expect(createTrigger).toBeDefined();
     expect(createTrigger!.risk).toBe(RiskLevel.MEDIUM);
-    expect(createTrigger!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(createTrigger!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
     expect(createTrigger!.tableName).toBe('appointments');
   });
 
@@ -750,6 +760,23 @@ DROP TABLE old_data;`;
     expect(enableDisable).toHaveLength(2);
     expect(enableDisable[0].risk).toBe(RiskLevel.LOW);
     expect(enableDisable[0].lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
+  });
+
+  it('should report CREATE TRIGGER blocks writes but not reads (SHARE ROW EXCLUSIVE)', async () => {
+    const results = await analyze([fixture('trigger.sql')], defaultConfig);
+    const checks = results[0].checks;
+    const createTrigger = checks.find((c) => c.ruleId === 'create-trigger');
+    expect(createTrigger).toBeDefined();
+    expect(createTrigger!.blocks.reads).toBe(false);
+    expect(createTrigger!.blocks.writes).toBe(true);
+    expect(createTrigger!.blocks.otherDdl).toBe(true);
+  });
+
+  it('should NOT trigger wide-lock-window when CREATE TRIGGER follows ACCESS EXCLUSIVE', async () => {
+    const results = await analyze([fixture('trigger-not-access-exclusive.sql')], defaultConfig);
+    const violations = results[0].policyViolations;
+    const wideLock = violations.find((v) => v.ruleId === 'wide-lock-window');
+    expect(wideLock).toBeUndefined();
   });
 
   // --- Gap 7: Partition operations ---

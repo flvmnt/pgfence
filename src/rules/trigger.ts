@@ -2,7 +2,7 @@
  * Rule: Trigger operations
  *
  * Detects:
- * - CREATE TRIGGER: MEDIUM risk, ACCESS EXCLUSIVE on target table
+ * - CREATE TRIGGER: MEDIUM risk, SHARE ROW EXCLUSIVE on target table
  * - DROP TRIGGER: MEDIUM risk, ACCESS EXCLUSIVE on target table
  * - ENABLE/DISABLE TRIGGER: LOW risk, SHARE ROW EXCLUSIVE
  */
@@ -29,13 +29,13 @@ export function checkTrigger(stmt: ParsedStatement): CheckResult[] {
         statement: stmt.sql,
         statementPreview: makePreview(stmt.sql),
         tableName,
-        lockMode: LockMode.ACCESS_EXCLUSIVE,
-        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
         risk: RiskLevel.MEDIUM,
-        message: `CREATE TRIGGER "${trigName}" on "${tableName}" — acquires ACCESS EXCLUSIVE lock on the table`,
+        message: `CREATE TRIGGER "${trigName}" on "${tableName}" -- acquires SHARE ROW EXCLUSIVE lock on the table`,
         ruleId: 'create-trigger',
         safeRewrite: {
-          description: 'CREATE TRIGGER always requires ACCESS EXCLUSIVE — minimize lock duration with lock_timeout and retry logic',
+          description: 'CREATE TRIGGER requires SHARE ROW EXCLUSIVE -- minimize lock duration with lock_timeout and retry logic',
           steps: [
             `SET lock_timeout = '2s';`,
             `${stmt.sql};`,
