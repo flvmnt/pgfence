@@ -1,6 +1,6 @@
 {
   "name": "@flvmnt/pgfence",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Postgres migration safety CLI — lock mode analysis, risk scoring, and safe rewrite recipes",
   "type": "module",
   "main": "dist/index.js",
@@ -35,7 +35,7 @@
     "ddl",
     "schema"
   ],
-  "license": "FSL-1.1-MIT",
+  "license": "MIT",
   "engines": {
     "node": ">=20"
   },
