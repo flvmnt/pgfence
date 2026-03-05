@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * pgfence — Postgres migration safety CLI
+ * pgfence: Postgres migration safety CLI
  *
  * Analyzes SQL migration files and reports lock modes, risk levels,
  * and safe rewrite recipes before you merge.
@@ -42,7 +42,7 @@ try {
 
 program
   .name('pgfence')
-  .description('Postgres migration safety CLI — lock mode analysis, risk scoring, and safe rewrite recipes')
+  .description('Postgres migration safety CLI: lock mode analysis, risk scoring, and safe rewrite recipes')
   .version(pkg.version);
 
 program
@@ -55,7 +55,7 @@ program
   .option('--stats-file <path>', 'Path to pgfence-stats.json for size-aware risk scoring (alternative to --db-url)')
   .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume', '11')
   .option('--max-risk <risk>', 'Maximum allowed risk level for CI mode', 'high')
-  .option('--ci', 'CI mode — exit 1 if max risk exceeded', false)
+  .option('--ci', 'CI mode: exit 1 if max risk exceeded', false)
   .option('--no-lock-timeout', 'Disable lock_timeout requirement')
   .option('--no-statement-timeout', 'Disable statement_timeout requirement')
   .option('--max-lock-timeout <ms>', 'Maximum allowed lock_timeout in ms (default: 5000)')

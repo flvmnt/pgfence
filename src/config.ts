@@ -40,7 +40,7 @@ async function loadToml(configPath: string): Promise<PgfenceConfigFile> {
   const mod = await import('@iarna/toml');
   const parse = mod.parse ?? (mod.default as { parse?: (s: string) => PgfenceConfigFile })?.parse;
   if (typeof parse !== 'function') {
-    throw new Error('Cannot load @iarna/toml — install it: pnpm add @iarna/toml');
+    throw new Error('Cannot load @iarna/toml, install it: pnpm add @iarna/toml');
   }
   const raw = await readFile(configPath, 'utf8');
   return parse(raw) as PgfenceConfigFile;

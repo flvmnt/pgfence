@@ -1,7 +1,7 @@
 {
   "name": "@flvmnt/pgfence",
   "version": "0.2.4",
-  "description": "Postgres migration safety CLI — lock mode analysis, risk scoring, and safe rewrite recipes",
+  "description": "Postgres migration safety CLI: lock mode analysis, risk scoring, and safe rewrite recipes",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
