@@ -33,9 +33,6 @@ importers:
       '@types/pg':
         specifier: ^8.11.0
         version: 8.16.0
-      '@typescript-eslint/typescript-estree':
-        specifier: ^8.0.0
-        version: 8.56.0(typescript@5.9.3)
       '@vitest/coverage-v8':
         specifier: ^3.2.4
         version: 3.2.4(vitest@3.2.4(@types/node@20.19.33)(tsx@4.21.0))
@@ -61,6 +58,9 @@ importers:
       '@iarna/toml':
         specifier: ^2.2.5
         version: 2.2.5
+      '@typescript-eslint/typescript-estree':
+        specifier: ^8.0.0
+        version: 8.56.0(typescript@5.9.3)
 
 packages:
 
