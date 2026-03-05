@@ -12,7 +12,7 @@ inputs:
     required: true
     default: 'migrations/*.sql'
   format:
-    description: 'Migration format (auto, sql, typeorm, prisma, knex)'
+    description: 'Migration format (auto, sql, typeorm, prisma, knex, drizzle, sequelize)'
     required: false
     default: 'auto'
   max-risk:
