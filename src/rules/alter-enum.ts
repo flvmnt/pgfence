@@ -32,10 +32,10 @@ export function checkAlterEnum(
       statement: stmt.sql,
       statementPreview: makePreview(stmt.sql),
       tableName: null,
-      lockMode: LockMode.SHARE_UPDATE_EXCLUSIVE,
-      blocks: getBlockedOperations(LockMode.SHARE_UPDATE_EXCLUSIVE),
+      lockMode: LockMode.EXCLUSIVE,
+      blocks: getBlockedOperations(LockMode.EXCLUSIVE),
       risk: RiskLevel.LOW,
-      message: `ALTER TYPE "${typeName}" ADD VALUE '${newVal}' — instant on PG12+, but the new value cannot be used in the same transaction`,
+      message: `ALTER TYPE "${typeName}" ADD VALUE '${newVal}': instant on PG12+, but the new value cannot be used in the same transaction. Lock is on the type object, not on any table.`,
       ruleId: 'alter-enum-add-value',
     }];
   }

@@ -658,12 +658,14 @@ DROP TABLE old_data;`;
 
   // --- Gap 1: ALTER TYPE ADD VALUE (enum) ---
 
-  it('should detect ALTER TYPE ADD VALUE as LOW risk on PG12+ (default config minPg=11 is < 12)', async () => {
+  it('should detect ALTER TYPE ADD VALUE as LOW risk on PG12+ with EXCLUSIVE lock on type object', async () => {
     const results = await analyze([fixture('alter-enum-add-value.sql')], { ...defaultConfig, minPostgresVersion: 12 });
     const checks = results[0].checks.filter((c) => c.ruleId === 'alter-enum-add-value');
     expect(checks.length).toBeGreaterThanOrEqual(1);
     expect(checks[0].risk).toBe(RiskLevel.LOW);
+    expect(checks[0].lockMode).toBe(LockMode.EXCLUSIVE);
     expect(checks[0].message).toContain('instant');
+    expect(checks[0].message).toContain('type object');
   });
 
   it('should detect ALTER TYPE ADD VALUE as MEDIUM risk on PG < 12', async () => {
