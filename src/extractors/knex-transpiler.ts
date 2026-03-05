@@ -74,9 +74,9 @@ export function transpileKnexSchemaCall(
       return transpileAlterTable(args, filePath);
     case 'dropTable':
     case 'dropTableIfExists':
-      return transpileDropTable(args, methodName === 'dropTableIfExists');
+      return transpileDropTable(args, methodName === 'dropTableIfExists', filePath);
     case 'renameTable':
-      return transpileRenameTable(args);
+      return transpileRenameTable(args, filePath);
     case 'raw':
       // raw() is handled by the main extractor, skip here
       return { sql, warnings };
@@ -119,7 +119,7 @@ function transpileCreateTable(
       filePath,
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
-      message: 'Dynamic table name in createTable — cannot transpile',
+      message: 'Dynamic table name in createTable: cannot transpile',
     });
     return { sql, warnings };
   }
@@ -130,7 +130,7 @@ function transpileCreateTable(
       filePath,
       line: callback.loc?.start?.line ?? 0,
       column: callback.loc?.start?.column ?? 0,
-      message: 'Non-function callback in createTable — cannot transpile',
+      message: 'Non-function callback in createTable: cannot transpile',
     });
     return { sql, warnings };
   }
@@ -158,13 +158,19 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
       filePath,
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
-      message: 'Dynamic table name in alterTable — cannot transpile',
+      message: 'Dynamic table name in alterTable: cannot transpile',
     });
     return { sql, warnings };
   }
 
   const callback = args[1];
   if (callback.type !== 'ArrowFunctionExpression' && callback.type !== 'FunctionExpression') {
+    warnings.push({
+      filePath,
+      line: callback.loc?.start?.line ?? 0,
+      column: callback.loc?.start?.column ?? 0,
+      message: 'Non-function callback in alterTable: cannot transpile',
+    });
     return { sql, warnings };
   }
 
@@ -250,7 +256,7 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
   return { sql, warnings };
 }
 
-function transpileDropTable(args: TSNode[], ifExists: boolean): TranspileResult {
+function transpileDropTable(args: TSNode[], ifExists: boolean, filePath: string): TranspileResult {
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
 
@@ -261,17 +267,17 @@ function transpileDropTable(args: TSNode[], ifExists: boolean): TranspileResult 
     sql.push(`DROP TABLE${ifE} "${tableName}"`);
   } else {
     warnings.push({
-      filePath: '',
+      filePath,
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
-      message: 'Dynamic table name in dropTable — cannot statically analyze',
+      message: 'Dynamic table name in dropTable: cannot statically analyze',
     });
   }
 
   return { sql, warnings };
 }
 
-function transpileRenameTable(args: TSNode[]): TranspileResult {
+function transpileRenameTable(args: TSNode[], filePath: string): TranspileResult {
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
 
@@ -282,10 +288,10 @@ function transpileRenameTable(args: TSNode[]): TranspileResult {
     sql.push(`ALTER TABLE "${from}" RENAME TO "${to}"`);
   } else {
     warnings.push({
-      filePath: '',
+      filePath,
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
-      message: 'Dynamic table name in renameTable — cannot statically analyze',
+      message: 'Dynamic table name in renameTable: cannot statically analyze',
     });
   }
 
@@ -417,7 +423,7 @@ function parseColumnChain(
       filePath,
       line: node.loc?.start?.line ?? 0,
       column: node.loc?.start?.column ?? 0,
-      message: `Knex column builder ${knexType}() without column name — cannot transpile`,
+      message: `Knex column builder ${knexType}() without column name: cannot transpile`,
     });
     return null;
   }

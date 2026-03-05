@@ -164,7 +164,7 @@ function transpileCreateTable(args: TSNode[], filePath: string): TranspileResult
       filePath,
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
-      message: 'Dynamic table name in createTable — cannot transpile',
+      message: 'Dynamic table name in createTable: cannot transpile',
     });
     return { sql, warnings };
   }
@@ -175,7 +175,7 @@ function transpileCreateTable(args: TSNode[], filePath: string): TranspileResult
       filePath,
       line: colsObj.loc?.start?.line ?? 0,
       column: colsObj.loc?.start?.column ?? 0,
-      message: 'Non-object columns argument in createTable — cannot transpile',
+      message: 'Non-object columns argument in createTable: cannot transpile',
     });
     return { sql, warnings };
   }
@@ -309,7 +309,7 @@ function parseSequelizeColumnDef(
       filePath,
       line: node.loc?.start?.line ?? 0,
       column: node.loc?.start?.column ?? 0,
-      message: 'Could not resolve Sequelize column type — cannot transpile',
+      message: 'Could not resolve Sequelize column type: cannot transpile',
     });
   }
 
@@ -328,7 +328,7 @@ function transpileAddColumn(args: TSNode[], filePath: string): TranspileResult {
       filePath,
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
-      message: 'Dynamic table/column name in addColumn — cannot statically analyze',
+      message: 'Dynamic table/column name in addColumn: cannot statically analyze',
     });
     return { sql, warnings };
   }
@@ -392,7 +392,7 @@ function transpileChangeColumn(args: TSNode[], filePath: string): TranspileResul
       filePath,
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
-      message: 'Dynamic table/column name in changeColumn — cannot statically analyze',
+      message: 'Dynamic table/column name in changeColumn: cannot statically analyze',
     });
     return { sql, warnings };
   }
@@ -421,7 +421,7 @@ function transpileChangeColumn(args: TSNode[], filePath: string): TranspileResul
         filePath,
         line: typeDef.loc?.start?.line ?? 0,
         column: typeDef.loc?.start?.column ?? 0,
-        message: `Could not resolve type in changeColumn for "${tableName}"."${colName}" — cannot statically analyze`,
+        message: `Could not resolve type in changeColumn for "${tableName}"."${colName}": cannot statically analyze`,
       });
     }
   } else {
@@ -429,26 +429,35 @@ function transpileChangeColumn(args: TSNode[], filePath: string): TranspileResul
       filePath,
       line: typeDef.loc?.start?.line ?? 0,
       column: typeDef.loc?.start?.column ?? 0,
-      message: `Unsupported type argument in changeColumn for "${tableName}"."${colName}" — cannot statically analyze`,
+      message: `Unsupported type argument in changeColumn for "${tableName}"."${colName}": cannot statically analyze`,
     });
   }
 
   return { sql, warnings };
 }
 
-function transpileAddIndex(args: TSNode[], _filePath: string): TranspileResult {
+function transpileAddIndex(args: TSNode[], filePath: string): TranspileResult {
   const sql: string[] = [];
-  if (args.length < 2) return { sql, warnings: [] };
+  const warnings: ExtractionWarning[] = [];
+  if (args.length < 2) return { sql, warnings };
   const tableName = getStringArg(args[0]);
-  if (!tableName) return { sql, warnings: [] };
+  if (!tableName) {
+    warnings.push({
+      filePath,
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table name in addIndex: cannot statically analyze',
+    });
+    return { sql, warnings };
+  }
 
   const colsArg = args[1];
-  if (colsArg.type !== 'ArrayExpression') return { sql, warnings: [] };
+  if (colsArg.type !== 'ArrayExpression') return { sql, warnings };
 
   const cols = (colsArg.elements as TSNode[])
     .map((e) => getStringArg(e))
     .filter((c): c is string => c !== null);
-  if (cols.length === 0) return { sql, warnings: [] };
+  if (cols.length === 0) return { sql, warnings };
 
   // Parse options (third argument)
   let concurrently = false;
@@ -481,14 +490,23 @@ function transpileAddIndex(args: TSNode[], _filePath: string): TranspileResult {
   parts.push(`"${idxName}" ON "${tableName}" (${cols.map(c => `"${c}"`).join(', ')})`);
   sql.push(parts.join(' '));
 
-  return { sql, warnings: [] };
+  return { sql, warnings };
 }
 
-function transpileRemoveIndex(args: TSNode[], _filePath: string): TranspileResult {
+function transpileRemoveIndex(args: TSNode[], filePath: string): TranspileResult {
   const sql: string[] = [];
-  if (args.length < 2) return { sql, warnings: [] };
+  const warnings: ExtractionWarning[] = [];
+  if (args.length < 2) return { sql, warnings };
   const tableName = getStringArg(args[0]);
-  if (!tableName) return { sql, warnings: [] };
+  if (!tableName) {
+    warnings.push({
+      filePath,
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table name in removeIndex: cannot statically analyze',
+    });
+    return { sql, warnings };
+  }
 
   // Second arg can be string (index name) or array (columns)
   const secondArg = args[1];
@@ -504,28 +522,44 @@ function transpileRemoveIndex(args: TSNode[], _filePath: string): TranspileResul
     }
   }
 
-  return { sql, warnings: [] };
+  return { sql, warnings };
 }
 
-function transpileDropTable(args: TSNode[], _filePath: string): TranspileResult {
+function transpileDropTable(args: TSNode[], filePath: string): TranspileResult {
   const sql: string[] = [];
-  if (args.length < 1) return { sql, warnings: [] };
+  const warnings: ExtractionWarning[] = [];
+  if (args.length < 1) return { sql, warnings };
   const tableName = getStringArg(args[0]);
   if (tableName) {
     sql.push(`DROP TABLE IF EXISTS "${tableName}"`);
+  } else {
+    warnings.push({
+      filePath,
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table name in dropTable: cannot statically analyze',
+    });
   }
-  return { sql, warnings: [] };
+  return { sql, warnings };
 }
 
-function transpileRenameTable(args: TSNode[], _filePath: string): TranspileResult {
+function transpileRenameTable(args: TSNode[], filePath: string): TranspileResult {
   const sql: string[] = [];
-  if (args.length < 2) return { sql, warnings: [] };
+  const warnings: ExtractionWarning[] = [];
+  if (args.length < 2) return { sql, warnings };
   const from = getStringArg(args[0]);
   const to = getStringArg(args[1]);
   if (from && to) {
     sql.push(`ALTER TABLE "${from}" RENAME TO "${to}"`);
+  } else {
+    warnings.push({
+      filePath,
+      line: args[0].loc?.start?.line ?? 0,
+      column: args[0].loc?.start?.column ?? 0,
+      message: 'Dynamic table name in renameTable: cannot statically analyze',
+    });
   }
-  return { sql, warnings: [] };
+  return { sql, warnings };
 }
 
 function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResult {
