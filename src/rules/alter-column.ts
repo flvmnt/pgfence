@@ -102,14 +102,14 @@ function classifyTypeChange(target: TargetType | null): TypeClassification | nul
   if (name === 'varchar' && modifier !== null) {
     return {
       risk: RiskLevel.MEDIUM,
-      message: `TYPE varchar(${modifier}) — safe if widening (increasing length), but requires schema to verify. Narrowing causes a table rewrite.`,
+      message: `TYPE varchar(${modifier}), safe if widening (increasing length), but requires schema to verify. Narrowing causes a table rewrite.`,
     };
   }
 
   if (name === 'numeric' && modifier !== null) {
     return {
       risk: RiskLevel.MEDIUM,
-      message: `TYPE numeric — safe if widening precision, but requires schema to verify. Narrowing causes a table rewrite.`,
+      message: `TYPE numeric, safe if widening precision, but requires schema to verify. Narrowing causes a table rewrite.`,
     };
   }
 
@@ -169,7 +169,7 @@ export function checkAlterColumn(
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.HIGH,
-          message: `ALTER COLUMN "${colName}" TYPE — rewrites the entire table under ACCESS EXCLUSIVE lock`,
+          message: `ALTER COLUMN "${colName}" TYPE: rewrites the entire table under ACCESS EXCLUSIVE lock`,
           ruleId: 'alter-column-type',
           safeRewrite: {
             description: 'Use expand/contract pattern: add new column, backfill, swap',
@@ -198,7 +198,7 @@ export function checkAlterColumn(
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.MEDIUM,
-        message: `ALTER COLUMN "${colName}" SET NOT NULL — scans entire table under ACCESS EXCLUSIVE lock`,
+        message: `ALTER COLUMN "${colName}" SET NOT NULL: scans entire table under ACCESS EXCLUSIVE lock`,
         ruleId: 'alter-column-set-not-null',
         safeRewrite: {
           description: 'Use CHECK constraint NOT VALID + VALIDATE to avoid full table lock',

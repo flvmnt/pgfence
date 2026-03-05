@@ -128,7 +128,7 @@ export async function analyze(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         extraction.warnings.push({
-          message: `SQL parse error: ${message} — this file could not be analyzed`,
+          message: `SQL parse error: ${message}, this file could not be analyzed`,
           filePath,
           line: 1,
           column: 1,
@@ -158,7 +158,7 @@ export async function analyze(
       // Flag DO blocks, functions, and procedures as unanalyzable for coverage stats
       if (stmt.nodeType === 'DoStmt' || stmt.nodeType === 'CreateFunctionStmt' || stmt.nodeType === 'CreateProcedureStmt') {
         extraction.warnings.push({
-          message: `Unanalyzable dynamic SQL block detected — manual review required`,
+          message: `Unanalyzable dynamic SQL block detected, manual review required`,
           filePath,
           line: 1,
           column: 1,

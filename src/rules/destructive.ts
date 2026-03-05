@@ -34,7 +34,7 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
             lockMode: LockMode.ACCESS_EXCLUSIVE,
             blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
             risk: RiskLevel.HIGH,
-            message: `DROP COLUMN "${colName}" on "${tableName}" — acquires ACCESS EXCLUSIVE lock, may break existing clients`,
+            message: `DROP COLUMN "${colName}" on "${tableName}": acquires ACCESS EXCLUSIVE lock, may break existing clients`,
             ruleId: 'drop-column',
             safeRewrite: {
               description: 'Remove all application references first, then drop in a follow-up migration',
@@ -68,8 +68,8 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.CRITICAL,
           message: isCascade
-            ? `DROP SCHEMA "${schemaName}" CASCADE — drops the schema and ALL objects within it, irreversible data loss`
-            : `DROP SCHEMA "${schemaName}" — drops the schema, acquires ACCESS EXCLUSIVE lock`,
+            ? `DROP SCHEMA "${schemaName}" CASCADE: drops the schema and ALL objects within it, irreversible data loss`
+            : `DROP SCHEMA "${schemaName}": drops the schema, acquires ACCESS EXCLUSIVE lock`,
           ruleId: isCascade ? 'drop-schema-cascade' : 'drop-schema',
         });
         break;
@@ -84,7 +84,7 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.CRITICAL,
-        message: `DROP TABLE "${tableName}" — irreversible data loss, acquires ACCESS EXCLUSIVE lock`,
+        message: `DROP TABLE "${tableName}": irreversible data loss, acquires ACCESS EXCLUSIVE lock`,
         ruleId: 'drop-table',
         safeRewrite: {
           description: 'Drop table in a separate release after confirming no references remain',
@@ -115,7 +115,7 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.CRITICAL,
-          message: `TRUNCATE "${tableName}" CASCADE — deletes all rows in this table AND all referencing tables via foreign keys, acquires ACCESS EXCLUSIVE on all affected tables`,
+          message: `TRUNCATE "${tableName}" CASCADE: deletes all rows in this table AND all referencing tables via foreign keys, acquires ACCESS EXCLUSIVE on all affected tables`,
           ruleId: 'truncate-cascade',
           safeRewrite: {
             description: 'Remove CASCADE and explicitly truncate each table, or use batched DELETE',
@@ -133,7 +133,7 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.CRITICAL,
-          message: `TRUNCATE "${tableName}" — deletes all rows, acquires ACCESS EXCLUSIVE lock`,
+          message: `TRUNCATE "${tableName}": deletes all rows, acquires ACCESS EXCLUSIVE lock`,
           ruleId: 'truncate',
           safeRewrite: {
             description: 'Use batched DELETE instead of TRUNCATE for safer data removal',
@@ -164,7 +164,7 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ROW_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ROW_EXCLUSIVE),
         risk: RiskLevel.HIGH,
-        message: `DELETE FROM "${tableName}" without WHERE — deletes all rows`,
+        message: `DELETE FROM "${tableName}" without WHERE: deletes all rows`,
         ruleId: 'delete-without-where',
         safeRewrite: {
           description: 'Add a WHERE clause or use batched deletion',
@@ -195,7 +195,7 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.HIGH,
-        message: `VACUUM FULL "${tableName}" — rewrites table, acquires ACCESS EXCLUSIVE lock for entire duration`,
+        message: `VACUUM FULL "${tableName}": rewrites table, acquires ACCESS EXCLUSIVE lock for entire duration`,
         ruleId: 'vacuum-full',
         safeRewrite: {
           description: 'Use pg_repack instead of VACUUM FULL',

@@ -43,7 +43,7 @@ export function checkBestPractices(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.LOW,
-        message: `Column "${colDef.colname}" uses ${typeName} — consider bigint to avoid overflow on growing tables. Changing column type later requires ACCESS EXCLUSIVE lock + table rewrite`,
+        message: `Column "${colDef.colname}" uses ${typeName}, consider bigint to avoid overflow on growing tables. Changing column type later requires ACCESS EXCLUSIVE lock + table rewrite`,
         ruleId: 'prefer-bigint-over-int',
         appliesToNewTables: true,
       });
@@ -60,7 +60,7 @@ export function checkBestPractices(stmt: ParsedStatement): CheckResult[] {
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.LOW,
-          message: `Column "${colDef.colname}" uses varchar(N) — use text instead. Changing varchar length later requires ACCESS EXCLUSIVE lock + table rewrite. text with a CHECK constraint is equally safe and changeable`,
+          message: `Column "${colDef.colname}" uses varchar(N): use text instead. Changing varchar length later requires ACCESS EXCLUSIVE lock + table rewrite. text with a CHECK constraint is equally safe and changeable`,
           ruleId: 'prefer-text-field',
           appliesToNewTables: true,
         });
@@ -76,7 +76,7 @@ export function checkBestPractices(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.LOW,
-        message: `Column "${colDef.colname}" uses timestamp without time zone — use timestamptz instead. timestamp silently drops timezone info, causing bugs when servers or clients are in different timezones`,
+        message: `Column "${colDef.colname}" uses timestamp without time zone: use timestamptz instead. timestamp silently drops timezone info, causing bugs when servers or clients are in different timezones`,
         ruleId: 'prefer-timestamptz',
         appliesToNewTables: true,
       });

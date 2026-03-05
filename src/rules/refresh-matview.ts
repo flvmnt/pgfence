@@ -43,8 +43,8 @@ export function checkRefreshMatView(stmt: ParsedStatement): CheckResult[] {
     blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
     risk: node.skipData ? RiskLevel.MEDIUM : RiskLevel.HIGH,
     message: node.skipData
-      ? `REFRESH MATERIALIZED VIEW "${viewName}" WITH NO DATA — acquires ACCESS EXCLUSIVE lock (brief, truncates without repopulating)`
-      : `REFRESH MATERIALIZED VIEW "${viewName}" — acquires ACCESS EXCLUSIVE lock, blocking all reads and writes for the entire refresh duration`,
+      ? `REFRESH MATERIALIZED VIEW "${viewName}" WITH NO DATA: acquires ACCESS EXCLUSIVE lock (brief, truncates without repopulating)`
+      : `REFRESH MATERIALIZED VIEW "${viewName}": acquires ACCESS EXCLUSIVE lock, blocking all reads and writes for the entire refresh duration`,
     ruleId: 'refresh-matview-blocking',
     safeRewrite: node.skipData ? undefined : {
       description: 'Use CONCURRENTLY to allow reads during refresh (requires a unique index on the materialized view)',

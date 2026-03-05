@@ -66,7 +66,7 @@ export function checkTrigger(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.MEDIUM,
-        message: `DROP TRIGGER "${trigName}" on "${tableName}" — acquires ACCESS EXCLUSIVE lock on the table`,
+        message: `DROP TRIGGER "${trigName}" on "${tableName}": acquires ACCESS EXCLUSIVE lock on the table`,
         ruleId: 'drop-trigger',
       });
       break;
@@ -96,7 +96,7 @@ export function checkTrigger(stmt: ParsedStatement): CheckResult[] {
             lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
             blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
             risk: RiskLevel.LOW,
-            message: `ENABLE TRIGGER "${trigName}" on "${tableName}" — acquires SHARE ROW EXCLUSIVE lock`,
+            message: `ENABLE TRIGGER "${trigName}" on "${tableName}": acquires SHARE ROW EXCLUSIVE lock`,
             ruleId: 'enable-disable-trigger',
           });
         } else if (sub === 'AT_DisableTrig' || sub === 'AT_DisableTrigAll' || sub === 'AT_DisableTrigUser') {
@@ -107,7 +107,7 @@ export function checkTrigger(stmt: ParsedStatement): CheckResult[] {
             lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
             blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
             risk: RiskLevel.LOW,
-            message: `DISABLE TRIGGER "${trigName}" on "${tableName}" — acquires SHARE ROW EXCLUSIVE lock`,
+            message: `DISABLE TRIGGER "${trigName}" on "${tableName}": acquires SHARE ROW EXCLUSIVE lock`,
             ruleId: 'enable-disable-trigger',
           });
         }

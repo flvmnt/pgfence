@@ -39,7 +39,7 @@ export function checkRenameColumn(
       lockMode: LockMode.ACCESS_EXCLUSIVE,
       blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
       risk: RiskLevel.LOW,
-      message: `RENAME COLUMN "${oldName}" TO "${newName}" — acquires ACCESS EXCLUSIVE lock (instant metadata-only on PG14+)`,
+      message: `RENAME COLUMN "${oldName}" TO "${newName}": acquires ACCESS EXCLUSIVE lock (instant metadata-only on PG14+)`,
       ruleId: 'rename-column',
       safeRewrite: {
         description:
@@ -66,7 +66,7 @@ export function checkRenameColumn(
       lockMode: LockMode.ACCESS_EXCLUSIVE,
       blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
       risk: RiskLevel.HIGH,
-      message: `RENAME TABLE "${oldName}" TO "${newName}" — acquires ACCESS EXCLUSIVE lock and breaks all queries, views, and foreign keys referencing the old name`,
+      message: `RENAME TABLE "${oldName}" TO "${newName}": acquires ACCESS EXCLUSIVE lock and breaks all queries, views, and foreign keys referencing the old name`,
       ruleId: 'rename-table',
       safeRewrite: {
         description: 'Use a view to maintain backwards compatibility during transition',

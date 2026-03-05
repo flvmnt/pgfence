@@ -87,7 +87,7 @@ export function checkAddColumn(
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.HIGH,
-        message: `ADD COLUMN "${colDef.colname}" with NOT NULL but no DEFAULT — fails on non-empty tables and requires ACCESS EXCLUSIVE lock`,
+        message: `ADD COLUMN "${colDef.colname}" with NOT NULL but no DEFAULT: fails on non-empty tables and requires ACCESS EXCLUSIVE lock`,
         ruleId: 'add-column-not-null-no-default',
         safeRewrite: {
           description: 'Add nullable column, backfill, then add NOT NULL constraint',
@@ -121,7 +121,7 @@ export function checkAddColumn(
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.LOW,
-          message: `ADD COLUMN "${colDef.colname}" with constant DEFAULT — instant metadata-only on PG11+ (ACCESS EXCLUSIVE lock is brief)`,
+          message: `ADD COLUMN "${colDef.colname}" with constant DEFAULT: instant metadata-only on PG11+ (ACCESS EXCLUSIVE lock is brief)`,
           ruleId: 'add-column-constant-default',
           safeRewrite: {
             description: 'Safe on Postgres 11+',
@@ -139,7 +139,7 @@ export function checkAddColumn(
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.HIGH,
-          message: `ADD COLUMN "${colDef.colname}" with non-constant DEFAULT — causes table rewrite under ACCESS EXCLUSIVE lock`,
+          message: `ADD COLUMN "${colDef.colname}" with non-constant DEFAULT: causes table rewrite under ACCESS EXCLUSIVE lock`,
           ruleId: 'add-column-non-constant-default',
           safeRewrite: {
             description: 'Add column without default, backfill in batches, then set default',
@@ -164,7 +164,7 @@ export function checkAddColumn(
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.HIGH,
-          message: `ADD COLUMN "${colDef.colname}" with DEFAULT — causes table rewrite on PG < 11`,
+          message: `ADD COLUMN "${colDef.colname}" with DEFAULT: causes table rewrite on PG < 11`,
           ruleId: 'add-column-default-pre-pg11',
           safeRewrite: {
             description: 'Add column without default, backfill in batches, then set default',
@@ -200,7 +200,7 @@ export function checkAddColumn(
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.LOW,
-        message: `ADD COLUMN "${colDef.colname}" with type json — use jsonb instead. json has no equality operator, cannot be used in GROUP BY, and is generally slower`,
+        message: `ADD COLUMN "${colDef.colname}" with type json: use jsonb instead. json has no equality operator, cannot be used in GROUP BY, and is generally slower`,
         ruleId: 'add-column-json',
         appliesToNewTables: true,
       });
@@ -216,7 +216,7 @@ export function checkAddColumn(
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.MEDIUM,
-        message: `ADD COLUMN "${colDef.colname}" with ${typeName} — use GENERATED ALWAYS AS IDENTITY instead. SERIAL creates an implicit sequence with unexpected ownership/permission semantics`,
+        message: `ADD COLUMN "${colDef.colname}" with ${typeName}: use GENERATED ALWAYS AS IDENTITY instead. SERIAL creates an implicit sequence with unexpected ownership/permission semantics`,
         ruleId: 'add-column-serial',
         appliesToNewTables: true,
         safeRewrite: {
@@ -240,7 +240,7 @@ export function checkAddColumn(
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.HIGH,
-        message: `ADD COLUMN "${colDef.colname}" with GENERATED ALWAYS AS ... STORED — causes a full table rewrite under ACCESS EXCLUSIVE lock`,
+        message: `ADD COLUMN "${colDef.colname}" with GENERATED ALWAYS AS ... STORED: causes a full table rewrite under ACCESS EXCLUSIVE lock`,
         ruleId: 'add-column-stored-generated',
         safeRewrite: {
           description: 'Add a regular column, create a trigger to compute the value, backfill in batches',

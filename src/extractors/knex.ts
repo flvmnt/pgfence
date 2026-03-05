@@ -70,7 +70,7 @@ export async function extractKnexSQL(filePath: string): Promise<ExtractionResult
               filePath,
               line: loc.line,
               column: loc.column,
-              message: `Conditional SQL at line ${loc.line} — statement may or may not execute depending on runtime condition`,
+              message: `Conditional SQL at line ${loc.line}, statement may or may not execute depending on runtime condition`,
             });
           }
         } else {
@@ -79,7 +79,7 @@ export async function extractKnexSQL(filePath: string): Promise<ExtractionResult
             filePath,
             line: loc.line,
             column: loc.column,
-            message: 'Dynamic SQL — cannot statically analyze knex.raw() argument',
+            message: 'Dynamic SQL: cannot statically analyze knex.raw() argument',
           });
         }
       } else if (isSchemaBuilderCall(node)) {
@@ -93,7 +93,7 @@ export async function extractKnexSQL(filePath: string): Promise<ExtractionResult
             filePath,
             line: loc.line,
             column: loc.column,
-            message: 'Schema builder call — could not transpile to SQL',
+            message: 'Schema builder call: could not transpile to SQL',
           });
         }
         warnings.push(...result.warnings);

@@ -68,7 +68,7 @@ export async function extractSequelizeSQL(filePath: string): Promise<ExtractionR
                                 filePath,
                                 line: loc.line,
                                 column: loc.column,
-                                message: `Conditional SQL at line ${loc.line} — statement may or may not execute depending on runtime condition`,
+                                message: `Conditional SQL at line ${loc.line}, statement may or may not execute depending on runtime condition`,
                             });
                         }
                     } else {
@@ -77,7 +77,7 @@ export async function extractSequelizeSQL(filePath: string): Promise<ExtractionR
                             filePath,
                             line: loc.line,
                             column: loc.column,
-                            message: 'Dynamic SQL — cannot statically analyze sequelize.query() argument',
+                            message: 'Dynamic SQL: cannot statically analyze sequelize.query() argument',
                         });
                     }
                 } else if (isQueryInterfaceBuilder(node)) {
@@ -92,7 +92,7 @@ export async function extractSequelizeSQL(filePath: string): Promise<ExtractionR
                             filePath,
                             line: loc.line,
                             column: loc.column,
-                            message: 'queryInterface builder call could not be transpiled to SQL — manual review required',
+                            message: 'queryInterface builder call could not be transpiled to SQL, manual review required',
                         });
                     }
                     warnings.push(...result.warnings);

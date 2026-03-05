@@ -30,7 +30,7 @@ export function checkPreferRobustStmts(stmt: ParsedStatement): CheckResult[] {
       lockMode: LockMode.SHARE,
       blocks: getBlockedOperations(LockMode.SHARE),
       risk: RiskLevel.LOW,
-      message: `CREATE INDEX "${indexName}" — add IF NOT EXISTS for idempotency`,
+      message: `CREATE INDEX "${indexName}": add IF NOT EXISTS for idempotency`,
       ruleId: 'prefer-robust-create-index',
     });
   }
@@ -46,7 +46,7 @@ export function checkPreferRobustStmts(stmt: ParsedStatement): CheckResult[] {
       lockMode: LockMode.ACCESS_EXCLUSIVE,
       blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
       risk: RiskLevel.LOW,
-      message: `CREATE TABLE — add IF NOT EXISTS for idempotency`,
+      message: `CREATE TABLE: add IF NOT EXISTS for idempotency`,
       ruleId: 'prefer-robust-create-table',
     });
   }
@@ -67,7 +67,7 @@ export function checkPreferRobustStmts(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.LOW,
-        message: `DROP INDEX "${name}" — add IF EXISTS for idempotency`,
+        message: `DROP INDEX "${name}": add IF EXISTS for idempotency`,
         ruleId: 'prefer-robust-drop-index',
       });
     }
@@ -80,7 +80,7 @@ export function checkPreferRobustStmts(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.LOW,
-        message: `DROP TABLE "${name}" — add IF EXISTS for idempotency`,
+        message: `DROP TABLE "${name}": add IF EXISTS for idempotency`,
         ruleId: 'prefer-robust-drop-table',
       });
     }

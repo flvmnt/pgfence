@@ -47,7 +47,7 @@ export function checkAlterEnum(
     lockMode: LockMode.ACCESS_EXCLUSIVE,
     blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
     risk: RiskLevel.MEDIUM,
-    message: `ALTER TYPE "${typeName}" ADD VALUE '${newVal}' — takes ACCESS EXCLUSIVE on PG < 12, blocking all concurrent enum usage`,
+    message: `ALTER TYPE "${typeName}" ADD VALUE '${newVal}': takes ACCESS EXCLUSIVE on PG < 12, blocking all concurrent enum usage`,
     ruleId: 'alter-enum-add-value',
     safeRewrite: {
       description: 'Upgrade to Postgres 12+ where ALTER TYPE ADD VALUE is instant and non-blocking',

@@ -37,7 +37,7 @@ export function checkCreateIndex(stmt: ParsedStatement): CheckResult[] {
       lockMode: LockMode.SHARE,
       blocks: getBlockedOperations(LockMode.SHARE),
       risk: RiskLevel.MEDIUM,
-      message: `CREATE INDEX "${indexName}" without CONCURRENTLY — acquires SHARE lock, blocking all writes on "${tableName}"`,
+      message: `CREATE INDEX "${indexName}" without CONCURRENTLY: acquires SHARE lock, blocking all writes on "${tableName}"`,
       ruleId: 'create-index-not-concurrent',
       safeRewrite: {
         description: 'Use CREATE INDEX CONCURRENTLY to allow reads and writes during index build.',
@@ -68,7 +68,7 @@ export function checkCreateIndex(stmt: ParsedStatement): CheckResult[] {
       lockMode: LockMode.ACCESS_EXCLUSIVE,
       blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
       risk: RiskLevel.MEDIUM,
-      message: `DROP INDEX "${indexName}" without CONCURRENTLY — acquires ACCESS EXCLUSIVE lock`,
+      message: `DROP INDEX "${indexName}" without CONCURRENTLY: acquires ACCESS EXCLUSIVE lock`,
       ruleId: 'drop-index-not-concurrent',
       safeRewrite: {
         description: 'Use DROP INDEX CONCURRENTLY to avoid ACCESS EXCLUSIVE lock',
