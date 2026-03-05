@@ -57,7 +57,9 @@ function parsePostgresTimeoutMs(node: { kind?: string; args?: unknown[] }): { ms
   if (arg.A_Const) {
     const aConst = arg.A_Const as { ival?: { ival: number }; sval?: { sval: string } };
     if (aConst.ival !== undefined) {
-      return { ms: aConst.ival.ival, raw: String(aConst.ival.ival) };
+      // Protobuf encodes 0 as an empty object (default value), so ival.ival may be undefined
+      const ms = aConst.ival.ival ?? 0;
+      return { ms, raw: String(ms) };
     }
     if (aConst.sval?.sval) {
       const ms = parseTimeoutString(aConst.sval.sval);
@@ -109,10 +111,19 @@ export function checkPolicies(
           // Gap 5: timeout value validation
           const parsed = parsePostgresTimeoutMs(node);
           const threshold = config.maxLockTimeoutMs ?? 5000;
+          // lock_timeout=0 means "wait indefinitely", effectively disabling the timeout
+          if (parsed !== null && parsed.ms === 0) {
+            violations.push({
+              ruleId: 'lock-timeout-zero',
+              message: 'lock_timeout is set to 0 (disabled): this is equivalent to having no lock_timeout at all, allowing indefinite waits',
+              suggestion: "Set lock_timeout to a positive value, e.g. SET lock_timeout = '2s';",
+              severity: 'warning',
+            });
+          }
           if (parsed !== null && parsed.ms > threshold) {
             violations.push({
               ruleId: 'lock-timeout-too-long',
-              message: `lock_timeout is set to ${parsed.ms}ms ('${parsed.raw}') — exceeds recommended maximum of ${threshold}ms. A long lock_timeout means ACCESS EXCLUSIVE locks will block all reads and writes for up to ${parsed.ms}ms`,
+              message: `lock_timeout is set to ${parsed.ms}ms ('${parsed.raw}'), exceeds recommended maximum of ${threshold}ms. A long lock_timeout means ACCESS EXCLUSIVE locks will block all reads and writes for up to ${parsed.ms}ms`,
               suggestion: `Reduce lock_timeout to ${threshold}ms or less. If the DDL needs more time, split it into smaller operations`,
               severity: 'warning',
             });
@@ -128,7 +139,7 @@ export function checkPolicies(
           if (parsed !== null && parsed.ms > threshold) {
             violations.push({
               ruleId: 'statement-timeout-too-long',
-              message: `statement_timeout is set to ${parsed.ms}ms ('${parsed.raw}') — exceeds recommended maximum of ${threshold}ms`,
+              message: `statement_timeout is set to ${parsed.ms}ms ('${parsed.raw}'), exceeds recommended maximum of ${threshold}ms`,
               suggestion: `Reduce statement_timeout to ${threshold}ms or less`,
               severity: 'warning',
             });
@@ -177,7 +188,7 @@ export function checkPolicies(
         if (hasAccessExclusive) {
           violations.push({
             ruleId: 'statement-after-access-exclusive',
-            message: `Multiple statements holding ACCESS EXCLUSIVE lock in same transaction — "${makePreview(stmt.sql, 60)}" runs while ACCESS EXCLUSIVE is already held from "${accessExclusiveStmt}". This compounds the lock duration, blocking all reads and writes for the entire transaction.`,
+            message: `Multiple statements holding ACCESS EXCLUSIVE lock in same transaction: "${makePreview(stmt.sql, 60)}" runs while ACCESS EXCLUSIVE is already held from "${accessExclusiveStmt}". This compounds the lock duration, blocking all reads and writes for the entire transaction.`,
             suggestion: 'Split into separate transactions so each ACCESS EXCLUSIVE lock is held for the minimum time',
             severity: 'warning',
           });
@@ -197,7 +208,7 @@ export function checkPolicies(
         if (result.wideLockWindow) {
           violations.push({
             ruleId: 'wide-lock-window',
-            message: `Wide lock window — ACCESS EXCLUSIVE locks held on multiple tables ("${result.previousTable}" and "${tableName}") in the same transaction. This multiplies the blast radius of lock contention.`,
+            message: `Wide lock window: ACCESS EXCLUSIVE locks held on multiple tables ("${result.previousTable}" and "${tableName}") in the same transaction. This multiplies the blast radius of lock contention.`,
             suggestion: 'Split operations on different tables into separate transactions to minimize lock overlap',
             severity: 'warning',
           });
@@ -234,7 +245,7 @@ export function checkPolicies(
           if (notValidConstraintsInTx.has(key)) {
             violations.push({
               ruleId: 'not-valid-validate-same-tx',
-              message: `NOT VALID + VALIDATE CONSTRAINT "${c.name}" in same transaction — this defeats the purpose of NOT VALID because the table scan runs while the ACCESS EXCLUSIVE lock from ADD CONSTRAINT is still held`,
+              message: `NOT VALID + VALIDATE CONSTRAINT "${c.name}" in same transaction: this defeats the purpose of NOT VALID because the table scan runs while the ACCESS EXCLUSIVE lock from ADD CONSTRAINT is still held`,
               suggestion: `Split into separate migrations: add the constraint with NOT VALID in one migration, then VALIDATE CONSTRAINT in a follow-up migration`,
               severity: 'error',
             });
@@ -249,7 +260,7 @@ export function checkPolicies(
       if (node.concurrent === true && txState.active) {
         violations.push({
           ruleId: 'concurrent-in-transaction',
-          message: 'CREATE INDEX CONCURRENTLY inside a transaction — this will fail at runtime',
+          message: 'CREATE INDEX CONCURRENTLY inside a transaction: this will fail at runtime',
           suggestion: 'Run CONCURRENTLY operations outside of BEGIN/COMMIT blocks',
           severity: 'error',
         });
@@ -263,7 +274,7 @@ export function checkPolicies(
       if (!hasWhere) {
         violations.push({
           ruleId: 'update-in-migration',
-          message: 'UPDATE without WHERE in migration — bulk backfills should run out-of-band in batches',
+          message: 'UPDATE without WHERE in migration: bulk backfills should run out-of-band in batches',
           suggestion: 'Move data backfill to an out-of-band job using batched UPDATE with FOR UPDATE SKIP LOCKED',
           severity: 'warning',
         });
@@ -275,7 +286,7 @@ export function checkPolicies(
   if (lockTimeoutIndex >= 0 && firstDangerousIndex >= 0 && firstDangerousIndex < lockTimeoutIndex) {
     violations.push({
       ruleId: 'lock-timeout-after-dangerous-statement',
-      message: `SET lock_timeout appears AFTER the first ACCESS EXCLUSIVE statement ("${firstDangerousSql}") — the dangerous DDL runs without timeout protection`,
+      message: `SET lock_timeout appears AFTER the first ACCESS EXCLUSIVE statement ("${firstDangerousSql}"): the dangerous DDL runs without timeout protection`,
       suggestion: "Move SET lock_timeout = '2s'; to the very start of the migration, before any DDL statements",
       severity: 'error',
     });
@@ -285,7 +296,7 @@ export function checkPolicies(
   if (config.requireLockTimeout && lockTimeoutIndex === -1) {
     violations.push({
       ruleId: 'missing-lock-timeout',
-      message: 'Missing SET lock_timeout — without this, an ACCESS EXCLUSIVE lock will queue behind running queries and every new query queues behind it, causing a lock queue death spiral',
+      message: 'Missing SET lock_timeout: without this, an ACCESS EXCLUSIVE lock will queue behind running queries and every new query queues behind it, causing a lock queue death spiral',
       suggestion: "Add SET lock_timeout = '2s'; at the start of the migration",
       severity: 'error',
     });
@@ -294,7 +305,7 @@ export function checkPolicies(
   if (config.requireStatementTimeout && statementTimeoutIndex === -1) {
     violations.push({
       ruleId: 'missing-statement-timeout',
-      message: 'Missing SET statement_timeout — long-running operations can block other queries indefinitely',
+      message: 'Missing SET statement_timeout: long-running operations can block other queries indefinitely',
       suggestion: "Add SET statement_timeout = '5min'; at the start of the migration",
       severity: 'warning',
     });
@@ -303,7 +314,7 @@ export function checkPolicies(
   if (!hasApplicationName) {
     violations.push({
       ruleId: 'missing-application-name',
-      message: 'Missing SET application_name — makes it harder to identify migration locks in pg_stat_activity',
+      message: 'Missing SET application_name: makes it harder to identify migration locks in pg_stat_activity',
       suggestion: "Add SET application_name = 'migrate:<migration_name>';",
       severity: 'warning',
     });
@@ -312,7 +323,7 @@ export function checkPolicies(
   if (!hasIdleTimeout) {
     violations.push({
       ruleId: 'missing-idle-timeout',
-      message: 'Missing SET idle_in_transaction_session_timeout — orphaned connections with open transactions can hold locks indefinitely',
+      message: 'Missing SET idle_in_transaction_session_timeout: orphaned connections with open transactions can hold locks indefinitely',
       suggestion: "Add SET idle_in_transaction_session_timeout = '30s';",
       severity: 'warning',
     });
@@ -366,7 +377,8 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
       return false;
     }
     case 'DropStmt': {
-      const node = stmt.node as { removeType: string };
+      const node = stmt.node as { removeType: string; concurrent?: boolean };
+      if (node.removeType === 'OBJECT_INDEX' && node.concurrent === true) return false;
       return node.removeType === 'OBJECT_TABLE' || node.removeType === 'OBJECT_INDEX' || node.removeType === 'OBJECT_TRIGGER';
     }
     case 'TruncateStmt':
@@ -451,7 +463,10 @@ function getStatementLockMode(stmt: ParsedStatement): LockMode | null {
     case 'UpdateStmt':
       return 'ROW EXCLUSIVE' as LockMode;
     case 'DropStmt': {
-      const n = stmt.node as { removeType?: string };
+      const n = stmt.node as { removeType?: string; concurrent?: boolean };
+      if (n.removeType === 'OBJECT_INDEX' && n.concurrent === true) {
+        return 'SHARE UPDATE EXCLUSIVE' as LockMode;
+      }
       if (n.removeType === 'OBJECT_TABLE' || n.removeType === 'OBJECT_INDEX' || n.removeType === 'OBJECT_TRIGGER') {
         return 'ACCESS EXCLUSIVE' as LockMode;
       }
