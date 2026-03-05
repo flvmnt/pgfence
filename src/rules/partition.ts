@@ -42,14 +42,20 @@ export function checkPartition(
     const partName = partCmd?.name?.relname ?? '<unknown>';
 
     if (sub === 'AT_AttachPartition') {
+      const parentLock = config.minPostgresVersion >= 12
+        ? LockMode.SHARE_UPDATE_EXCLUSIVE
+        : LockMode.ACCESS_EXCLUSIVE;
+      const lockNote = config.minPostgresVersion >= 12
+        ? `SHARE UPDATE EXCLUSIVE lock on parent "${parentTable}" (ACCESS EXCLUSIVE on partition "${partName}")`
+        : `ACCESS EXCLUSIVE lock on parent "${parentTable}"`;
       results.push({
         statement: stmt.sql,
         statementPreview: makePreview(stmt.sql),
         tableName: parentTable,
-        lockMode: LockMode.ACCESS_EXCLUSIVE,
-        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        lockMode: parentLock,
+        blocks: getBlockedOperations(parentLock),
         risk: RiskLevel.HIGH,
-        message: `ATTACH PARTITION "${partName}" to "${parentTable}" — acquires ACCESS EXCLUSIVE lock on the parent table while validating the partition constraint`,
+        message: `ATTACH PARTITION "${partName}" to "${parentTable}": acquires ${lockNote} while validating the partition constraint`,
         ruleId: 'attach-partition',
         safeRewrite: {
           description: 'Add a CHECK constraint matching the partition bounds before attaching to skip the validation scan',
@@ -73,7 +79,7 @@ export function checkPartition(
           lockMode: LockMode.SHARE_UPDATE_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.SHARE_UPDATE_EXCLUSIVE),
           risk: RiskLevel.LOW,
-          message: `DETACH PARTITION CONCURRENTLY "${partName}" from "${parentTable}" — acquires SHARE UPDATE EXCLUSIVE lock (non-blocking)`,
+          message: `DETACH PARTITION CONCURRENTLY "${partName}" from "${parentTable}": acquires SHARE UPDATE EXCLUSIVE lock (non-blocking)`,
           ruleId: 'detach-partition-concurrent',
         });
       } else {
@@ -84,7 +90,7 @@ export function checkPartition(
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.HIGH,
-          message: `DETACH PARTITION "${partName}" from "${parentTable}" — acquires ACCESS EXCLUSIVE lock on the parent table`,
+          message: `DETACH PARTITION "${partName}" from "${parentTable}": acquires ACCESS EXCLUSIVE lock on the parent table`,
           ruleId: 'detach-partition',
           safeRewrite: config.minPostgresVersion >= 14
             ? {

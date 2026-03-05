@@ -679,14 +679,23 @@ DROP TABLE old_data;`;
 
   // --- Gap 3: REINDEX ---
 
-  it('should detect REINDEX TABLE without CONCURRENTLY as HIGH risk', async () => {
+  it('should detect REINDEX TABLE without CONCURRENTLY as HIGH risk with SHARE lock', async () => {
     const results = await analyze([fixture('reindex.sql')], defaultConfig);
     const checks = results[0].checks.filter((c) => c.ruleId === 'reindex-non-concurrent');
     const tableReindex = checks.find((c) => c.message.includes('TABLE'));
     expect(tableReindex).toBeDefined();
     expect(tableReindex!.risk).toBe(RiskLevel.HIGH);
-    expect(tableReindex!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(tableReindex!.lockMode).toBe(LockMode.SHARE);
     expect(tableReindex!.safeRewrite).toBeDefined();
+  });
+
+  it('should detect REINDEX INDEX without CONCURRENTLY as HIGH risk with ACCESS EXCLUSIVE lock', async () => {
+    const results = await analyze([fixture('reindex.sql')], defaultConfig);
+    const checks = results[0].checks.filter((c) => c.ruleId === 'reindex-non-concurrent');
+    const indexReindex = checks.find((c) => c.message.startsWith('REINDEX INDEX'));
+    expect(indexReindex).toBeDefined();
+    expect(indexReindex!.risk).toBe(RiskLevel.HIGH);
+    expect(indexReindex!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
   });
 
   it('should NOT flag REINDEX CONCURRENTLY', async () => {
@@ -810,6 +819,17 @@ DROP TABLE old_data;`;
     expect(concurrentDetach).toBeDefined();
     expect(concurrentDetach!.risk).toBe(RiskLevel.LOW);
     expect(concurrentDetach!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
+  });
+
+  it('should detect ATTACH PARTITION as SHARE UPDATE EXCLUSIVE on PG12+', async () => {
+    const pg12Config = { ...defaultConfig, minPostgresVersion: 12 };
+    const results = await analyze([fixture('partition.sql')], pg12Config);
+    const checks = results[0].checks;
+    const attachCheck = checks.find((c) => c.ruleId === 'attach-partition');
+    expect(attachCheck).toBeDefined();
+    expect(attachCheck!.risk).toBe(RiskLevel.HIGH);
+    expect(attachCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
+    expect(attachCheck!.message).toContain('ACCESS EXCLUSIVE on partition');
   });
 
   // --- Gap 2: lock_timeout ordering validation ---
@@ -1218,6 +1238,43 @@ describe('Plugin system', () => {
     expect(results).toHaveLength(1);
     // Should have transpiled the createTable and addIndex into SQL
     expect(results[0].statementCount).toBeGreaterThan(0);
+  });
+
+  // --- Audit fixes: lock mode corrections ---
+
+  it('should report FK message with SHARE ROW EXCLUSIVE on referenced table', async () => {
+    const results = await analyze([fixture('dangerous-constraint.sql')], defaultConfig);
+    const checks = results[0].checks;
+    const fkCheck = checks.find((c) => c.ruleId === 'add-constraint-fk-no-not-valid');
+    expect(fkCheck).toBeDefined();
+    expect(fkCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(fkCheck!.message).toContain('SHARE ROW EXCLUSIVE lock on');
+    expect(fkCheck!.message).not.toContain('" and SHARE lock on "');
+  });
+
+  it('should detect lock_timeout=0 as disabled (warning)', async () => {
+    const results = await analyze([fixture('lock-timeout-zero.sql')], defaultConfig);
+    const violations = results[0].policyViolations;
+    const zeroTimeout = violations.find((v) => v.ruleId === 'lock-timeout-zero');
+    expect(zeroTimeout).toBeDefined();
+    expect(zeroTimeout!.severity).toBe('warning');
+    expect(zeroTimeout!.message).toContain('disabled');
+  });
+
+  it('should NOT flag DROP INDEX CONCURRENTLY as ACCESS EXCLUSIVE in compounding danger', async () => {
+    const results = await analyze([fixture('drop-index-concurrent.sql')], defaultConfig);
+    const violations = results[0].policyViolations;
+    const compounding = violations.find((v) => v.ruleId === 'statement-after-access-exclusive');
+    expect(compounding).toBeUndefined();
+  });
+
+  it('should detect REINDEX TABLE blocks writes but not reads (SHARE lock)', async () => {
+    const results = await analyze([fixture('reindex.sql')], defaultConfig);
+    const checks = results[0].checks.filter((c) => c.ruleId === 'reindex-non-concurrent');
+    const tableReindex = checks.find((c) => c.message.includes('TABLE'));
+    expect(tableReindex).toBeDefined();
+    expect(tableReindex!.blocks.reads).toBe(false);
+    expect(tableReindex!.blocks.writes).toBe(true);
   });
 
   it('should respect plugin rule namespace requirement', async () => {

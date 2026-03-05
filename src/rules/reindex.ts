@@ -40,16 +40,23 @@ export function checkReindex(stmt: ParsedStatement): CheckResult[] {
 
   const isWide = node.kind === 'REINDEX_OBJECT_SCHEMA' || node.kind === 'REINDEX_OBJECT_DATABASE' || node.kind === 'REINDEX_OBJECT_SYSTEM';
 
+  // REINDEX TABLE takes ShareLock on the table (blocks writes, not reads)
+  // but ACCESS EXCLUSIVE on each index. REINDEX INDEX takes ACCESS EXCLUSIVE on the index itself.
+  const isTable = node.kind === 'REINDEX_OBJECT_TABLE';
+  const lockMode = isTable ? LockMode.SHARE : LockMode.ACCESS_EXCLUSIVE;
+
   return [{
     statement: stmt.sql,
     statementPreview: makePreview(stmt.sql),
     tableName,
-    lockMode: LockMode.ACCESS_EXCLUSIVE,
-    blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+    lockMode,
+    blocks: getBlockedOperations(lockMode),
     risk: isWide ? RiskLevel.CRITICAL : RiskLevel.HIGH,
     message: isWide
-      ? `REINDEX ${kindLabel} "${targetName}" — acquires ACCESS EXCLUSIVE lock on every index in the ${kindLabel.toLowerCase()}, blocking all reads and writes`
-      : `REINDEX ${kindLabel} "${targetName}" — acquires ACCESS EXCLUSIVE lock, blocking all reads and writes`,
+      ? `REINDEX ${kindLabel} "${targetName}": acquires ACCESS EXCLUSIVE lock on every index in the ${kindLabel.toLowerCase()}, blocking all reads and writes`
+      : isTable
+        ? `REINDEX ${kindLabel} "${targetName}": acquires SHARE lock on the table (blocking writes) and ACCESS EXCLUSIVE on each index`
+        : `REINDEX ${kindLabel} "${targetName}": acquires ACCESS EXCLUSIVE lock, blocking all reads and writes`,
     ruleId: 'reindex-non-concurrent',
     safeRewrite: {
       description: 'Use REINDEX CONCURRENTLY (PG12+) to avoid ACCESS EXCLUSIVE lock',
