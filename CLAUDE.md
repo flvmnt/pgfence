@@ -1,8 +1,8 @@
-# CLAUDE.md — pgfence
+# CLAUDE.md - pgfence
 
 ## Critical Rules
 
-### 1. Monorepo Structure — Cloud Separation
+### 1. Monorepo Structure - Cloud Separation
 This is a monorepo. The open-source CLI lives in `src/`. The paid cloud layer lives in `src/cloud/` and `src/agent/`. These directories are EXCLUDED from git via `.git/info/exclude` and must NEVER be committed, pushed, or referenced from public code.
 
 - `src/cloud/` and `src/agent/` are local-only development directories
@@ -21,7 +21,7 @@ This is a monorepo. The open-source CLI lives in `src/`. The paid cloud layer li
 - NEVER use pgfence.dev, pgfence.io, or any other domain
 - All links, docs, PRs, and references must use https://pgfence.com
 
-### 2. No AI Attribution — Ever
+### 2. No AI Attribution - Ever
 - NEVER include `Co-Authored-By` lines mentioning Claude, Anthropic, or any AI tool
 - NEVER include "Generated with Claude Code" or similar attribution
 - NEVER reference Claude, Anthropic, GPT, Copilot, LLM, or "AI-assisted/generated" anywhere
@@ -32,9 +32,9 @@ This is a monorepo. The open-source CLI lives in `src/`. The paid cloud layer li
 
 ## Project Overview
 
-pgfence is a Postgres migration safety CLI that analyzes SQL migration files and reports lock modes, risk levels, and safe rewrite recipes. It is the **first TypeScript/Node.js native tool** in this space — existing tools are Ruby (strong_migrations), Rust (Eugene, Squawk), or Go (pgroll).
+pgfence is a Postgres migration safety CLI that analyzes SQL migration files and reports lock modes, risk levels, and safe rewrite recipes. It is the **first TypeScript/Node.js native tool** in this space: existing tools are Ruby (strong_migrations), Rust (Eugene, Squawk), or Go (pgroll).
 
-**Core value proposition**: "We tell you what lock modes each statement takes, what it blocks, and give you the safe expand/contract sequence — before you merge."
+**Core value proposition**: "We tell you what lock modes each statement takes, what it blocks, and give you the safe expand/contract sequence, before you merge."
 
 ## Tech Stack
 
@@ -49,33 +49,51 @@ pgfence is a Postgres migration safety CLI that analyzes SQL migration files and
 
 ```
 src/
-  index.ts          — CLI entry point (commander/yargs)
-  parser.ts         — SQL parsing via libpg-query, returns AST nodes
-  analyzer.ts       — Maps parsed statements to lock modes + risk levels
-  rules/            — Individual check implementations (one file per footgun)
-    add-column.ts   — ADD COLUMN with/without DEFAULT, NOT NULL
-    create-index.ts — CREATE INDEX with/without CONCURRENTLY
-    alter-column.ts — ALTER COLUMN TYPE, SET NOT NULL, SET DEFAULT
-    add-constraint.ts — FOREIGN KEY, CHECK, UNIQUE, EXCLUDE constraints
-    destructive.ts  — DROP TABLE, TRUNCATE, DELETE without WHERE
-    policy.ts       — lock_timeout, statement_timeout, application_name, tx warnings
-  extractors/       — Extract SQL from ORM migration formats
-    raw-sql.ts      — Plain .sql files
-    typeorm.ts      — Extract queryRunner.query() strings from TypeORM migrations
-    prisma.ts       — Extract from Prisma migration SQL files (prisma/migrations/**/migration.sql)
-    knex.ts         — Extract from knex.raw() calls
+  index.ts          - CLI entry point (commander/yargs)
+  parser.ts         - SQL parsing via libpg-query, returns AST nodes
+  analyzer.ts       - Maps parsed statements to lock modes + risk levels
+  rules/            - Individual check implementations (one file per footgun)
+    add-column.ts   - ADD COLUMN with/without DEFAULT, NOT NULL
+    create-index.ts - CREATE INDEX with/without CONCURRENTLY
+    alter-column.ts - ALTER COLUMN TYPE, SET NOT NULL, SET DEFAULT
+    add-constraint.ts - FOREIGN KEY, CHECK, UNIQUE, EXCLUDE constraints
+    destructive.ts  - DROP TABLE, TRUNCATE, DELETE without WHERE
+    policy.ts       - lock_timeout, statement_timeout, application_name, tx warnings
+  extractors/       - Extract SQL from ORM migration formats
+    raw-sql.ts      - Plain .sql files
+    typeorm.ts      - Extract queryRunner.query() strings from TypeORM migrations
+    prisma.ts       - Extract from Prisma migration SQL files (prisma/migrations/**/migration.sql)
+    knex.ts         - Extract from knex.raw() calls
   reporters/
-    cli.ts          — Terminal table output with color-coded risk levels
-    json.ts         — Machine-readable JSON output
-    github-pr.ts    — GitHub PR comment markdown
-  db-stats.ts       — Optional DB connection for size-aware risk scoring
-  types.ts          — Shared types (LockMode, RiskLevel, CheckResult, SafeRewrite, etc.)
-  cloud/            — [LOCAL ONLY] pgfence Cloud integration (not tracked in git)
-  agent/            — [LOCAL ONLY] Secure Agent for DB metadata (not tracked in git)
+    cli.ts          - Terminal table output with color-coded risk levels
+    json.ts         - Machine-readable JSON output
+    github-pr.ts    - GitHub PR comment markdown
+  db-stats.ts       - Optional DB connection for size-aware risk scoring
+  types.ts          - Shared types (LockMode, RiskLevel, CheckResult, SafeRewrite, etc.)
+  lsp/              - LSP server (diagnostics, code actions, hover)
+    server.ts       - Server wiring, document management, config
+    analyze-text.ts - In-memory analysis API (same rules as CLI)
+    diagnostics.ts  - CheckResult/PolicyViolation to LSP Diagnostic mapping
+    code-actions.ts - Safe rewrite quick fixes + pgfence-ignore insertion
+    hover.ts        - Lock mode/blocked ops hover cards
+  cloud/            - [LOCAL ONLY] pgfence Cloud integration (not tracked in git)
+  agent/            - [LOCAL ONLY] Secure Agent for DB metadata (not tracked in git)
+packages/
+  vscode-pgfence/   - [LOCAL ONLY] VS Code extension (thin LSP client, published separately)
 tests/
-  fixtures/         — Sample migration files (safe + dangerous patterns)
-  analyzer.test.ts  — Core analyzer tests
+  fixtures/         - Sample migration files (safe + dangerous patterns)
+  lsp/              - LSP server tests (unit + E2E with real server over stdio)
+  analyzer.test.ts  - Core analyzer tests
 ```
+
+### VS Code Extension
+
+The VS Code extension (`packages/vscode-pgfence/`) is a thin LSP client that discovers the `@flvmnt/pgfence` npm package from the user's workspace or global install and spawns the LSP server over stdio. The extension is published separately to the VS Code Marketplace as `flvmnt.pgfence`.
+
+- Extension source is in `packages/vscode-pgfence/` (excluded from git via `.git/info/exclude`)
+- All analysis logic lives in `src/lsp/` (shipped with the npm package)
+- The LSP server binary is `dist/lsp/server.js` (the `"lsp"` export in package.json)
+- CLI and editor share one source of truth: updating the npm package updates the editor analysis
 
 ## Postgres Lock Mode Reference
 
@@ -114,12 +132,12 @@ This is the source of truth for pgfence's analysis. Each DDL statement maps to a
 
 ### Policy Checks
 
-1. **Missing `SET lock_timeout`** — Every migration MUST set lock_timeout (default recipe: `'2s'`). Prevents lock queue death spiral.
-2. **Missing `SET statement_timeout`** — Long operations need a timeout.
-3. **`CREATE INDEX CONCURRENTLY` inside transaction** — Will fail. Must run outside tx.
-4. **`SET application_name`** — Recommended for all migrations (enables `pg_stat_activity` visibility).
-5. **`SET idle_in_transaction_session_timeout`** — Recommended `'30s'` to prevent orphaned locks.
-6. **Large UPDATE/backfill inside migration** — Should be out-of-band with `FOR UPDATE SKIP LOCKED` batching.
+1. **Missing `SET lock_timeout`**: every migration MUST set lock_timeout (default recipe: `'2s'`). Prevents lock queue death spiral.
+2. **Missing `SET statement_timeout`**: long operations need a timeout.
+3. **`CREATE INDEX CONCURRENTLY` inside transaction**: will fail. Must run outside tx.
+4. **`SET application_name`**: recommended for all migrations (enables `pg_stat_activity` visibility).
+5. **`SET idle_in_transaction_session_timeout`**: recommended `'30s'` to prevent orphaned locks.
+6. **Large UPDATE/backfill inside migration**: should be out-of-band with `FOR UPDATE SKIP LOCKED` batching.
 
 ### DB-Size-Aware Risk Scoring
 
@@ -250,7 +268,7 @@ pgfence analyze --ci --max-risk medium migrations/*.sql
 
 ## Trust Contract
 
-pgfence's fatal failure mode is not false positives — it is **false negatives** (silently passing dangerous migrations) or **false safety implied** (not surfacing what we couldn't analyze). The Trust Contract defines how pgfence earns and keeps developer trust.
+pgfence's fatal failure mode is not false positives, it is **false negatives** (silently passing dangerous migrations) or **false safety implied** (not surfacing what we couldn't analyze). The Trust Contract defines how pgfence earns and keeps developer trust.
 
 ### Output Semantics
 
@@ -263,7 +281,7 @@ pgfence's fatal failure mode is not false positives — it is **false negatives*
 
 ### UNKNOWN Handling
 
-- Extractors encountering dynamic SQL (template literal interpolations, non-literal args) MUST emit an `ExtractionWarning` — never silently skip
+- Extractors encountering dynamic SQL (template literal interpolations, non-literal args) MUST emit an `ExtractionWarning`, never silently skip
 - UNKNOWN is configurable: `warn` (default, for early adoption) or `block` (for strict orgs)
 - Current implementation: TypeORM/Knex extractors already emit warnings for dynamic SQL. No silent failures exist today.
 
@@ -275,4 +293,4 @@ pgfence's fatal failure mode is not false positives — it is **false negatives*
 
 ## Monetization Philosophy
 
-pgfence monetizes the **organizational control plane** (policies, approvals, audit trail, exemptions), NOT the analyzer itself. The CLI + GitHub Action remain free forever. Companies pay for workflow enforcement and accountability — the ability to centrally manage who can approve risky migrations, track every decision in an immutable audit log, and enforce policies that individual developers cannot bypass.
+pgfence monetizes the **organizational control plane** (policies, approvals, audit trail, exemptions), NOT the analyzer itself. The CLI + GitHub Action remain free forever. Companies pay for workflow enforcement and accountability: the ability to centrally manage who can approve risky migrations, track every decision in an immutable audit log, and enforce policies that individual developers cannot bypass.
