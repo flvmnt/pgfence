@@ -189,4 +189,17 @@ program
     }
   });
 
+program
+  .command('lsp')
+  .description('Start the pgfence Language Server Protocol server (stdio)')
+  .action(async () => {
+    try {
+      await import('./lsp/server.js');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`pgfence lsp error: ${message}\n`);
+      process.exit(1);
+    }
+  });
+
 program.parse();
