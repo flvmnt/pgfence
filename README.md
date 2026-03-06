@@ -260,7 +260,7 @@ Use `--output json` to see `ruleId` values for any check you want to suppress.
 
 ## What It Catches
 
-pgfence checks 37 DDL patterns against Postgres's lock mode semantics:
+pgfence checks 42 DDL patterns against Postgres's lock mode semantics:
 
 ### Lock & Safety Checks
 
@@ -310,15 +310,25 @@ pgfence checks 37 DDL patterns against Postgres's lock mode semantics:
 | 31 | `integer` / `int` columns | LOW | Use `bigint` to avoid future overflow + rewrite |
 | 32 | `varchar(N)` columns | LOW | Use `text`, changing varchar length requires ACCESS EXCLUSIVE |
 | 33 | `timestamp` without time zone | LOW | Use `timestamptz` to avoid timezone bugs |
+| 34 | `char(N)` / `character(N)` columns | LOW | Use `text`, char pads with spaces and length changes require rewrite |
+| 35 | `serial` / `bigserial` / `smallserial` | LOW | Use `IDENTITY` columns (PG10+), cleaner semantics |
+
+### Destructive & Domain Checks
+
+| # | Pattern | Lock Mode | Risk | Safe Alternative |
+|---|---------|-----------|------|------------------|
+| 36 | `DROP DATABASE` | ACCESS EXCLUSIVE | CRITICAL | Irreversible, requires separate process |
+| 37 | `ALTER DOMAIN ADD CONSTRAINT` | SHARE | HIGH | Validates against all tables using domain |
+| 38 | `CREATE DOMAIN` with constraint | ACCESS SHARE | LOW | Use table-level CHECK constraints instead |
 
 ### Transaction & Policy Checks
 
 | # | Pattern | Severity |
 |---|---------|----------|
-| 34 | NOT VALID + VALIDATE CONSTRAINT in same transaction | error |
-| 35 | Multiple ACCESS EXCLUSIVE statements compounding | warning |
-| 36 | `CREATE INDEX CONCURRENTLY` inside transaction | error |
-| 37 | Bulk `UPDATE` without `WHERE` in migration | warning |
+| 39 | NOT VALID + VALIDATE CONSTRAINT in same transaction | error |
+| 40 | Multiple ACCESS EXCLUSIVE statements compounding | warning |
+| 41 | `CREATE INDEX CONCURRENTLY` inside transaction | error |
+| 42 | Bulk `UPDATE` without `WHERE` in migration | warning |
 
 ## Policy Checks
 
