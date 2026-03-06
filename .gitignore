@@ -35,6 +35,7 @@ coverage/
 press-releases/
 blog/
 website/
+docs/
 src/cloud/
 src/agent/
 tests/cloud/

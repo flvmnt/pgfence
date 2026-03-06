@@ -14,6 +14,7 @@
       <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/dw/@flvmnt/pgfence" alt="npm downloads" /></a>
       <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
       <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="Node.js" /></a>
+      <a href="https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence"><img src="https://img.shields.io/visual-studio-marketplace/v/flvmnt.pgfence?label=VS%20Code" alt="VS Code" /></a>
       <a href="https://pgfence.com"><img src="https://img.shields.io/badge/website-pgfence.com-blue" alt="Website" /></a>
     </p>
   </td>
@@ -110,6 +111,16 @@ Other tools in this space worth knowing about:
 These tools only analyze raw SQL. pgfence is the only migration linter that can analyze ORM migration files (TypeORM, Prisma, Knex, Drizzle, Sequelize), with full AST-walking transpilers that convert builder patterns into analyzable SQL. It also provides DB-size-aware risk scoring and complete expand/contract rewrite recipes.
 
 pgfence's safety rules have been [adopted by postgres-language-server](https://github.com/supabase-community/postgres-language-server/pull/703) (5,100+ stars, Supabase community), which ported 18 rules with explicit source attribution.
+
+## VS Code Extension
+
+Get real-time migration safety analysis directly in your editor:
+
+- **Inline diagnostics**: lock modes, risk levels, and policy violations as you type
+- **Quick fixes**: one-click safe rewrite replacements
+- **Hover info**: lock mode, blocked operations, and safe alternatives
+
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence) or search "pgfence" in the Extensions panel. Requires `@flvmnt/pgfence` installed in your project or globally.
 
 ## Installation
 
