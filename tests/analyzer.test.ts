@@ -1281,6 +1281,19 @@ describe('Plugin system', () => {
     expect(idleTimeout!.message).toContain('idle_in_transaction_session_timeout');
   });
 
+  it('should detect SET LOGGED/UNLOGGED as HIGH risk (full table rewrite)', async () => {
+    const results = await analyze([fixture('set-logged-unlogged.sql')], defaultConfig);
+    const checks = results[0].checks;
+    const unloggedCheck = checks.find((c) => c.ruleId === 'set-logged-unlogged' && c.message.includes('SET UNLOGGED'));
+    const loggedCheck = checks.find((c) => c.ruleId === 'set-logged-unlogged' && c.message.includes('SET LOGGED'));
+    expect(unloggedCheck).toBeDefined();
+    expect(unloggedCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(unloggedCheck!.risk).toBe(RiskLevel.HIGH);
+    expect(unloggedCheck!.tableName).toBe('events');
+    expect(loggedCheck).toBeDefined();
+    expect(loggedCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+  });
+
   it('should detect lock_timeout=0 as disabled (warning)', async () => {
     const results = await analyze([fixture('lock-timeout-zero.sql')], defaultConfig);
     const violations = results[0].policyViolations;

@@ -372,7 +372,8 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
         if (sub === 'AT_DropColumn' ||
           sub === 'AT_AlterColumnType' || sub === 'AT_SetNotNull' ||
           sub === 'AT_DropConstraint' ||
-          sub === 'AT_AttachPartition' || sub === 'AT_DetachPartition') {
+          sub === 'AT_AttachPartition' || sub === 'AT_DetachPartition' ||
+          sub === 'AT_SetLogged' || sub === 'AT_SetUnLogged') {
           return true;
         }
       }

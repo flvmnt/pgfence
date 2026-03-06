@@ -7,6 +7,7 @@
  * - TRUNCATE (ACCESS EXCLUSIVE, CRITICAL)
  * - DELETE without WHERE (ROW EXCLUSIVE, HIGH)
  * - VACUUM FULL (ACCESS EXCLUSIVE, HIGH)
+ * - SET LOGGED/UNLOGGED (ACCESS EXCLUSIVE, HIGH) - full table rewrite
  */
 
 import type { ParsedStatement } from '../parser.js';
@@ -25,7 +26,31 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
       };
       const tableName = alterNode.relation?.relname ?? null;
       for (const cmd of alterNode.cmds ?? []) {
-        if (cmd.AlterTableCmd?.subtype === 'AT_DropColumn') {
+        const subtype = cmd.AlterTableCmd?.subtype;
+        if (subtype === 'AT_SetLogged' || subtype === 'AT_SetUnLogged') {
+          const action = subtype === 'AT_SetLogged' ? 'SET LOGGED' : 'SET UNLOGGED';
+          results.push({
+            statement: stmt.sql,
+            statementPreview: makePreview(stmt.sql),
+            tableName,
+            lockMode: LockMode.ACCESS_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            risk: RiskLevel.HIGH,
+            message: `${action} on "${tableName}": rewrites entire table, acquires ACCESS EXCLUSIVE lock for full duration`,
+            ruleId: 'set-logged-unlogged',
+            safeRewrite: {
+              description: `${action} requires a full table rewrite. Consider the impact on large tables.`,
+              steps: [
+                `-- SET LOGGED/UNLOGGED rewrites the entire table under ACCESS EXCLUSIVE.`,
+                `-- There is no non-blocking alternative. Minimize impact:`,
+                `SET lock_timeout = '2s';`,
+                `ALTER TABLE ${tableName} ${action};`,
+                `-- Retry in a loop if lock_timeout expires.`,
+              ],
+            },
+          });
+        }
+        if (subtype === 'AT_DropColumn') {
           const colName = cmd.AlterTableCmd.name ?? '<unknown>';
           results.push({
             statement: stmt.sql,
