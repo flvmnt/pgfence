@@ -30,6 +30,13 @@ export function checkCreateIndex(stmt: ParsedStatement): CheckResult[] {
     const tableName = node.relation?.relname ?? null;
     const indexName = node.idxname ?? '<unnamed>';
 
+    // Derive safe SQL from original: insert CONCURRENTLY IF NOT EXISTS
+    const safeSql = stmt.sql.trim().replace(/;?\s*$/, '')
+      .replace(
+        /^CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?/i,
+        (_, unique) => `CREATE ${unique ? 'UNIQUE ' : ''}INDEX CONCURRENTLY IF NOT EXISTS `,
+      ) + ';';
+
     results.push({
       statement: stmt.sql,
       statementPreview: makePreview(stmt.sql),
@@ -42,7 +49,7 @@ export function checkCreateIndex(stmt: ParsedStatement): CheckResult[] {
       safeRewrite: {
         description: 'Use CREATE INDEX CONCURRENTLY to allow reads and writes during index build.',
         steps: [
-          `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${indexName} ON ${tableName}(...);`,
+          safeSql,
           `-- Note: CONCURRENTLY must run outside a transaction block (disable ORM transaction wrappers)`,
         ],
       },
