@@ -54,7 +54,16 @@ export function createServer(conn: Connection) {
     requireStatementTimeout: true,
   };
 
-  connection.onInitialize((): InitializeResult => {
+  connection.onInitialize((params): InitializeResult => {
+    // Seed config from initializationOptions so the server doesn't use
+    // defaults until the first workspace/didChangeConfiguration event.
+    const init = params.initializationOptions as Record<string, unknown> | null;
+    if (init) {
+      if (typeof init.minPostgresVersion === 'number') serverConfig.minPostgresVersion = init.minPostgresVersion;
+      if (typeof init.requireLockTimeout === 'boolean') serverConfig.requireLockTimeout = init.requireLockTimeout;
+      if (typeof init.requireStatementTimeout === 'boolean') serverConfig.requireStatementTimeout = init.requireStatementTimeout;
+    }
+
     return {
       capabilities: {
         textDocumentSync: TextDocumentSyncKind.Full,
