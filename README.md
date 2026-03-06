@@ -249,7 +249,7 @@ Use `--output json` to see `ruleId` values for any check you want to suppress.
 
 ## What It Catches
 
-pgfence checks 36 DDL patterns against Postgres's lock mode semantics:
+pgfence checks 37 DDL patterns against Postgres's lock mode semantics:
 
 ### Lock & Safety Checks
 
@@ -288,25 +288,26 @@ pgfence checks 36 DDL patterns against Postgres's lock mode semantics:
 | 25 | `CREATE TRIGGER` | SHARE ROW EXCLUSIVE | MEDIUM | Use `lock_timeout` to bound lock wait |
 | 26 | `DROP TRIGGER` | ACCESS EXCLUSIVE | MEDIUM | Use `lock_timeout` to bound lock wait |
 | 27 | `ENABLE/DISABLE TRIGGER` | SHARE ROW EXCLUSIVE | LOW | Blocks concurrent DDL only |
+| 28 | `SET LOGGED/UNLOGGED` | ACCESS EXCLUSIVE | HIGH | Full table rewrite; no non-blocking alternative |
 
 ### Data Type Best Practices
 
 | # | Pattern | Risk | Suggestion |
 |---|---------|------|------------|
-| 28 | `ADD COLUMN ... json` | LOW | Use `jsonb`, json has no equality operator |
-| 29 | `ADD COLUMN ... serial` | MEDIUM | Use `GENERATED ALWAYS AS IDENTITY` |
-| 30 | `integer` / `int` columns | LOW | Use `bigint` to avoid future overflow + rewrite |
-| 31 | `varchar(N)` columns | LOW | Use `text`, changing varchar length requires ACCESS EXCLUSIVE |
-| 32 | `timestamp` without time zone | LOW | Use `timestamptz` to avoid timezone bugs |
+| 29 | `ADD COLUMN ... json` | LOW | Use `jsonb`, json has no equality operator |
+| 30 | `ADD COLUMN ... serial` | MEDIUM | Use `GENERATED ALWAYS AS IDENTITY` |
+| 31 | `integer` / `int` columns | LOW | Use `bigint` to avoid future overflow + rewrite |
+| 32 | `varchar(N)` columns | LOW | Use `text`, changing varchar length requires ACCESS EXCLUSIVE |
+| 33 | `timestamp` without time zone | LOW | Use `timestamptz` to avoid timezone bugs |
 
 ### Transaction & Policy Checks
 
 | # | Pattern | Severity |
 |---|---------|----------|
-| 33 | NOT VALID + VALIDATE CONSTRAINT in same transaction | error |
-| 34 | Multiple ACCESS EXCLUSIVE statements compounding | warning |
-| 35 | `CREATE INDEX CONCURRENTLY` inside transaction | error |
-| 36 | Bulk `UPDATE` without `WHERE` in migration | warning |
+| 34 | NOT VALID + VALIDATE CONSTRAINT in same transaction | error |
+| 35 | Multiple ACCESS EXCLUSIVE statements compounding | warning |
+| 36 | `CREATE INDEX CONCURRENTLY` inside transaction | error |
+| 37 | Bulk `UPDATE` without `WHERE` in migration | warning |
 
 ## Policy Checks
 
