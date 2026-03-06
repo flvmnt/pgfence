@@ -12,7 +12,7 @@
  * Default detection strategy (per user feedback):
  * - Only A_Const and TypeCast(A_Const) are treated as "constant" (safe on PG11+)
  * - Everything else (FuncCall, SQLValueFunction, expressions) = non-constant = unsafe
- * - No hardcoded "volatile list" — we don't pretend to know function immutability
+ * - No hardcoded "volatile list", we don't pretend to know function immutability
  */
 
 import type { ParsedStatement } from '../parser.js';
@@ -108,7 +108,7 @@ export function checkAddColumn(
       continue;
     }
 
-    // Case 2: Has DEFAULT — check if constant or non-constant
+    // Case 2: Has DEFAULT - check if constant or non-constant
     if (hasDefault && defaultExpr) {
       const isConstant = isConstantDefault(defaultExpr);
 
@@ -155,7 +155,7 @@ export function checkAddColumn(
           },
         });
       }
-      // If constant but PG < 11, it's still a rewrite — flag as HIGH
+      // If constant but PG < 11, it's still a rewrite - flag as HIGH
       if (isConstant && config.minPostgresVersion < 11) {
         results.push({
           statement: stmt.sql,
@@ -185,13 +185,13 @@ export function checkAddColumn(
     // NOT NULL + non-constant default = also flag NOT NULL separately if needed
     if (hasNotNull && hasDefault && defaultExpr && !isConstantDefault(defaultExpr)) {
       // Already flagged for non-constant default above, the NOT NULL compounds the issue
-      // but we don't double-flag — the non-constant default recipe covers it
+      // but we don't double-flag, the non-constant default recipe covers it
     }
 
     // Type-specific checks on ADD COLUMN
     const typeName = getTypeName(colDef.typeName);
 
-    // ADD COLUMN with json type — should use jsonb instead
+    // ADD COLUMN with json type - should use jsonb instead
     if (typeName === 'json') {
       results.push({
         statement: stmt.sql,
@@ -206,7 +206,7 @@ export function checkAddColumn(
       });
     }
 
-    // ADD COLUMN with serial/bigserial — should use IDENTITY instead
+    // ADD COLUMN with serial/bigserial - should use IDENTITY instead
     const serialTypes = ['serial', 'serial4', 'serial8', 'bigserial', 'smallserial', 'serial2'];
     if (serialTypes.includes(typeName)) {
       results.push({
@@ -228,7 +228,7 @@ export function checkAddColumn(
       });
     }
 
-    // ADD COLUMN with GENERATED ALWAYS AS ... STORED — table rewrite
+    // ADD COLUMN with GENERATED ALWAYS AS ... STORED - table rewrite
     const hasStoredGenerated = constraints.some(
       (con) => con.Constraint.contype === 'CONSTR_GENERATED',
     );
@@ -272,7 +272,7 @@ function getTypeName(tn?: TypeName): string {
  * Check if a default expression is a constant.
  *
  * ONLY A_Const and TypeCast(A_Const) are treated as constant.
- * Everything else — FuncCall, SQLValueFunction, expressions — is non-constant.
+ * Everything else (FuncCall, SQLValueFunction, expressions) is non-constant.
  */
 function isConstantDefault(expr: Record<string, unknown>): boolean {
   // Direct A_Const

@@ -1,5 +1,5 @@
 /**
- * GitHub PR comment reporter — Markdown output.
+ * GitHub PR comment reporter: Markdown output.
  *
  * Generates a markdown table suitable for posting as a PR comment.
  */

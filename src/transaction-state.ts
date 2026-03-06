@@ -1,5 +1,5 @@
 /**
- * Transaction State Machine — Gap 12
+ * Transaction State Machine: Gap 12
  *
  * Tracks transaction state including savepoints, lock accumulation,
  * and wide-lock-window detection across statements.
@@ -26,7 +26,7 @@ export interface TransactionState {
    * the savepoint was created. Used for ROLLBACK TO.
    */
   savepointSnapshots: Map<string, Map<string, LockMode>>;
-  /** Tables with ACCESS EXCLUSIVE locks — for wide-lock-window detection */
+  /** Tables with ACCESS EXCLUSIVE locks, for wide-lock-window detection */
   accessExclusiveTables: Set<string>;
 }
 
@@ -119,7 +119,7 @@ export function processTransactionStmt(
 
 /**
  * Record a statement's lock acquisition in the transaction state.
- * Returns true if this creates a "wide lock window" — multiple
+ * Returns true if this creates a "wide lock window": multiple
  * ACCESS EXCLUSIVE locks on different tables in the same transaction.
  */
 export function recordLock(

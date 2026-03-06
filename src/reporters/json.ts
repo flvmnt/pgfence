@@ -1,5 +1,5 @@
 /**
- * JSON reporter — machine-readable output.
+ * JSON reporter: machine-readable output.
  *
  * Wraps results in a metadata envelope with version and coverage stats.
  */

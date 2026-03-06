@@ -1,5 +1,5 @@
 /**
- * Plugin System — Gap 14
+ * Plugin System: Gap 14
  *
  * Loads external rule and policy plugins from user-specified file paths.
  * Plugin rule IDs must be namespaced with `plugin:` to avoid conflicts.

@@ -1,5 +1,5 @@
 /**
- * Schema Snapshot — Gap 10
+ * Schema Snapshot: Gap 10
  *
  * Fetches schema information from a Postgres database and persists it
  * as a JSON snapshot. Used by rules (e.g., alter-column.ts) to make

@@ -1,5 +1,5 @@
 /**
- * Sequelize Schema Builder Transpiler — Gap 13
+ * Sequelize Schema Builder Transpiler: Gap 13
  *
  * Converts Sequelize queryInterface method calls (createTable, addColumn, etc.)
  * into SQL strings that can flow through the normal parse→analyze pipeline.
@@ -120,7 +120,7 @@ function resolveSequelizeType(typeNode: TSNode): string | null {
       return SEQUELIZE_TYPE_MAP[prop.name as string] ?? null;
     }
   }
-  // DataTypes.STRING(100) — CallExpression wrapping MemberExpression
+  // DataTypes.STRING(100) - CallExpression wrapping MemberExpression
   if (typeNode.type === 'CallExpression') {
     const callee = typeNode.callee as TSNode;
     if (callee?.type === 'MemberExpression') {

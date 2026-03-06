@@ -1,5 +1,5 @@
 /**
- * CLI reporter — terminal table output with color-coded risk levels.
+ * CLI reporter: terminal table output with color-coded risk levels.
  *
  * Uses chalk for colors and cli-table3 for table formatting.
  */

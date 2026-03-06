@@ -4,7 +4,7 @@
  * Uses @typescript-eslint/typescript-estree to walk the JS/TS AST and
  * extract SQL from queryInterface.sequelize.query() calls.
  *
- * Warns on dynamic SQL — never silently ignores it.
+ * Warns on dynamic SQL, never silently ignores it.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -166,10 +166,10 @@ function extractStringValue(node: TSNode): string | null {
         const quasis = node.quasis as TSNode[];
         const expressions = node.expressions as TSNode[];
         if (expressions.length === 0) {
-            // No interpolations — safe to extract
+            // No interpolations - safe to extract
             return quasis.map((q) => (q.value as { cooked: string }).cooked).join('');
         }
-        // Has interpolations — extract what we can but this is incomplete
+        // Has interpolations - extract what we can but this is incomplete
         return null;
     }
     return null;

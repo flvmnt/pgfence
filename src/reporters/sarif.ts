@@ -1,5 +1,5 @@
 /**
- * SARIF 2.1.0 reporter — consumed by GitHub Code Scanning.
+ * SARIF 2.1.0 reporter: consumed by GitHub Code Scanning.
  *
  * Upload the output with actions/upload-sarif in your CI workflow to get
  * pgfence findings as inline annotations on pull requests.

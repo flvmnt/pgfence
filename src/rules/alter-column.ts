@@ -9,8 +9,8 @@
  * - varchar(N) -> text (removing length constraint)
  * - varchar(N) -> varchar (removing length constraint)
  * - any -> text (text is unbounded, always safe target)
- * - varchar(N) -> varchar(M) where M > N (widening — needs schema to verify)
- * - numeric(P,S) -> numeric(P2,S) where P2 > P (widening — needs schema to verify)
+ * - varchar(N) -> varchar(M) where M > N (widening, needs schema to verify)
+ * - numeric(P,S) -> numeric(P2,S) where P2 > P (widening, needs schema to verify)
  */
 
 import type { ParsedStatement } from '../parser.js';

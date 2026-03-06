@@ -1,5 +1,5 @@
 /**
- * Knex Schema Builder Transpiler — Gap 13
+ * Knex Schema Builder Transpiler: Gap 13
  *
  * Converts Knex schema builder AST nodes (createTable, alterTable, etc.)
  * into SQL strings that can flow through the normal parse→analyze pipeline.
@@ -373,7 +373,7 @@ function findRootColumnCall(node: TSNode, paramName: string): TSNode | null {
         return node;
       }
       // Chained call: something().modifier()
-      // The root is in the chain — return the outermost
+      // The root is in the chain - return the outermost
       if (obj?.type === 'CallExpression') {
         const inner = findRootColumnCall(obj, paramName);
         if (inner) return node; // return outermost, we'll parse the chain
@@ -468,7 +468,7 @@ function parseColumnChain(
         modifiers += ' UNIQUE';
         break;
       case 'unsigned':
-        // Postgres doesn't have unsigned — skip
+        // Postgres doesn't have unsigned - skip
         break;
       case 'references':
         if (call.args.length > 0) {

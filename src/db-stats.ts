@@ -1,5 +1,5 @@
 /**
- * DB stats fetcher — optional connection for size-aware risk scoring.
+ * DB stats fetcher: optional connection for size-aware risk scoring.
  *
  * Connects to a Postgres instance (read replica recommended) and queries
  * pg_stat_user_tables for row counts and table sizes.
@@ -10,7 +10,7 @@
 import type { TableStats } from './types.js';
 
 export async function fetchTableStats(dbUrl: string): Promise<TableStats[]> {
-  // Dynamic import — pg is optional, only needed with --db-url
+  // Dynamic import - pg is optional, only needed with --db-url
   let Client: new (config: { connectionString: string; connectionTimeoutMillis?: number }) => {
     connect(): Promise<void>;
     query(sql: string): Promise<{ rows: Array<Record<string, unknown>> }>;
