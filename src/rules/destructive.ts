@@ -4,7 +4,9 @@
  * Detects:
  * - DROP TABLE (ACCESS EXCLUSIVE, CRITICAL)
  * - DROP COLUMN (ACCESS EXCLUSIVE, HIGH)
- * - TRUNCATE (ACCESS EXCLUSIVE, CRITICAL)
+ * - DROP DATABASE (CRITICAL)
+ * - DROP SCHEMA [CASCADE] (ACCESS EXCLUSIVE, CRITICAL)
+ * - TRUNCATE [CASCADE] (ACCESS EXCLUSIVE, CRITICAL)
  * - DELETE without WHERE (ROW EXCLUSIVE, HIGH)
  * - VACUUM FULL (ACCESS EXCLUSIVE, HIGH)
  * - SET LOGGED/UNLOGGED (ACCESS EXCLUSIVE, HIGH) - full table rewrite
@@ -178,7 +180,7 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
         whereClause?: unknown;
       };
       // Only flag DELETE without WHERE
-      // whereClause can be absent, null, or empty object — all mean no WHERE
+      // whereClause can be absent, null, or empty object - all mean no WHERE
       if (node.whereClause && typeof node.whereClause === 'object' && Object.keys(node.whereClause as Record<string, unknown>).length > 0) break;
 
       const tableName = node.relation?.relname ?? null;
@@ -198,6 +200,21 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
             `-- DELETE FROM ${tableName} WHERE ctid IN (SELECT ctid FROM ${tableName} LIMIT 1000);`,
           ],
         },
+      });
+      break;
+    }
+
+    case 'DropdbStmt': {
+      const node = stmt.node as { dbname?: string };
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName: null,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.CRITICAL,
+        message: `DROP DATABASE "${node.dbname}": irreversible, destroys the entire database and all its data`,
+        ruleId: 'drop-database',
       });
       break;
     }

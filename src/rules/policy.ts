@@ -1,5 +1,5 @@
 /**
- * Policy checks — migration-level requirements
+ * Policy checks: migration-level requirements
  *
  * Scans all statements in a file for:
  * 1. SET lock_timeout present and ordered before dangerous DDL
@@ -30,7 +30,7 @@ export function parseTimeoutString(value: string): number | null {
   const trimmed = value.trim().toLowerCase();
   if (trimmed === '0') return 0;
 
-  // Pure numeric — Postgres interprets as milliseconds
+  // Pure numeric - Postgres interprets as milliseconds
   if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10);
 
   const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|sec|seconds?|min|minutes?|h|hours?)$/);
@@ -118,6 +118,7 @@ export function checkPolicies(
               message: 'lock_timeout is set to 0 (disabled): this is equivalent to having no lock_timeout at all, allowing indefinite waits',
               suggestion: "Set lock_timeout to a positive value, e.g. SET lock_timeout = '2s';",
               severity: 'warning',
+              statementIndex: i,
             });
           }
           if (parsed !== null && parsed.ms > threshold) {
@@ -126,6 +127,7 @@ export function checkPolicies(
               message: `lock_timeout is set to ${parsed.ms}ms ('${parsed.raw}'), exceeds recommended maximum of ${threshold}ms. A long lock_timeout means ACCESS EXCLUSIVE locks will block all reads and writes for up to ${parsed.ms}ms`,
               suggestion: `Reduce lock_timeout to ${threshold}ms or less. If the DDL needs more time, split it into smaller operations`,
               severity: 'warning',
+              statementIndex: i,
             });
           }
           break;
@@ -142,6 +144,7 @@ export function checkPolicies(
               message: `statement_timeout is set to ${parsed.ms}ms ('${parsed.raw}'), exceeds recommended maximum of ${threshold}ms`,
               suggestion: `Reduce statement_timeout to ${threshold}ms or less`,
               severity: 'warning',
+              statementIndex: i,
             });
           }
           break;
@@ -191,6 +194,7 @@ export function checkPolicies(
             message: `Multiple statements holding ACCESS EXCLUSIVE lock in same transaction: "${makePreview(stmt.sql, 60)}" runs while ACCESS EXCLUSIVE is already held from "${accessExclusiveStmt}". This compounds the lock duration, blocking all reads and writes for the entire transaction.`,
             suggestion: 'Split into separate transactions so each ACCESS EXCLUSIVE lock is held for the minimum time',
             severity: 'warning',
+            statementIndex: i,
           });
         } else {
           hasAccessExclusive = true;
@@ -211,6 +215,7 @@ export function checkPolicies(
             message: `Wide lock window: ACCESS EXCLUSIVE locks held on multiple tables ("${result.previousTable}" and "${tableName}") in the same transaction. This multiplies the blast radius of lock contention.`,
             suggestion: 'Split operations on different tables into separate transactions to minimize lock overlap',
             severity: 'warning',
+            statementIndex: i,
           });
         }
       }
@@ -245,9 +250,10 @@ export function checkPolicies(
           if (notValidConstraintsInTx.has(key)) {
             violations.push({
               ruleId: 'not-valid-validate-same-tx',
-              message: `NOT VALID + VALIDATE CONSTRAINT "${c.name}" in same transaction: this defeats the purpose of NOT VALID because the table scan runs while the ACCESS EXCLUSIVE lock from ADD CONSTRAINT is still held`,
+              message: `NOT VALID + VALIDATE CONSTRAINT "${c.name}" in same transaction: this defeats the purpose of NOT VALID because the table scan runs while the SHARE ROW EXCLUSIVE lock from ADD CONSTRAINT is still held`,
               suggestion: `Split into separate migrations: add the constraint with NOT VALID in one migration, then VALIDATE CONSTRAINT in a follow-up migration`,
               severity: 'error',
+              statementIndex: i,
             });
           }
         }
@@ -263,6 +269,7 @@ export function checkPolicies(
           message: 'CREATE INDEX CONCURRENTLY inside a transaction: this will fail at runtime',
           suggestion: 'Run CONCURRENTLY operations outside of BEGIN/COMMIT blocks',
           severity: 'error',
+          statementIndex: i,
         });
       }
     }
@@ -277,6 +284,7 @@ export function checkPolicies(
           message: 'UPDATE without WHERE in migration: bulk backfills should run out-of-band in batches',
           suggestion: 'Move data backfill to an out-of-band job using batched UPDATE with FOR UPDATE SKIP LOCKED',
           severity: 'warning',
+          statementIndex: i,
         });
       }
     }
@@ -340,7 +348,7 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
   switch (stmt.nodeType) {
     case 'AlterTableStmt': {
       // Only flag ALTER TABLE commands that hold ACCESS EXCLUSIVE for a significant duration.
-      // Nullable ADD COLUMN and NOT VALID constraints are instant — skip them.
+      // Nullable ADD COLUMN and NOT VALID constraints are instant - skip them.
       const node = stmt.node as {
         cmds: Array<{
           AlterTableCmd: {
@@ -354,17 +362,17 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
       };
       for (const cmd of node.cmds ?? []) {
         const sub = cmd.AlterTableCmd?.subtype;
-        // VALIDATE CONSTRAINT takes SHARE UPDATE EXCLUSIVE — skip
+        // VALIDATE CONSTRAINT takes SHARE UPDATE EXCLUSIVE - skip
         if (sub === 'AT_ValidateConstraint') continue;
-        // ADD COLUMN is technically ACCESS EXCLUSIVE but instant — skip
+        // ADD COLUMN is technically ACCESS EXCLUSIVE but instant - skip
         if (sub === 'AT_AddColumn') continue;
-        // ADD CONSTRAINT with NOT VALID is brief (metadata only) — skip
+        // ADD CONSTRAINT with NOT VALID is brief (metadata only) - skip
         if (sub === 'AT_AddConstraint' && cmd.AlterTableCmd.def?.Constraint?.skip_validation === true) continue;
-        // ENABLE/DISABLE TRIGGER takes SHARE ROW EXCLUSIVE — skip
+        // ENABLE/DISABLE TRIGGER takes SHARE ROW EXCLUSIVE - skip
         if (sub === 'AT_EnableTrig' || sub === 'AT_DisableTrig' ||
           sub === 'AT_EnableTrigAll' || sub === 'AT_DisableTrigAll' ||
           sub === 'AT_EnableTrigUser' || sub === 'AT_DisableTrigUser') continue;
-        // DETACH PARTITION CONCURRENTLY takes SHARE UPDATE EXCLUSIVE — skip
+        // DETACH PARTITION CONCURRENTLY takes SHARE UPDATE EXCLUSIVE - skip
         if (sub === 'AT_DetachPartition' && cmd.AlterTableCmd.def?.PartitionCmd?.concurrent === true) continue;
         // ADD CONSTRAINT takes SHARE ROW EXCLUSIVE (PG 9.3+), not ACCESS EXCLUSIVE
         if (sub === 'AT_AddConstraint') continue;

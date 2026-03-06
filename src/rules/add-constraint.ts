@@ -8,15 +8,17 @@
  * - PRIMARY KEY without USING INDEX (SHARE ROW EXCLUSIVE, full table scan)
  * - EXCLUDE constraint (SHARE ROW EXCLUSIVE)
  * - UNIQUE/PRIMARY KEY USING INDEX (SHARE UPDATE EXCLUSIVE, instant)
+ * - ALTER DOMAIN ADD CONSTRAINT (blocks all queries using the domain)
+ * - CREATE DOMAIN WITH CONSTRAINT (poor migration support)
  *
  * PostgreSQL's AlterTableGetLockLevel() returns ShareRowExclusiveLock for
  * AT_AddConstraint since PG 9.3. USING INDEX variants use ShareUpdateExclusiveLock.
  *
  * Detection key from AST probe:
- * - skip_validation === true → NOT VALID was used (safe)
- * - skip_validation absent → validated immediately (dangerous)
+ * - skip_validation === true -> NOT VALID was used (safe)
+ * - skip_validation absent -> validated immediately (dangerous)
  *
- * AT_ValidateConstraint → SHARE UPDATE EXCLUSIVE (non-blocking scan), LOW risk
+ * AT_ValidateConstraint -> SHARE UPDATE EXCLUSIVE (non-blocking scan), LOW risk
  */
 
 import type { ParsedStatement } from '../parser.js';
@@ -233,6 +235,59 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
         });
         break;
       }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Detect ALTER DOMAIN ADD CONSTRAINT and CREATE DOMAIN with constraints.
+ * Domains with constraints have poor support for online migrations.
+ */
+export function checkDomainConstraint(stmt: ParsedStatement): CheckResult[] {
+  const results: CheckResult[] = [];
+
+  if (stmt.nodeType === 'AlterDomainStmt') {
+    const node = stmt.node as {
+      typeName?: Array<{ String: { sval: string } }>;
+      subtype: string;
+    };
+    if (node.subtype === 'C') {
+      // 'C' = ADD CONSTRAINT in AlterDomainStmt subtype enum
+      const domainName = node.typeName?.[node.typeName.length - 1]?.String?.sval ?? '<unknown>';
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName: null,
+        lockMode: LockMode.SHARE,
+        blocks: getBlockedOperations(LockMode.SHARE),
+        risk: RiskLevel.HIGH,
+        message: `ALTER DOMAIN "${domainName}" ADD CONSTRAINT: validates against all columns using this domain, blocking writes on those tables. Domains with constraints have poor support for online migrations`,
+        ruleId: 'ban-alter-domain-add-constraint',
+        appliesToNewTables: true,
+      });
+    }
+  }
+
+  if (stmt.nodeType === 'CreateDomainStmt') {
+    const node = stmt.node as {
+      domainname?: Array<{ String: { sval: string } }>;
+      constraints?: Array<unknown>;
+    };
+    if (node.constraints && node.constraints.length > 0) {
+      const domainName = node.domainname?.[node.domainname.length - 1]?.String?.sval ?? '<unknown>';
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName: null,
+        lockMode: LockMode.ACCESS_SHARE,
+        blocks: getBlockedOperations(LockMode.ACCESS_SHARE),
+        risk: RiskLevel.LOW,
+        message: `CREATE DOMAIN "${domainName}" with constraints: domains with constraints have poor support for online migrations. Use table-level CHECK constraints instead`,
+        ruleId: 'ban-create-domain-with-constraint',
+        appliesToNewTables: true,
+      });
     }
   }
 

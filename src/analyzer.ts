@@ -1,5 +1,5 @@
 /**
- * Core analyzer — maps parsed SQL statements to lock modes and risk levels.
+ * Core analyzer: maps parsed SQL statements to lock modes and risk levels.
  *
  * Pipeline per file:
  * 1. Select extractor by config.format (or auto-detect)
@@ -17,7 +17,7 @@ import type { ParsedStatement } from './parser.js';
 import { checkAddColumn } from './rules/add-column.js';
 import { checkCreateIndex } from './rules/create-index.js';
 import { checkAlterColumn } from './rules/alter-column.js';
-import { checkAddConstraint } from './rules/add-constraint.js';
+import { checkAddConstraint, checkDomainConstraint } from './rules/add-constraint.js';
 import { checkDestructive } from './rules/destructive.js';
 import { checkRenameColumn } from './rules/rename-column.js';
 import { checkBestPractices } from './rules/best-practices.js';
@@ -43,7 +43,7 @@ import type {
 } from './types.js';
 import { RiskLevel } from './types.js';
 
-// Risk levels ordered for comparison — exported for CLI exit code logic
+// Risk levels ordered for comparison, exported for CLI exit code logic
 export const RISK_ORDER: RiskLevelType[] = [
   RiskLevel.SAFE,
   RiskLevel.LOW,
@@ -106,7 +106,7 @@ export async function analyze(
     allTableStats = rawStats;
     tableStatsMap = new Map();
     for (const s of rawStats) {
-      // Normalize to lowercase — Postgres identifiers are case-insensitive unless quoted
+      // Normalize to lowercase - Postgres identifiers are case-insensitive unless quoted
       const lower = s.tableName.toLowerCase();
       tableStatsMap.set(lower, s);
       tableStatsMap.set(`${s.schemaName.toLowerCase()}.${lower}`, s);
@@ -115,7 +115,7 @@ export async function analyze(
 
   const results: AnalysisResult[] = [];
 
-  // Gap 8: Cross-file migration state — track tables created across files
+  // Gap 8: Cross-file migration state - track tables created across files
   // so that operations on newly-created tables in later files are suppressed.
   const crossFileCreatedTables = new Set<string>();
 
@@ -175,7 +175,7 @@ export async function analyze(
         // Filter: inline ignore directives
         // '*' = suppress all (bare -- pgfence-ignore), or match specific ruleId
         if (stmt.ignoredRules?.includes('*') || stmt.ignoredRules?.includes(check.ruleId)) continue;
-        // Filter: visibility logic — skip warnings for tables created in this migration
+        // Filter: visibility logic - skip warnings for tables created in this migration
         // (but best-practice checks with appliesToNewTables still fire)
         if (check.tableName && createdTables.has(check.tableName.toLowerCase()) && !check.appliesToNewTables) continue;
         checks.push(check);
@@ -236,7 +236,7 @@ export async function analyze(
  * `enable` acts as whitelist (only listed rules run).
  * `disable` acts as blacklist (listed rules suppressed).
  */
-function filterByRulesConfig<T extends { ruleId: string }>(items: T[], rules?: RulesConfig): T[] {
+export function filterByRulesConfig<T extends { ruleId: string }>(items: T[], rules?: RulesConfig): T[] {
   if (!rules) return items;
   let filtered = items;
 
@@ -253,7 +253,7 @@ function filterByRulesConfig<T extends { ruleId: string }>(items: T[], rules?: R
   return filtered;
 }
 
-function applyRules(stmt: ParsedStatement, config: PgfenceConfig): CheckResult[] {
+export function applyRules(stmt: ParsedStatement, config: PgfenceConfig): CheckResult[] {
   const results: CheckResult[] = [];
   results.push(...checkAddColumn(stmt, config));
   results.push(...checkCreateIndex(stmt));
@@ -268,6 +268,7 @@ function applyRules(stmt: ParsedStatement, config: PgfenceConfig): CheckResult[]
   results.push(...checkRefreshMatView(stmt));
   results.push(...checkTrigger(stmt));
   results.push(...checkPartition(stmt, config));
+  results.push(...checkDomainConstraint(stmt));
   return results;
 }
 
@@ -292,7 +293,7 @@ export function detectFormat(filePath: string, content: string): PgfenceConfig['
     if (content.includes('MigrationInterface') || content.includes('queryRunner.query')) {
       return 'typeorm';
     }
-    // Check for strong Knex markers — require knex/trx reference alongside exports.up
+    // Check for strong Knex markers - require knex/trx reference alongside exports.up
     const hasKnexRef = content.includes('knex.raw') || content.includes('trx.raw') || content.includes('knex.schema');
     const hasKnexExport = content.includes('exports.up') && (content.includes('knex') || content.includes('Knex'));
     if (hasKnexRef || hasKnexExport) {
