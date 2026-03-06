@@ -120,7 +120,7 @@ Get real-time migration safety analysis directly in your editor:
 - **Quick fixes**: one-click safe rewrite replacements
 - **Hover info**: lock mode, blocked operations, and safe alternatives
 
-Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence) or search "pgfence" in the Extensions panel. Requires `@flvmnt/pgfence` installed in your project or globally.
+**[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence)** or search "pgfence" in the Extensions panel. Requires `@flvmnt/pgfence` installed in your project or globally. See the [extension docs](https://pgfence.com/docs/editor) for configuration and commands.
 
 ## Installation
 
