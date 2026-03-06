@@ -66,6 +66,8 @@ export interface PolicyViolation {
   suggestion: string;
   /** Severity */
   severity: 'error' | 'warning';
+  /** Index of the triggering statement (for statement-level policies) */
+  statementIndex?: number;
 }
 
 export interface TableStats {

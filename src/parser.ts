@@ -2,7 +2,7 @@
  * SQL parsing via libpg-query.
  *
  * Uses the actual PostgreSQL parser (via C bindings) for accurate AST generation.
- * This is the same parser Postgres itself uses — no regex guessing.
+ * This is the same parser Postgres itself uses, no regex guessing.
  */
 
 export interface ParsedStatement {
@@ -16,6 +16,10 @@ export interface ParsedStatement {
    *  '*' means suppress all checks (bare -- pgfence-ignore).
    */
   ignoredRules?: string[];
+  /** Character offset of this statement's start in the original SQL string */
+  startOffset: number;
+  /** Character offset of this statement's end in the original SQL string */
+  endOffset: number;
 }
 
 interface LibPgStmt {
@@ -37,6 +41,9 @@ export async function parseSQL(sql: string): Promise<ParsedStatement[]> {
   const stmts = result.stmts ?? [];
   const results: ParsedStatement[] = [];
 
+  // libpg-query returns byte offsets into the UTF-8 representation.
+  // Pre-compute the buffer once for byte-to-char conversion.
+  const buf = Buffer.from(sql, 'utf8');
   let prevEnd = 0;
 
   for (let i = 0; i < stmts.length; i++) {
@@ -44,15 +51,16 @@ export async function parseSQL(sql: string): Promise<ParsedStatement[]> {
     const nodeType = Object.keys(entry.stmt)[0];
     const node = entry.stmt[nodeType] as Record<string, unknown>;
 
-    // Extract raw SQL via byte offsets
-    const start = entry.stmt_location ?? 0;
-    let end: number;
+    const startByte = entry.stmt_location ?? 0;
+    let endByte: number;
     if (entry.stmt_len && entry.stmt_len > 0) {
-      end = start + entry.stmt_len;
+      endByte = startByte + entry.stmt_len;
     } else {
       // Last statement: take rest of input
-      end = sql.length;
+      endByte = buf.length;
     }
+    const start = buf.subarray(0, startByte).toString('utf8').length;
+    const end = buf.subarray(0, endByte).toString('utf8').length;
 
     let rawSql = sql.slice(start, end).trim();
     // Strip trailing semicolon for cleaner display
@@ -65,7 +73,7 @@ export async function parseSQL(sql: string): Promise<ParsedStatement[]> {
     const ignoredRules = extractIgnoredRules(rawSql, sql, start, prevEnd);
     prevEnd = end;
 
-    results.push({ sql: rawSql, nodeType, node, ...(ignoredRules.length > 0 ? { ignoredRules } : {}) });
+    results.push({ sql: rawSql, nodeType, node, startOffset: start, endOffset: end, ...(ignoredRules.length > 0 ? { ignoredRules } : {}) });
   }
 
   return results;

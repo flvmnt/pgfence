@@ -25,4 +25,39 @@ describe('parser', () => {
     it('should detect parsing errors', async () => {
         await expect(parseSQL('THIS IS NOT SQL;')).rejects.toThrow();
     });
+
+    it('should return correct character offsets for multi-statement SQL', async () => {
+        const sql = 'SELECT 1;\nALTER TABLE t ADD COLUMN c int;';
+        const stmts = await parseSQL(sql);
+        expect(stmts.length).toBe(2);
+        expect(stmts[0].startOffset).toBe(0);
+        // Offsets should not overlap and should cover the statement text
+        expect(stmts[0].endOffset).toBeLessThanOrEqual(stmts[1].startOffset);
+        expect(sql.slice(stmts[0].startOffset, stmts[0].endOffset)).toContain('SELECT 1');
+        expect(sql.slice(stmts[1].startOffset, stmts[1].endOffset)).toContain('ALTER TABLE');
+        expect(stmts[1].endOffset).toBeLessThanOrEqual(sql.length);
+    });
+
+    it('should handle multi-byte UTF-8 characters in offset calculation', async () => {
+        // CJK chars (3 bytes each in UTF-8) would shift byte offsets
+        const sql = "SELECT '日本語'; SELECT 2;";
+        const stmts = await parseSQL(sql);
+        expect(stmts.length).toBe(2);
+        // Second statement should start at the correct character index
+        const secondStart = stmts[1].startOffset;
+        // The character at secondStart should be 'S' (start of SELECT 2)
+        // or a space before it
+        const charAtStart = sql[secondStart];
+        expect([' ', 'S']).toContain(charAtStart);
+        // The extracted SQL should contain SELECT 2
+        expect(stmts[1].sql).toContain('SELECT 2');
+    });
+
+    it('should assign endOffset = sql.length for last statement without stmt_len', async () => {
+        const sql = 'SELECT 1';
+        const stmts = await parseSQL(sql);
+        expect(stmts.length).toBe(1);
+        expect(stmts[0].startOffset).toBe(0);
+        expect(stmts[0].endOffset).toBe(sql.length);
+    });
 });
