@@ -223,7 +223,7 @@ describe('pgfence analyzer', () => {
     const checkConstraint = checks.find((c) => c.ruleId === 'add-constraint-check-no-not-valid');
     expect(checkConstraint).toBeDefined();
     expect(checkConstraint!.risk).toBe(RiskLevel.MEDIUM);
-    expect(checkConstraint!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(checkConstraint!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
   });
 
   it('should detect ADD UNIQUE constraint as HIGH risk', async () => {
@@ -233,7 +233,7 @@ describe('pgfence analyzer', () => {
     const uniqueCheck = checks.find((c) => c.ruleId === 'add-constraint-unique');
     expect(uniqueCheck).toBeDefined();
     expect(uniqueCheck!.risk).toBe(RiskLevel.HIGH);
-    expect(uniqueCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(uniqueCheck!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
   });
 
   it('should detect ADD EXCLUDE constraint as HIGH risk', async () => {
@@ -243,7 +243,7 @@ describe('pgfence analyzer', () => {
     const excludeCheck = checks.find((c) => c.ruleId === 'add-constraint-exclude');
     expect(excludeCheck).toBeDefined();
     expect(excludeCheck!.risk).toBe(RiskLevel.HIGH);
-    expect(excludeCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(excludeCheck!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
     expect(excludeCheck!.tableName).toBe('reservations');
     expect(excludeCheck!.safeRewrite).toBeDefined();
     expect(excludeCheck!.safeRewrite!.steps.length).toBeGreaterThan(1);
@@ -623,7 +623,7 @@ DROP TABLE old_data;`;
     const uniqueCheck = checks.find((c) => c.ruleId === 'add-constraint-unique-using-index');
     expect(uniqueCheck).toBeDefined();
     expect(uniqueCheck!.risk).toBe(RiskLevel.LOW);
-    expect(uniqueCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(uniqueCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
     expect(uniqueCheck!.tableName).toBe('businesses');
     expect(uniqueCheck!.safeRewrite).toBeUndefined();
   });
@@ -635,7 +635,7 @@ DROP TABLE old_data;`;
     const pkCheck = checks.find((c) => c.ruleId === 'add-pk-using-index');
     expect(pkCheck).toBeDefined();
     expect(pkCheck!.risk).toBe(RiskLevel.LOW);
-    expect(pkCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(pkCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
     expect(pkCheck!.tableName).toBe('users');
     expect(pkCheck!.safeRewrite).toBeUndefined();
   });
@@ -1247,9 +1247,38 @@ describe('Plugin system', () => {
     const checks = results[0].checks;
     const fkCheck = checks.find((c) => c.ruleId === 'add-constraint-fk-no-not-valid');
     expect(fkCheck).toBeDefined();
-    expect(fkCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(fkCheck!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
     expect(fkCheck!.message).toContain('SHARE ROW EXCLUSIVE lock on');
     expect(fkCheck!.message).not.toContain('" and SHARE lock on "');
+  });
+
+  it('should detect VALIDATE CONSTRAINT as LOW risk with SHARE UPDATE EXCLUSIVE', async () => {
+    const results = await analyze([fixture('safe-migration.sql')], defaultConfig);
+    const checks = results[0].checks;
+    const validateCheck = checks.find((c) => c.ruleId === 'validate-constraint');
+    expect(validateCheck).toBeDefined();
+    expect(validateCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
+    expect(validateCheck!.risk).toBe(RiskLevel.LOW);
+    expect(validateCheck!.message).toContain('VALIDATE CONSTRAINT');
+  });
+
+  it('should detect ADD PRIMARY KEY without USING INDEX as HIGH risk', async () => {
+    const results = await analyze([fixture('dangerous-pk-no-using-index.sql')], defaultConfig);
+    const checks = results[0].checks;
+    const pkCheck = checks.find((c) => c.ruleId === 'add-pk-without-using-index');
+    expect(pkCheck).toBeDefined();
+    expect(pkCheck!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
+    expect(pkCheck!.risk).toBe(RiskLevel.HIGH);
+    expect(pkCheck!.tableName).toBe('orders');
+    expect(pkCheck!.safeRewrite).toBeDefined();
+  });
+
+  it('should detect missing idle_in_transaction_session_timeout policy violation', async () => {
+    const results = await analyze([fixture('missing-idle-timeout.sql')], defaultConfig);
+    const violations = results[0].policyViolations;
+    const idleTimeout = violations.find((v) => v.ruleId === 'missing-idle-timeout');
+    expect(idleTimeout).toBeDefined();
+    expect(idleTimeout!.message).toContain('idle_in_transaction_session_timeout');
   });
 
   it('should detect lock_timeout=0 as disabled (warning)', async () => {

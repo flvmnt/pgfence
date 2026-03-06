@@ -366,10 +366,12 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
           sub === 'AT_EnableTrigUser' || sub === 'AT_DisableTrigUser') continue;
         // DETACH PARTITION CONCURRENTLY takes SHARE UPDATE EXCLUSIVE — skip
         if (sub === 'AT_DetachPartition' && cmd.AlterTableCmd.def?.PartitionCmd?.concurrent === true) continue;
+        // ADD CONSTRAINT takes SHARE ROW EXCLUSIVE (PG 9.3+), not ACCESS EXCLUSIVE
+        if (sub === 'AT_AddConstraint') continue;
         // These subtypes hold ACCESS EXCLUSIVE for significant duration
         if (sub === 'AT_DropColumn' ||
           sub === 'AT_AlterColumnType' || sub === 'AT_SetNotNull' ||
-          sub === 'AT_AddConstraint' || sub === 'AT_DropConstraint' ||
+          sub === 'AT_DropConstraint' ||
           sub === 'AT_AttachPartition' || sub === 'AT_DetachPartition') {
           return true;
         }

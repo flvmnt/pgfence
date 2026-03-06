@@ -39,7 +39,7 @@ module.exports = {
               lockMode: 'ACCESS EXCLUSIVE',
               blocks: { reads: true, writes: true, otherDdl: true },
               risk: 'LOW',
-              message: `Table "${tableName}" does not define a PRIMARY KEY — every table should have a primary key`,
+              message: `Table "${tableName}" does not define a PRIMARY KEY, every table should have a primary key`,
               ruleId: 'plugin:require-primary-key',
             });
           }

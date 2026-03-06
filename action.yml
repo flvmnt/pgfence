@@ -1,5 +1,5 @@
 name: 'pgfence'
-description: 'Postgres migration safety CLI — lock mode analysis, risk scoring, and safe rewrite recipes'
+description: 'Postgres migration safety CLI: lock mode analysis, risk scoring, and safe rewrite recipes'
 author: 'Flavius Munteanu'
 
 branding:

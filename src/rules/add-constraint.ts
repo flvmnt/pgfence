@@ -2,11 +2,15 @@
  * Rule: ADD CONSTRAINT checks
  *
  * Detects:
- * - FOREIGN KEY without NOT VALID (ACCESS EXCLUSIVE on both tables)
- * - CHECK constraint without NOT VALID (ACCESS EXCLUSIVE + scan)
- * - UNIQUE constraint (ACCESS EXCLUSIVE, full table scan)
- * - PRIMARY KEY without USING INDEX (ACCESS EXCLUSIVE, full table scan)
- * - EXCLUDE constraint (ACCESS EXCLUSIVE)
+ * - FOREIGN KEY without NOT VALID (SHARE ROW EXCLUSIVE on both tables)
+ * - CHECK constraint without NOT VALID (SHARE ROW EXCLUSIVE + scan)
+ * - UNIQUE constraint (SHARE ROW EXCLUSIVE, full table scan)
+ * - PRIMARY KEY without USING INDEX (SHARE ROW EXCLUSIVE, full table scan)
+ * - EXCLUDE constraint (SHARE ROW EXCLUSIVE)
+ * - UNIQUE/PRIMARY KEY USING INDEX (SHARE UPDATE EXCLUSIVE, instant)
+ *
+ * PostgreSQL's AlterTableGetLockLevel() returns ShareRowExclusiveLock for
+ * AT_AddConstraint since PG 9.3. USING INDEX variants use ShareUpdateExclusiveLock.
  *
  * Detection key from AST probe:
  * - skip_validation === true → NOT VALID was used (safe)
@@ -85,10 +89,10 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),
           tableName,
-          lockMode: LockMode.ACCESS_EXCLUSIVE,
-          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
           risk: RiskLevel.HIGH,
-          message: `ADD FOREIGN KEY "${conName}" without NOT VALID: acquires ACCESS EXCLUSIVE lock on "${tableName}" and SHARE ROW EXCLUSIVE lock on "${refTable}"`,
+          message: `ADD FOREIGN KEY "${conName}" without NOT VALID: acquires SHARE ROW EXCLUSIVE lock on "${tableName}" and "${refTable}", blocks writes on both tables`,
           ruleId: 'add-constraint-fk-no-not-valid',
           safeRewrite: {
             description: 'Add FK with NOT VALID, then validate separately',
@@ -108,10 +112,10 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),
           tableName,
-          lockMode: LockMode.ACCESS_EXCLUSIVE,
-          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
           risk: RiskLevel.MEDIUM,
-          message: `ADD CHECK "${conName}" without NOT VALID: acquires ACCESS EXCLUSIVE lock and scans entire table`,
+          message: `ADD CHECK "${conName}" without NOT VALID: acquires SHARE ROW EXCLUSIVE lock and scans entire table`,
           ruleId: 'add-constraint-check-no-not-valid',
           safeRewrite: {
             description: 'Add CHECK with NOT VALID, then validate separately',
@@ -130,8 +134,8 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
             statement: stmt.sql,
             statementPreview: makePreview(stmt.sql),
             tableName,
-            lockMode: LockMode.ACCESS_EXCLUSIVE,
-            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            lockMode: LockMode.SHARE_UPDATE_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.SHARE_UPDATE_EXCLUSIVE),
             risk: RiskLevel.LOW,
             message: `ADD UNIQUE "${conName}" USING INDEX "${constraint.indexname}": instant metadata operation, index already built`,
             ruleId: 'add-constraint-unique-using-index',
@@ -141,10 +145,10 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
             statement: stmt.sql,
             statementPreview: makePreview(stmt.sql),
             tableName,
-            lockMode: LockMode.ACCESS_EXCLUSIVE,
-            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
             risk: RiskLevel.HIGH,
-            message: `ADD UNIQUE "${conName}": acquires ACCESS EXCLUSIVE lock with full table scan`,
+            message: `ADD UNIQUE "${conName}": acquires SHARE ROW EXCLUSIVE lock with full table scan`,
             ruleId: 'add-constraint-unique',
             safeRewrite: {
               description: 'Create unique index concurrently, then add constraint using the index',
@@ -164,8 +168,8 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
             statement: stmt.sql,
             statementPreview: makePreview(stmt.sql),
             tableName,
-            lockMode: LockMode.ACCESS_EXCLUSIVE,
-            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            lockMode: LockMode.SHARE_UPDATE_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.SHARE_UPDATE_EXCLUSIVE),
             risk: RiskLevel.LOW,
             message: `ADD PRIMARY KEY "${conName}" USING INDEX "${constraint.indexname}": instant metadata operation, index already built`,
             ruleId: 'add-pk-using-index',
@@ -175,10 +179,10 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
             statement: stmt.sql,
             statementPreview: makePreview(stmt.sql),
             tableName,
-            lockMode: LockMode.ACCESS_EXCLUSIVE,
-            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
             risk: RiskLevel.HIGH,
-            message: `ADD PRIMARY KEY "${conName}" without USING INDEX: acquires ACCESS EXCLUSIVE lock with full table scan`,
+            message: `ADD PRIMARY KEY "${conName}" without USING INDEX: acquires SHARE ROW EXCLUSIVE lock with full table scan`,
             ruleId: 'add-pk-without-using-index',
             safeRewrite: {
               description: 'Create unique index concurrently, then add primary key using the index',
@@ -197,15 +201,15 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),
           tableName,
-          lockMode: LockMode.ACCESS_EXCLUSIVE,
-          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
           risk: RiskLevel.HIGH,
-          message: `ADD EXCLUDE "${conName}": acquires ACCESS EXCLUSIVE lock`,
+          message: `ADD EXCLUDE "${conName}": acquires SHARE ROW EXCLUSIVE lock`,
           ruleId: 'add-constraint-exclude',
           safeRewrite: {
             description: 'No concurrent alternative exists for EXCLUDE constraints. Minimize lock duration.',
             steps: [
-              `-- EXCLUDE constraints always require ACCESS EXCLUSIVE lock with no safe alternative.`,
+              `-- EXCLUDE constraints always require SHARE ROW EXCLUSIVE lock with no safe alternative.`,
               `-- Minimize impact by setting a low lock_timeout:`,
               `SET lock_timeout = '2s';`,
               `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} EXCLUDE USING gist (...);`,
@@ -221,10 +225,10 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),
           tableName,
-          lockMode: LockMode.ACCESS_EXCLUSIVE,
-          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
           risk: RiskLevel.MEDIUM,
-          message: `ADD CONSTRAINT "${conName}" with unrecognized type "${constraint.contype}": pgfence cannot determine the exact risk, assuming ACCESS EXCLUSIVE`,
+          message: `ADD CONSTRAINT "${conName}" with unrecognized type "${constraint.contype}": pgfence cannot determine the exact risk, assuming SHARE ROW EXCLUSIVE`,
           ruleId: 'add-constraint-unknown-type',
         });
         break;

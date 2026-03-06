@@ -44,7 +44,7 @@ Works with **raw SQL**, **TypeORM**, **Prisma**, **Knex**, **Drizzle**, and **Se
 ```
 $ pgfence analyze migrations/add-email-verified.sql
 
-pgfence — Migration Safety Report
+pgfence - Migration Safety Report
 
 ┌─────────────────────────────────────────────────┬──────────────────┬──────────┬────────┐
 │ Statement                                       │ Lock Mode        │ Blocks   │ Risk   │
@@ -56,7 +56,7 @@ pgfence — Migration Safety Report
 └─────────────────────────────────────────────────┴──────────────────┴──────────┴────────┘
 
 Policy Violations:
-  ✗ Missing SET lock_timeout — add SET lock_timeout = '2s' at the start
+  ✗ Missing SET lock_timeout: add SET lock_timeout = '2s' at the start
 
 Safe Rewrites:
   1. ADD COLUMN with NOT NULL + DEFAULT → split into expand/backfill/contract:
@@ -95,7 +95,7 @@ pgfence performs static analysis. The following are not supported:
 
 When dynamic SQL is detected (TypeORM/Knex extractors), pgfence emits a warning rather than silently skipping it. Every report includes a coverage line showing how many statements were analyzed vs. skipped.
 
-To explicitly acknowledge a statement pgfence cannot analyze, add `-- pgfence-ignore` before it — see [Suppressing warnings](#suppressing-warnings).
+To explicitly acknowledge a statement pgfence cannot analyze, add `-- pgfence-ignore` before it, see [Suppressing warnings](#suppressing-warnings).
 
 ## Alternatives
 
@@ -107,7 +107,9 @@ Other tools in this space worth knowing about:
 | [Eugene](https://github.com/kaaveland/eugene) | Rust | DDL lint + trace modes |
 | [strong_migrations](https://github.com/ankane/strong_migrations) | Ruby | Rails/ActiveRecord migration checks |
 
-pgfence focuses on the Node.js/TypeScript ecosystem with direct ORM extraction (TypeORM, Prisma, Knex, Drizzle, Sequelize), DB-size-aware risk scoring, and safe rewrite recipes.
+These tools only analyze raw SQL. pgfence is the only migration linter that can analyze ORM migration files (TypeORM, Prisma, Knex, Drizzle, Sequelize), with full AST-walking transpilers that convert builder patterns into analyzable SQL. It also provides DB-size-aware risk scoring and complete expand/contract rewrite recipes.
+
+pgfence's safety rules have been [adopted by postgres-language-server](https://github.com/supabase-community/postgres-language-server/pull/703) (5,100+ stars, Supabase community), which ported 18 rules with explicit source attribution.
 
 ## Installation
 
@@ -176,7 +178,7 @@ pgfence analyze migrations/*  # detects format from file content
 
 You can provide table stats in two ways:
 
-- **Live connection** — pgfence connects to your database and queries `pg_stat_user_tables`:
+- **Live connection**: pgfence connects to your database and queries `pg_stat_user_tables`:
 
 ```bash
 pgfence analyze --db-url postgres://readonly@replica:5432/mydb migrations/*.sql
@@ -247,7 +249,7 @@ Use `--output json` to see `ruleId` values for any check you want to suppress.
 
 ## What It Catches
 
-pgfence checks 38 DDL patterns against Postgres's lock mode semantics:
+pgfence checks 36 DDL patterns against Postgres's lock mode semantics:
 
 ### Lock & Safety Checks
 
@@ -263,11 +265,11 @@ pgfence checks 38 DDL patterns against Postgres's lock mode semantics:
 | | `ALTER COLUMN TYPE varchar(N)` | ACCESS EXCLUSIVE | MEDIUM | Safe if widening; verify with schema |
 | | `ALTER COLUMN TYPE` (cross-family) | ACCESS EXCLUSIVE | HIGH | Expand/contract pattern |
 | 8 | `ALTER COLUMN SET NOT NULL` | ACCESS EXCLUSIVE | MEDIUM | CHECK constraint NOT VALID + validate |
-| 9 | `ADD CONSTRAINT ... FOREIGN KEY` | ACCESS EXCLUSIVE | HIGH | NOT VALID + VALIDATE CONSTRAINT |
-| 10 | `ADD CONSTRAINT ... CHECK` | ACCESS EXCLUSIVE | MEDIUM | NOT VALID + VALIDATE CONSTRAINT |
-| 11 | `ADD CONSTRAINT ... UNIQUE` | ACCESS EXCLUSIVE | HIGH | CONCURRENTLY unique index + USING INDEX |
-| | `ADD CONSTRAINT ... UNIQUE USING INDEX` | ACCESS EXCLUSIVE | LOW | Instant — attaches pre-built index |
-| 12 | `ADD CONSTRAINT ... EXCLUDE` | ACCESS EXCLUSIVE | HIGH | No concurrent alternative; use lock_timeout |
+| 9 | `ADD CONSTRAINT ... FOREIGN KEY` | SHARE ROW EXCLUSIVE | HIGH | NOT VALID + VALIDATE CONSTRAINT |
+| 10 | `ADD CONSTRAINT ... CHECK` | SHARE ROW EXCLUSIVE | MEDIUM | NOT VALID + VALIDATE CONSTRAINT |
+| 11 | `ADD CONSTRAINT ... UNIQUE` | SHARE ROW EXCLUSIVE | HIGH | CONCURRENTLY unique index + USING INDEX |
+| | `ADD CONSTRAINT ... UNIQUE USING INDEX` | SHARE UPDATE EXCLUSIVE | LOW | Instant, attaches pre-built index |
+| 12 | `ADD CONSTRAINT ... EXCLUDE` | SHARE ROW EXCLUSIVE | HIGH | No concurrent alternative; use lock_timeout |
 | 13 | `DROP TABLE` | ACCESS EXCLUSIVE | CRITICAL | Separate release |
 | 14 | `DROP COLUMN` | ACCESS EXCLUSIVE | HIGH | Remove app references first, then drop |
 | 15 | `TRUNCATE` | ACCESS EXCLUSIVE | CRITICAL | Batched DELETE |
@@ -276,14 +278,14 @@ pgfence checks 38 DDL patterns against Postgres's lock mode semantics:
 | 18 | `RENAME TABLE` | ACCESS EXCLUSIVE | HIGH | Rename + create view for backwards compat |
 | 19 | `VACUUM FULL` | ACCESS EXCLUSIVE | HIGH | Use pg_repack |
 | 20 | `ALTER TYPE ... ADD VALUE` (PG < 12) | ACCESS EXCLUSIVE | MEDIUM | Upgrade to PG12+ for instant enum adds |
-| | `ALTER TYPE ... ADD VALUE` (PG12+) | — (instant) | LOW | Safe; cannot run inside transaction |
+| | `ALTER TYPE ... ADD VALUE` (PG12+) | - (instant) | LOW | Safe; cannot run inside transaction |
 | 21 | `ATTACH PARTITION` | ACCESS EXCLUSIVE | HIGH | Create matching CHECK constraint first |
 | 22 | `DETACH PARTITION` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `DETACH PARTITION CONCURRENTLY` (PG14+) |
 | 23 | `REFRESH MATERIALIZED VIEW` | ACCESS EXCLUSIVE | HIGH | `REFRESH MATERIALIZED VIEW CONCURRENTLY` |
 | | `REFRESH MATERIALIZED VIEW CONCURRENTLY` | EXCLUSIVE | MEDIUM | Blocks writes; requires unique index |
 | 24 | `REINDEX TABLE/INDEX` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `REINDEX CONCURRENTLY` (PG12+) |
 | | `REINDEX SCHEMA/DATABASE` (non-concurrent) | ACCESS EXCLUSIVE | CRITICAL | `REINDEX CONCURRENTLY` (PG12+) |
-| 25 | `CREATE TRIGGER` | ACCESS EXCLUSIVE | MEDIUM | Use `lock_timeout` to bound lock wait |
+| 25 | `CREATE TRIGGER` | SHARE ROW EXCLUSIVE | MEDIUM | Use `lock_timeout` to bound lock wait |
 | 26 | `DROP TRIGGER` | ACCESS EXCLUSIVE | MEDIUM | Use `lock_timeout` to bound lock wait |
 | 27 | `ENABLE/DISABLE TRIGGER` | SHARE ROW EXCLUSIVE | LOW | Blocks concurrent DDL only |
 
@@ -291,10 +293,10 @@ pgfence checks 38 DDL patterns against Postgres's lock mode semantics:
 
 | # | Pattern | Risk | Suggestion |
 |---|---------|------|------------|
-| 28 | `ADD COLUMN ... json` | LOW | Use `jsonb` — json has no equality operator |
+| 28 | `ADD COLUMN ... json` | LOW | Use `jsonb`, json has no equality operator |
 | 29 | `ADD COLUMN ... serial` | MEDIUM | Use `GENERATED ALWAYS AS IDENTITY` |
 | 30 | `integer` / `int` columns | LOW | Use `bigint` to avoid future overflow + rewrite |
-| 31 | `varchar(N)` columns | LOW | Use `text` — changing varchar length requires ACCESS EXCLUSIVE |
+| 31 | `varchar(N)` columns | LOW | Use `text`, changing varchar length requires ACCESS EXCLUSIVE |
 | 32 | `timestamp` without time zone | LOW | Use `timestamptz` to avoid timezone bugs |
 
 ### Transaction & Policy Checks
@@ -310,15 +312,15 @@ pgfence checks 38 DDL patterns against Postgres's lock mode semantics:
 
 Beyond DDL analysis, pgfence enforces operational best practices:
 
-- **Missing `SET lock_timeout`** — prevents lock queue death spirals
-- **Missing `SET statement_timeout`** — safety net for long operations
-- **Missing `SET application_name`** — enables `pg_stat_activity` visibility
-- **Missing `SET idle_in_transaction_session_timeout`** — prevents orphaned locks
-- **`CREATE INDEX CONCURRENTLY` inside transaction** — will fail at runtime
+- **Missing `SET lock_timeout`**: prevents lock queue death spirals
+- **Missing `SET statement_timeout`**: safety net for long operations
+- **Missing `SET application_name`**: enables `pg_stat_activity` visibility
+- **Missing `SET idle_in_transaction_session_timeout`**: prevents orphaned locks
+- **`CREATE INDEX CONCURRENTLY` inside transaction**: will fail at runtime
 - **NOT VALID + VALIDATE in same transaction**: defeats the purpose of NOT VALID
 - **Multiple ACCESS EXCLUSIVE statements**: compounding lock duration
-- **Bulk `UPDATE` without `WHERE`** — should run out-of-band in batches
-- **Inline ignore** — `-- pgfence: ignore <ruleId>` to suppress specific checks
+- **Bulk `UPDATE` without `WHERE`**: should run out-of-band in batches
+- **Inline ignore**: `-- pgfence: ignore <ruleId>` to suppress specific checks
 - **Visibility logic**: skips warnings for tables created in the same migration
 
 ## Safe Rewrite Recipes
