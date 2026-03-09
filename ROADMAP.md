@@ -11,11 +11,11 @@ The tool is technically solid. The problem is distribution, not features.
 
 ---
 
-## Phase 0 — Distribution & Community (Now → 500 stars)
+## Phase 0: Distribution & Community (Now → 500 stars)
 
 Nothing else matters until people use pgfence. No cloud features, no execution engine, no paid tier. Every hour spent on monetization before product-market fit is wasted.
 
-### 0.1 — Make the GitHub Action Flawless
+### 0.1: Make the GitHub Action Flawless
 
 The GitHub Action is the distribution engine. Every team that installs it sees pgfence in every PR. It must be zero-config, produce beautiful inline annotations, and "just work."
 
@@ -24,17 +24,17 @@ The GitHub Action is the distribution engine. Every team that installs it sees p
 - [ ] One-line install: `uses: flvmnt/pgfence@v1` with sensible defaults
 - [ ] Screenshot-worthy PR comment output (this is marketing material)
 
-### 0.2 — Content & SEO
+### 0.2: Content & SEO
 
 Write the content that makes pgfence discoverable.
 
-- [ ] **"Show HN" post** — launch post with the demo output front and center
-- [ ] **Blog post: "How ADD COLUMN NOT NULL took down our 12M-row table"** — SEO bait that ranks for migration safety queries. Explain the lock mode semantics, show pgfence catching it.
-- [ ] **Blog post: "The Postgres Lock Mode Cheat Sheet for Developers"** — reference content that developers bookmark and share. Link to pgfence at the bottom.
-- [ ] **Blog post: "TypeORM Migrations Are Dangerous (Here's How to Check)"** — target the TypeORM community specifically, they have zero tooling for this
+- [ ] **"Show HN" post**: launch post with the demo output front and center
+- [ ] **Blog post: "How ADD COLUMN NOT NULL took down our 12M-row table"**: SEO bait that ranks for migration safety queries. Explain the lock mode semantics, show pgfence catching it.
+- [ ] **Blog post: "The Postgres Lock Mode Cheat Sheet for Developers"**: reference content that developers bookmark and share. Link to pgfence at the bottom.
+- [ ] **Blog post: "TypeORM Migrations Are Dangerous (Here's How to Check)"**: target the TypeORM community specifically, they have zero tooling for this
 - [ ] Post in: r/postgres, r/node, TypeORM Discord, Prisma Discord, Postgres Weekly newsletter, Node Weekly newsletter
 
-### 0.3 — Free Migration Audits for Credibility
+### 0.3: Free Migration Audits for Credibility
 
 Offer to audit migrations of popular open-source TypeScript/Postgres projects. This generates case studies, backlinks, and potential stars/mentions.
 
@@ -45,11 +45,11 @@ Targets:
 - [ ] Infisical (TypeScript, Knex, Postgres)
 - [ ] Any popular TypeORM project with public migrations
 
-Format: Open an issue or PR titled "Migration safety audit — found N issues" with pgfence's full report. High-value contribution, great visibility.
+Format: Open an issue or PR titled "Migration safety audit, found N issues" with pgfence's full report. High-value contribution, great visibility.
 
-### 0.4 — Developer Experience Polish
+### 0.4: Developer Experience Polish
 
-- [ ] `pgfence init` — 30-second onboarding: detect project, install hook, done
+- [ ] `pgfence init`: 30-second onboarding, detect project, install hook, done
 - [ ] Improve CLI output aesthetics (the table output is marketing)
 - [ ] `--watch` mode for local development
 - [ ] VS Code problem matcher integration (so pgfence errors show inline in the editor)
@@ -64,7 +64,7 @@ Move to Phase 1 when:
 
 ---
 
-## Phase 1 — Technical Gaps (Concurrent with Phase 0)
+## Phase 1: Technical Gaps (Concurrent with Phase 0)
 
 These are feature gaps that hurt credibility and cause false negatives. Work on these alongside distribution, in priority order.
 
@@ -73,7 +73,7 @@ These are feature gaps that hurt credibility and cause false negatives. Work on 
 | # | Gap | Why It Matters |
 |---|-----|----------------|
 | 1 | `ALTER TYPE ... ADD VALUE` (enum) | Extremely common, huge blind spot |
-| 2 | `lock_timeout` ordering validation | Catches real false negatives — timeout set after DDL is useless |
+| 2 | `lock_timeout` ordering validation | Catches real false negatives, timeout set after DDL is useless |
 | 3 | `REINDEX` (non-concurrent) | Common maintenance, ACCESS EXCLUSIVE |
 | 4 | `REFRESH MATERIALIZED VIEW` | Blocks reads, common pattern |
 | 5 | Timeout value validation (`> 5s` = warning) | Prevents `SET lock_timeout = '5min'` from passing |
@@ -99,7 +99,7 @@ These are feature gaps that hurt credibility and cause false negatives. Work on 
 
 ---
 
-## Phase 2 — First Revenue (After Phase 0 exit criteria)
+## Phase 2: First Revenue (After Phase 0 exit criteria)
 
 Only start this when pgfence has real organic adoption. The monetization model depends on what users are actually asking for by then. Current best guesses, in order of feasibility for a solo maintainer:
 
@@ -126,7 +126,7 @@ Advanced rules/extractors unlocked for GitHub Sponsors. Keeps everything open-so
 
 ---
 
-## Phase 3 — Platform (12-18 months out, re-evaluate then)
+## Phase 3: Platform (12-18 months out, re-evaluate then)
 
 These are the high-ceiling ideas. Don't build any of this until Phase 2 is generating revenue and you've validated demand through conversations with paying users.
 
@@ -134,7 +134,7 @@ These are the high-ceiling ideas. Don't build any of this until Phase 2 is gener
 
 Instead of just analyzing, pgfence executes the safe version of your migration. You write the dangerous DDL, pgfence rewrites and runs the expand/contract sequence with retry logic, progress reporting, and automatic rollback.
 
-This is the "PlanetScale for Postgres" play. It's genuinely hard to build safely — one bug means data corruption. Requires:
+This is the "PlanetScale for Postgres" play. It's genuinely hard to build safely, one bug means data corruption. Requires:
 - Extensive integration testing against PG 11-17
 - Battle-testing at real scale (10M+ row tables)
 - Careful error handling and rollback for every edge case

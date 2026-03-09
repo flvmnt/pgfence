@@ -289,13 +289,15 @@ pgfence checks 42 DDL patterns against Postgres's lock mode semantics:
 | 18 | `RENAME TABLE` | ACCESS EXCLUSIVE | HIGH | Rename + create view for backwards compat |
 | 19 | `VACUUM FULL` | ACCESS EXCLUSIVE | HIGH | Use pg_repack |
 | 20 | `ALTER TYPE ... ADD VALUE` (PG < 12) | ACCESS EXCLUSIVE | MEDIUM | Upgrade to PG12+ for instant enum adds |
-| | `ALTER TYPE ... ADD VALUE` (PG12+) | - (instant) | LOW | Safe; cannot run inside transaction |
-| 21 | `ATTACH PARTITION` | ACCESS EXCLUSIVE | HIGH | Create matching CHECK constraint first |
+| | `ALTER TYPE ... ADD VALUE` (PG12+) | EXCLUSIVE (instant) | LOW | Safe; cannot run inside transaction |
+| 21 | `ATTACH PARTITION` (PG < 12) | ACCESS EXCLUSIVE | HIGH | Create matching CHECK constraint first |
+| | `ATTACH PARTITION` (PG12+) | SHARE UPDATE EXCLUSIVE | MEDIUM | Briefly locks parent; CHECK constraint helps |
 | 22 | `DETACH PARTITION` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `DETACH PARTITION CONCURRENTLY` (PG14+) |
 | 23 | `REFRESH MATERIALIZED VIEW` | ACCESS EXCLUSIVE | HIGH | `REFRESH MATERIALIZED VIEW CONCURRENTLY` |
 | | `REFRESH MATERIALIZED VIEW CONCURRENTLY` | EXCLUSIVE | MEDIUM | Blocks writes; requires unique index |
-| 24 | `REINDEX TABLE/INDEX` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `REINDEX CONCURRENTLY` (PG12+) |
-| | `REINDEX SCHEMA/DATABASE` (non-concurrent) | ACCESS EXCLUSIVE | CRITICAL | `REINDEX CONCURRENTLY` (PG12+) |
+| 24a | `REINDEX TABLE` (non-concurrent) | SHARE | HIGH | `REINDEX TABLE CONCURRENTLY` (PG12+) |
+| 24b | `REINDEX INDEX` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `REINDEX INDEX CONCURRENTLY` (PG12+) |
+| 24c | `REINDEX SCHEMA/DATABASE` (non-concurrent) | ACCESS EXCLUSIVE | CRITICAL | `REINDEX CONCURRENTLY` (PG12+) |
 | 25 | `CREATE TRIGGER` | SHARE ROW EXCLUSIVE | MEDIUM | Use `lock_timeout` to bound lock wait |
 | 26 | `DROP TRIGGER` | ACCESS EXCLUSIVE | MEDIUM | Use `lock_timeout` to bound lock wait |
 | 27 | `ENABLE/DISABLE TRIGGER` | SHARE ROW EXCLUSIVE | LOW | Blocks concurrent DDL only |
