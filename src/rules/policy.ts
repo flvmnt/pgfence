@@ -300,8 +300,18 @@ export function checkPolicies(
     });
   }
 
+  // Collect file-level ignored rules from the first statement's preceding comments
+  const fileIgnoredRules = new Set<string>();
+  for (const stmt of stmts) {
+    if (stmt.ignoredRules) {
+      for (const rule of stmt.ignoredRules) {
+        fileIgnoredRules.add(rule);
+      }
+    }
+  }
+
   // Check required policies
-  if (config.requireLockTimeout && lockTimeoutIndex === -1) {
+  if (config.requireLockTimeout && lockTimeoutIndex === -1 && !fileIgnoredRules.has('missing-lock-timeout') && !fileIgnoredRules.has('*')) {
     violations.push({
       ruleId: 'missing-lock-timeout',
       message: 'Missing SET lock_timeout: without this, an ACCESS EXCLUSIVE lock will queue behind running queries and every new query queues behind it, causing a lock queue death spiral',
@@ -310,7 +320,7 @@ export function checkPolicies(
     });
   }
 
-  if (config.requireStatementTimeout && statementTimeoutIndex === -1) {
+  if (config.requireStatementTimeout && statementTimeoutIndex === -1 && !fileIgnoredRules.has('missing-statement-timeout') && !fileIgnoredRules.has('*')) {
     violations.push({
       ruleId: 'missing-statement-timeout',
       message: 'Missing SET statement_timeout: long-running operations can block other queries indefinitely',
@@ -319,7 +329,7 @@ export function checkPolicies(
     });
   }
 
-  if (!hasApplicationName) {
+  if (!hasApplicationName && !fileIgnoredRules.has('missing-application-name') && !fileIgnoredRules.has('*')) {
     violations.push({
       ruleId: 'missing-application-name',
       message: 'Missing SET application_name: makes it harder to identify migration locks in pg_stat_activity',
@@ -328,7 +338,7 @@ export function checkPolicies(
     });
   }
 
-  if (!hasIdleTimeout) {
+  if (!hasIdleTimeout && !fileIgnoredRules.has('missing-idle-timeout') && !fileIgnoredRules.has('*')) {
     violations.push({
       ruleId: 'missing-idle-timeout',
       message: 'Missing SET idle_in_transaction_session_timeout: orphaned connections with open transactions can hold locks indefinitely',
@@ -400,8 +410,11 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
       // CREATE TRIGGER takes SHARE ROW EXCLUSIVE, not ACCESS EXCLUSIVE
       return false;
     case 'ReindexStmt': {
-      const node = stmt.node as { params?: Array<{ DefElem: { defname: string } }> };
-      return !(node.params ?? []).some((p) => p.DefElem?.defname === 'concurrently');
+      const node = stmt.node as { kind?: string; params?: Array<{ DefElem: { defname: string } }> };
+      if ((node.params ?? []).some((p) => p.DefElem?.defname === 'concurrently')) return false;
+      // REINDEX TABLE takes SHARE lock, not ACCESS EXCLUSIVE (only each index is ACCESS EXCLUSIVE)
+      if (node.kind === 'REINDEX_OBJECT_TABLE') return false;
+      return true;
     }
     case 'RefreshMatViewStmt': {
       const node = stmt.node as { concurrent?: boolean };
@@ -427,11 +440,15 @@ function getStatementTable(stmt: ParsedStatement): string | null {
     }
     case 'DropStmt': {
       const n = stmt.node as { objects?: unknown[]; removeType?: string };
-      if (n.removeType === 'OBJECT_TABLE' && Array.isArray(n.objects) && n.objects.length > 0) {
+      if (Array.isArray(n.objects) && n.objects.length > 0) {
         const obj = n.objects[0] as { List?: { items?: Array<{ String?: { sval: string } }> } };
         const items = obj.List?.items;
-        if (items && items.length > 0) {
+        if (n.removeType === 'OBJECT_TABLE' && items && items.length > 0) {
           return items[items.length - 1].String?.sval?.toLowerCase() ?? null;
+        }
+        // DROP TRIGGER items = [tableName, triggerName]
+        if (n.removeType === 'OBJECT_TRIGGER' && items && items.length >= 2) {
+          return items[0]?.String?.sval?.toLowerCase() ?? null;
         }
       }
       return null;
