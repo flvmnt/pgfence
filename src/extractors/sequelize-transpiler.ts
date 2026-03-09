@@ -7,6 +7,8 @@
 
 import type { ExtractionWarning } from '../types.js';
 
+const FK_ACTIONS = new Set(['CASCADE', 'RESTRICT', 'NO ACTION', 'SET NULL', 'SET DEFAULT']);
+
 interface TSNode {
   type: string;
   loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
@@ -247,13 +249,7 @@ function parseSequelizeColumnDef(
               (defCallee.property as TSNode)?.type === 'Identifier' &&
               ((defCallee.property as TSNode).name as string) === 'literal'
             ) {
-              const literalArgs = value.arguments as TSNode[];
-              const literalStr = literalArgs.length > 0 ? getStringArg(literalArgs[0]) : null;
-              if (literalStr) {
-                modifiers += ` DEFAULT pgfence_volatile_expr(${literalStr})`;
-              } else {
-                modifiers += ' DEFAULT pgfence_volatile_expr()';
-              }
+              modifiers += ' DEFAULT pgfence_volatile_expr()';
             }
           }
           break;
@@ -292,12 +288,12 @@ function parseSequelizeColumnDef(
           break;
         case 'onDelete': {
           const action = getStringArg(value);
-          if (action) modifiers += ` ON DELETE ${action.toUpperCase()}`;
+          if (action && FK_ACTIONS.has(action.toUpperCase())) modifiers += ` ON DELETE ${action.toUpperCase()}`;
           break;
         }
         case 'onUpdate': {
           const action = getStringArg(value);
-          if (action) modifiers += ` ON UPDATE ${action.toUpperCase()}`;
+          if (action && FK_ACTIONS.has(action.toUpperCase())) modifiers += ` ON UPDATE ${action.toUpperCase()}`;
           break;
         }
       }
@@ -644,12 +640,16 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
           whereClause = ' WHERE ...';
         }
         break;
-      case 'onDelete':
-        onDelete = getStringArg(value)?.toUpperCase() ?? '';
+      case 'onDelete': {
+        const act = getStringArg(value)?.toUpperCase() ?? '';
+        if (FK_ACTIONS.has(act)) onDelete = act;
         break;
-      case 'onUpdate':
-        onUpdate = getStringArg(value)?.toUpperCase() ?? '';
+      }
+      case 'onUpdate': {
+        const act = getStringArg(value)?.toUpperCase() ?? '';
+        if (FK_ACTIONS.has(act)) onUpdate = act;
         break;
+      }
     }
   }
 

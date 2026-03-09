@@ -7,6 +7,8 @@
 
 import type { ExtractionWarning } from '../types.js';
 
+const FK_ACTIONS = new Set(['CASCADE', 'RESTRICT', 'NO ACTION', 'SET NULL', 'SET DEFAULT']);
+
 interface TSNode {
   type: string;
   loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
@@ -489,7 +491,7 @@ function parseColumnChain(
       case 'onUpdate':
         if (call.args.length > 0) {
           const action = getStringArg(call.args[0]);
-          if (action) {
+          if (action && FK_ACTIONS.has(action.toUpperCase())) {
             const prefix = call.method === 'onDelete' ? 'ON DELETE' : 'ON UPDATE';
             modifiers += ` ${prefix} ${action.toUpperCase()}`;
           }
