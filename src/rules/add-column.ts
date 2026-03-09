@@ -182,10 +182,18 @@ export function checkAddColumn(
       }
     }
 
-    // NOT NULL + non-constant default = also flag NOT NULL separately if needed
+    // NOT NULL + non-constant default: patch the recipe to include SET NOT NULL steps
     if (hasNotNull && hasDefault && defaultExpr && !isConstantDefault(defaultExpr)) {
-      // Already flagged for non-constant default above, the NOT NULL compounds the issue
-      // but we don't double-flag, the non-constant default recipe covers it
+      const lastResult = results[results.length - 1];
+      if (lastResult?.ruleId === 'add-column-non-constant-default' && lastResult.safeRewrite) {
+        lastResult.message += '. Column is also NOT NULL, requiring an additional constraint step';
+        lastResult.safeRewrite.steps.push(
+          `ALTER TABLE ${tableName} ADD CONSTRAINT chk_${colDef.colname}_nn CHECK (${colDef.colname} IS NOT NULL) NOT VALID;`,
+          `ALTER TABLE ${tableName} VALIDATE CONSTRAINT chk_${colDef.colname}_nn;`,
+          `ALTER TABLE ${tableName} ALTER COLUMN ${colDef.colname} SET NOT NULL;`,
+          `ALTER TABLE ${tableName} DROP CONSTRAINT chk_${colDef.colname}_nn;`,
+        );
+      }
     }
 
     // Type-specific checks on ADD COLUMN
@@ -222,7 +230,7 @@ export function checkAddColumn(
         safeRewrite: {
           description: 'Use IDENTITY columns (SQL standard) instead of SERIAL pseudo-types',
           steps: [
-            `ALTER TABLE ${tableName} ADD COLUMN ${colDef.colname} ${typeName === 'bigserial' || typeName === 'serial8' ? 'bigint' : 'integer'} GENERATED ALWAYS AS IDENTITY;`,
+            `ALTER TABLE ${tableName} ADD COLUMN ${colDef.colname} ${typeName === 'bigserial' || typeName === 'serial8' ? 'bigint' : typeName === 'smallserial' || typeName === 'serial2' ? 'smallint' : 'integer'} GENERATED ALWAYS AS IDENTITY;`,
           ],
         },
       });

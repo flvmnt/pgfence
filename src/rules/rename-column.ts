@@ -75,6 +75,7 @@ export function checkRenameColumn(
           `ALTER TABLE ${oldName} RENAME TO ${newName};`,
           `-- 2. Create a view with the old name for backwards compatibility:`,
           `CREATE VIEW ${oldName} AS SELECT * FROM ${newName};`,
+          `-- This simple view is auto-updatable: SELECT, INSERT, UPDATE, DELETE all work through it.`,
           `-- 3. Migrate all application references to the new name`,
           `-- 4. Drop the view after all references are updated`,
         ],

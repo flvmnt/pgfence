@@ -203,8 +203,11 @@ export function checkAlterColumn(
         safeRewrite: {
           description: 'Use CHECK constraint NOT VALID + VALIDATE to avoid full table lock',
           steps: [
+            `-- Migration 1: add constraint without validating (brief SHARE ROW EXCLUSIVE lock)`,
             `ALTER TABLE ${tableName} ADD CONSTRAINT chk_${colName}_nn CHECK (${colName} IS NOT NULL) NOT VALID;`,
+            `-- Migration 2: validate (SHARE UPDATE EXCLUSIVE, allows reads and writes)`,
             `ALTER TABLE ${tableName} VALIDATE CONSTRAINT chk_${colName}_nn;`,
+            `-- Migration 3: PG12+ uses the validated CHECK to skip the table scan`,
             `ALTER TABLE ${tableName} ALTER COLUMN ${colName} SET NOT NULL;`,
             `ALTER TABLE ${tableName} DROP CONSTRAINT chk_${colName}_nn;`,
           ],
