@@ -52,7 +52,7 @@ export function getCodeActions(
 
       // 1. Safe rewrite quick fix
       if (check.safeRewrite) {
-        const safeRewriteSteps = check.safeRewrite.steps.join('\n');
+        const safeRewriteSteps = check.safeRewrite.steps.join('\n') + '\n';
         const editRange = Range.create(startPos, endPos);
 
         actions.push({

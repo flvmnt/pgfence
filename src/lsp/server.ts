@@ -183,14 +183,18 @@ export function createServer(conn: Connection) {
   });
 
   connection.onDidChangeConfiguration(async () => {
-    // Pull updated config from the client
-    const items = await connection.workspace.getConfiguration({
-      section: 'pgfence',
-    }) as Record<string, unknown> | null;
-    if (items) {
-      if (typeof items.minPostgresVersion === 'number') serverConfig.minPostgresVersion = items.minPostgresVersion;
-      if (typeof items.requireLockTimeout === 'boolean') serverConfig.requireLockTimeout = items.requireLockTimeout;
-      if (typeof items.requireStatementTimeout === 'boolean') serverConfig.requireStatementTimeout = items.requireStatementTimeout;
+    try {
+      // Pull updated config from the client
+      const items = await connection.workspace.getConfiguration({
+        section: 'pgfence',
+      }) as Record<string, unknown> | null;
+      if (items) {
+        if (typeof items.minPostgresVersion === 'number') serverConfig.minPostgresVersion = items.minPostgresVersion;
+        if (typeof items.requireLockTimeout === 'boolean') serverConfig.requireLockTimeout = items.requireLockTimeout;
+        if (typeof items.requireStatementTimeout === 'boolean') serverConfig.requireStatementTimeout = items.requireStatementTimeout;
+      }
+    } catch {
+      // Client may not support workspace/configuration (e.g. minimal Neovim/Helix LSP configs)
     }
     for (const doc of documents.all()) {
       scheduleAnalysis(doc.uri);
