@@ -13,8 +13,8 @@ export function reportJSON(results: AnalysisResult[]): string {
     0,
   );
   const coveragePct = totalStatements > 0
-    ? Math.round(((totalStatements - dynamicWarnings) / totalStatements) * 100)
-    : 100;
+    ? Math.max(0, Math.round(((totalStatements - dynamicWarnings) / totalStatements) * 100))
+    : dynamicWarnings > 0 ? 0 : 100;
 
   const report = {
     version: '1.0',

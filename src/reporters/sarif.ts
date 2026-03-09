@@ -120,7 +120,7 @@ export function reportSARIF(results: AnalysisResult[]): string {
 
   const coveragePct = totalStatements > 0
     ? Math.max(0, Math.round(((totalStatements - dynamicWarnings) / totalStatements) * 100))
-    : 100;
+    : dynamicWarnings > 0 ? 0 : 100;
 
   const sarif = {
     $schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',

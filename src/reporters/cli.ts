@@ -150,8 +150,8 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
       }
 
       // Safe rewrite recipes vs. Notes
-      const actualRewrites = result.checks.filter((c) => c.safeRewrite && c.risk !== RiskLevel.LOW && c.risk !== RiskLevel.SAFE);
-      const safeNotes = result.checks.filter((c) => c.safeRewrite && (c.risk === RiskLevel.LOW || c.risk === RiskLevel.SAFE));
+      const actualRewrites = result.checks.filter((c) => c.safeRewrite && (c.adjustedRisk ?? c.risk) !== RiskLevel.LOW && (c.adjustedRisk ?? c.risk) !== RiskLevel.SAFE);
+      const safeNotes = result.checks.filter((c) => c.safeRewrite && ((c.adjustedRisk ?? c.risk) === RiskLevel.LOW || (c.adjustedRisk ?? c.risk) === RiskLevel.SAFE));
 
       if (actualRewrites.length > 0) {
         lines.push('');
@@ -208,8 +208,8 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
   lines.push(chalk.bold('=== Coverage ==='));
   lines.push(`Postgres ruleset: PG${config.minPostgresVersion}+ (configurable)`);
   const coveragePct = totalStatements > 0
-    ? Math.round(((totalStatements - dynamicWarnings) / totalStatements) * 100)
-    : 100;
+    ? Math.max(0, Math.round(((totalStatements - dynamicWarnings) / totalStatements) * 100))
+    : dynamicWarnings > 0 ? 0 : 100;
   lines.push(
     `Analyzed: ${totalStatements} statements  |  ` +
     `Unanalyzable: ${dynamicWarnings}  |  ` +
