@@ -45,13 +45,13 @@
     "cli-table3": "^0.6.5",
     "commander": "^13.0.0",
     "libpg-query": "^16.0.0",
-    "pg": "^8.13.0",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12"
   },
   "optionalDependencies": {
     "@iarna/toml": "^2.2.5",
-    "@typescript-eslint/typescript-estree": "^8.0.0"
+    "@typescript-eslint/typescript-estree": "^8.0.0",
+    "pg": "^8.13.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.1",

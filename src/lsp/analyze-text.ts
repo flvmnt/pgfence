@@ -8,7 +8,7 @@
 
 import { parseSQL } from '../parser.js';
 import type { ParsedStatement } from '../parser.js';
-import { applyRules, filterByRulesConfig, adjustRisk, detectFormat } from '../analyzer.js';
+import { applyRules, filterByRulesConfig, adjustRisk, detectFormat, RISK_ORDER } from '../analyzer.js';
 import { checkPolicies } from '../rules/policy.js';
 import { RiskLevel } from '../types.js';
 import type {
@@ -51,14 +51,6 @@ export interface AnalyzeTextResult {
   /** Byte offset ranges for each policy violation (null for file-level) */
   policySourceRanges: Array<SourceRange | null>;
 }
-
-const RISK_ORDER: RiskLevelType[] = [
-  RiskLevel.SAFE,
-  RiskLevel.LOW,
-  RiskLevel.MEDIUM,
-  RiskLevel.HIGH,
-  RiskLevel.CRITICAL,
-];
 
 function riskIndex(risk: RiskLevelType): number {
   return RISK_ORDER.indexOf(risk);

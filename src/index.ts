@@ -49,7 +49,7 @@ program
   .command('analyze')
   .description('Analyze migration files for safety issues')
   .argument('<files...>', 'Migration files to analyze')
-  .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, auto', 'auto')
+  .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, drizzle, sequelize, auto', 'auto')
   .option('--output <output>', 'Output format: cli, json, github, sarif', 'cli')
   .option('--db-url <url>', 'Database URL for size-aware risk scoring')
   .option('--stats-file <path>', 'Path to pgfence-stats.json for size-aware risk scoring (alternative to --db-url)')
