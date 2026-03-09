@@ -1,5 +1,5 @@
 /**
- * AST Probe — Inspect libpg-query JSON output for all fixtures.
+ * AST Probe,Inspect libpg-query JSON output for all fixtures.
  * Run: npx tsx scripts/ast-probe.ts
  *
  * This MUST be run before writing any rule code to confirm exact field names.

@@ -170,7 +170,7 @@ describe('pgfence analyzer', () => {
     );
     const checks = results[0].checks;
 
-    // down() contains DROP COLUMN and DROP INDEX — should NOT appear
+    // down() contains DROP COLUMN and DROP INDEX,should NOT appear
     const dropChecks = checks.filter(
       (c) => c.ruleId === 'drop-table' || c.ruleId === 'drop-index-not-concurrent',
     );
@@ -445,11 +445,11 @@ describe('pgfence analyzer', () => {
     const results = await analyze([fixture('inline-ignore-specific.sql')], defaultConfig);
     const checks = results[0].checks;
 
-    // drop-table is named in the directive — should be suppressed
+    // drop-table is named in the directive,should be suppressed
     const dropCheck = checks.find((c) => c.ruleId === 'drop-table');
     expect(dropCheck).toBeUndefined();
 
-    // create-index-not-concurrent is NOT named — should still fire
+    // create-index-not-concurrent is NOT named,should still fire
     const indexCheck = checks.find((c) => c.ruleId === 'create-index-not-concurrent');
     expect(indexCheck).toBeDefined();
   });
@@ -475,7 +475,7 @@ DROP TABLE old_data;`;
     const results = await analyze([fixture('new-table-visibility.sql')], defaultConfig);
     const checks = results[0].checks;
 
-    // Lock/safety checks on fresh_table should not be flagged — the table was just created
+    // Lock/safety checks on fresh_table should not be flagged,the table was just created
     // But best practice checks (appliesToNewTables) may still appear
     const lockChecks = checks.filter((c) => c.tableName === 'fresh_table' && !c.appliesToNewTables);
     expect(lockChecks).toHaveLength(0);
@@ -545,7 +545,7 @@ DROP TABLE old_data;`;
     expect(cascadeCheck!.message).toContain('CASCADE');
   });
 
-  // --- P1: Best practices — type warnings on ALTER TABLE ---
+  // --- P1: Best practices,type warnings on ALTER TABLE ---
 
   it('should detect integer, varchar(N), and timestamp as best practice warnings', async () => {
     const results = await analyze([fixture('best-practices-types.sql')], defaultConfig);
@@ -581,7 +581,7 @@ DROP TABLE old_data;`;
     expect(tsCheck).toBeDefined();
   });
 
-  // --- FP #1: ALTER COLUMN TYPE — safe type changes ---
+  // --- FP #1: ALTER COLUMN TYPE,safe type changes ---
 
   it('should detect ALTER COLUMN TYPE to text as LOW risk (metadata-only)', async () => {
     const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);

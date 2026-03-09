@@ -30,7 +30,7 @@ const defaultConfig: PgfenceConfig = {
 };
 
 /**
- * Same CI failure logic as src/index.ts — used to test exit code behavior without subprocess.
+ * Same CI failure logic as src/index.ts,used to test exit code behavior without subprocess.
  */
 function wouldCiFail(results: Awaited<ReturnType<typeof analyze>>, maxAllowedRisk: RiskLevel): boolean {
     const maxAllowedIdx = RISK_ORDER.indexOf(maxAllowedRisk);

@@ -7,8 +7,8 @@ export class DangerousExample1234567890 implements MigrationInterface {
   name = 'DangerousExample1234567890';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // Missing lock_timeout — policy violation
-    // Missing statement_timeout — policy violation
+    // Missing lock_timeout,policy violation
+    // Missing statement_timeout,policy violation
 
     // Dangerous: NOT NULL without DEFAULT
     await queryRunner.query(`
