@@ -5,12 +5,21 @@ import { join } from 'node:path';
 const PRE_COMMIT_HOOK_CONTENT = `#!/bin/sh
 # pgfence pre-commit hook
 # Block commits that introduce high-risk database migrations
+# Customize the migrations path below to match your project layout.
 
-echo "🔍 Running pgfence safety checks..."
-npx @flvmnt/pgfence analyze --ci --max-risk medium migrations/*.sql
+echo "Running pgfence safety checks..."
+
+if [ -x ./node_modules/.bin/pgfence ]; then
+  ./node_modules/.bin/pgfence analyze --ci --max-risk medium migrations/*.sql
+elif command -v pgfence >/dev/null 2>&1; then
+  pgfence analyze --ci --max-risk medium migrations/*.sql
+else
+  echo "pgfence not found. Install it: npm install -D @flvmnt/pgfence"
+  exit 1
+fi
 
 if [ $? -ne 0 ]; then
-  echo "❌ pgfence found dangerous migrations! Please fix them or use an exemption."
+  echo "pgfence found dangerous migrations. Fix them or use an exemption."
   exit 1
 fi
 `;

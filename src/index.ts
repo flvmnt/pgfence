@@ -19,6 +19,11 @@ import { loadConfigFile, mergeConfig } from './config.js';
 import { RiskLevel } from './types.js';
 import type { PgfenceConfig, TableStats, TraceResult } from './types.js';
 
+/** Strip credentials from postgres:// URLs in error messages. */
+function sanitizeError(msg: string): string {
+  return msg.replace(/postgres:\/\/[^@\s]*@/g, 'postgres://***@');
+}
+
 function parseRiskLevel(value: string): RiskLevel {
   const upper = value.toUpperCase() as RiskLevel;
   if (!RISK_ORDER.includes(upper)) {
@@ -80,7 +85,7 @@ program
         if (typeof sample.tableName !== 'string' || typeof sample.rowCount !== 'number') {
           throw new Error(
             `Invalid stats file format. Expected objects with {schemaName, tableName, rowCount, totalBytes}. ` +
-            `Got: ${JSON.stringify(sample).slice(0, 200)}`,
+            `Got keys: ${Object.keys(sample).join(', ')}`,
           );
         }
       }
@@ -152,7 +157,7 @@ program
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`pgfence error: ${message}\n`);
+      process.stderr.write(`pgfence error: ${sanitizeError(message)}\n`);
       process.exit(2);
     }
   });
@@ -260,6 +265,20 @@ program
         });
         await traceClient.connect();
 
+        // Create observer connection for CONCURRENTLY lock polling
+        const observerClient = new ClientClass({
+          host: '127.0.0.1',
+          port: container.port,
+          user: 'postgres',
+          password: container.password,
+          database: 'pgfence_trace',
+        });
+        await observerClient.connect();
+
+        // Get the traceClient's PID for observer polling
+        const pidResult = await traceClient.query('SELECT pg_backend_pid() AS pid');
+        const traceClientPid = Number(pidResult.rows[0].pid);
+
         // 7. For each file's static result, trace each statement
         const { mergeTraceWithStatic } = await import('./trace-merge.js');
         const { reportTraceCLI } = await import('./reporters/trace-cli.js');
@@ -271,10 +290,13 @@ program
         for (let fileIdx = 0; fileIdx < staticResults.length; fileIdx++) {
           const staticResult = staticResults[fileIdx];
 
-          // Create isolated schema per file
+          // Create isolated schema per file (safe: fileIdx is an integer)
           const schemaName = `pgfence_file_${fileIdx}`;
-          await traceClient.query(`CREATE SCHEMA ${schemaName}`);
-          await traceClient.query(`SET search_path = ${schemaName}, public`);
+          await traceClient.query(`CREATE SCHEMA "${schemaName}"`);
+          await traceClient.query(
+            `SELECT pg_catalog.set_config('search_path', $1 || ', public', false)`,
+            [schemaName],
+          );
 
           // Re-read and extract SQL from the file (handles ORM formats)
           const filePath = files[fileIdx];
@@ -288,9 +310,13 @@ program
           // Trace each statement
           const traces = [];
           const trackedOids: number[] = [];
+          const observer = { client: observerClient, targetPid: traceClientPid };
           for (const sql of statements) {
-            const isConcurrent = sql.toLowerCase().includes('concurrently');
-            const trace = await traceStatement(traceClient, sql, trackedOids, isConcurrent);
+            const isConcurrent = /\bCONCURRENTLY\b/i.test(sql);
+            const trace = await traceStatement(
+              traceClient, sql, trackedOids, isConcurrent,
+              isConcurrent ? observer : undefined,
+            );
             traces.push(trace);
             // Add new objects to tracked OIDs for subsequent statements
             for (const obj of trace.newObjects) {
@@ -321,6 +347,7 @@ program
           });
         }
 
+        await observerClient.end();
         await traceClient.end();
         const containerLifetimeMs = Date.now() - containerStart;
         // Update all results with final container lifetime
@@ -362,7 +389,7 @@ program
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`pgfence trace error: ${message}\n`);
+      process.stderr.write(`pgfence trace error: ${sanitizeError(message)}\n`);
       process.exit(2);
     }
   });

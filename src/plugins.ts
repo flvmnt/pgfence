@@ -5,8 +5,11 @@
  * Plugin rule IDs must be namespaced with `plugin:` to avoid conflicts.
  */
 
+import path from 'node:path';
 import type { ParsedStatement } from './parser.js';
 import type { CheckResult, PgfenceConfig, PolicyViolation } from './types.js';
+
+const ALLOWED_PLUGIN_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts']);
 
 export interface PgfencePluginRule {
   ruleId: string;
@@ -39,7 +42,17 @@ export async function loadPlugins(paths: string[]): Promise<LoadedPlugins> {
   const seenIds = new Set<string>();
 
   for (const pluginPath of paths) {
-    const mod = await import(pluginPath);
+    // Resolve relative to cwd and validate extension to prevent
+    // arbitrary module loading (e.g., data: URLs, non-JS files)
+    const resolved = path.resolve(process.cwd(), pluginPath);
+    const ext = path.extname(resolved).toLowerCase();
+    if (!ALLOWED_PLUGIN_EXTENSIONS.has(ext)) {
+      throw new Error(
+        `Plugin "${pluginPath}" has unsupported extension "${ext}". ` +
+        `Allowed: ${[...ALLOWED_PLUGIN_EXTENSIONS].join(', ')}`,
+      );
+    }
+    const mod = await import(resolved);
     const plugin: PgfencePlugin = mod.default ?? mod;
 
     if (!plugin.name || typeof plugin.name !== 'string') {

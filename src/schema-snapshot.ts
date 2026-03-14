@@ -100,6 +100,9 @@ export async function fetchSchemaSnapshot(dbUrl: string): Promise<SchemaSnapshot
   const pool = new Pool({ connectionString: dbUrl });
 
   try {
+    // Safety: read-only mode (consistent with db-stats.ts)
+    await pool.query('SET default_transaction_read_only = on');
+
     // Fetch columns
     const columnsResult = await pool.query(`
       SELECT

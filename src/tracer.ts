@@ -26,6 +26,42 @@ export interface TraceOptions {
 const CONTAINER_PREFIX = 'pgfence-trace-';
 
 /**
+ * Validate Docker image names to prevent flag injection.
+ * Matches: name[:tag], registry/name[:tag], name@sha256:digest
+ */
+const DOCKER_IMAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/]*(?::[a-zA-Z0-9._-]+)?(?:@sha256:[a-f0-9]+)?$/;
+
+// Module-level container tracking for signal cleanup (avoids handler accumulation)
+const activeContainers = new Set<string>();
+let signalHandlersRegistered = false;
+
+function registerCleanupHandlers(): void {
+  if (signalHandlersRegistered) return;
+  signalHandlersRegistered = true;
+
+  const cleanup = (): void => {
+    for (const name of activeContainers) {
+      try {
+        execFileSync('docker', ['rm', '-f', name], { stdio: 'pipe', timeout: 10_000 });
+      } catch {
+        // Best effort
+      }
+    }
+    activeContainers.clear();
+  };
+
+  process.on('exit', cleanup);
+  process.on('SIGINT', () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    cleanup();
+    process.exit(143);
+  });
+}
+
+/**
  * Check whether Docker is available and responsive.
  */
 export function checkDockerAvailable(): boolean {
@@ -81,6 +117,13 @@ export async function startContainer(opts: TraceOptions): Promise<ContainerInfo>
   const pgVersion = opts.pgVersion ?? 16;
   const image = opts.dockerImage ?? `postgres:${pgVersion}-alpine`;
 
+  if (!DOCKER_IMAGE_RE.test(image)) {
+    throw new Error(
+      `Invalid Docker image name: "${image}". ` +
+      `Expected format: name[:tag] or name@sha256:digest`,
+    );
+  }
+
   execFileSync(
     'docker',
     [
@@ -92,6 +135,7 @@ export async function startContainer(opts: TraceOptions): Promise<ContainerInfo>
       `POSTGRES_PASSWORD=${password}`,
       '-p',
       '127.0.0.1::5432',
+      '--',
       image,
     ],
     { stdio: 'pipe', timeout: 30_000 },
@@ -114,24 +158,9 @@ export async function startContainer(opts: TraceOptions): Promise<ContainerInfo>
 
   const container: ContainerInfo = { name, port, password, image };
 
-  // Register cleanup handlers so the container is removed even on crashes
-  const cleanup = (): void => {
-    try {
-      stopContainer(name);
-    } catch {
-      // Ignore: container may already be removed
-    }
-  };
-
-  process.on('exit', cleanup);
-  process.on('SIGINT', () => {
-    cleanup();
-    process.exit(130);
-  });
-  process.on('SIGTERM', () => {
-    cleanup();
-    process.exit(143);
-  });
+  // Track container for module-level signal cleanup (no handler accumulation)
+  activeContainers.add(name);
+  registerCleanupHandlers();
 
   return container;
 }
@@ -205,6 +234,7 @@ export async function waitForReady(
  * Force-remove a container by name.
  */
 export function stopContainer(name: string): void {
+  activeContainers.delete(name);
   execFileSync('docker', ['rm', '-f', name], { stdio: 'pipe', timeout: 10_000 });
 }
 
@@ -462,6 +492,13 @@ export async function observeLocksDuring(
 
 // --- Statement Execution ---
 
+/** Observer connection for capturing locks during CONCURRENTLY operations. */
+export interface TraceObserver {
+  client: PgClient;
+  targetPid: number;
+  pollIntervalMs?: number;
+}
+
 export interface StatementTrace {
   sql: string;
   durationMs: number;
@@ -605,6 +642,7 @@ export async function traceStatement(
   sql: string,
   trackedOids: number[],
   isConcurrent: boolean,
+  observer?: TraceObserver,
 ): Promise<StatementTrace> {
   // Pre-snapshot: discover all existing objects
   const allObjectsResult = await client.query(ALL_OBJECTS_QUERY);
@@ -618,13 +656,31 @@ export async function traceStatement(
   const start = performance.now();
   let executionError: string | undefined;
   let postSnapshot: CatalogSnapshot;
+  let observedLocks: LockSnapshot[] = [];
 
   if (isConcurrent) {
-    // Concurrent operations cannot run inside a transaction
-    try {
-      await client.query(sql);
-    } catch (err) {
-      executionError = err instanceof Error ? err.message : String(err);
+    // Concurrent operations cannot run inside a transaction.
+    // When an observer is provided, poll pg_locks from a second connection
+    // to capture the transient locks that are released on completion.
+    if (observer) {
+      observedLocks = await observeLocksDuring(
+        observer.client,
+        observer.targetPid,
+        async () => {
+          try {
+            await client.query(sql);
+          } catch (err) {
+            executionError = err instanceof Error ? err.message : String(err);
+          }
+        },
+        observer.pollIntervalMs ?? 50,
+      );
+    } else {
+      try {
+        await client.query(sql);
+      } catch (err) {
+        executionError = err instanceof Error ? err.message : String(err);
+      }
     }
 
     // Discover any new objects after execution
@@ -670,6 +726,18 @@ export async function traceStatement(
 
   // Diff pre vs post
   const newLocks = diffLocks(preSnapshot.locks, postSnapshot.locks);
+
+  // For concurrent statements, locks are released before post-snapshot;
+  // merge locks captured by observer polling during execution
+  if (observedLocks.length > 0) {
+    const seen = new Set(newLocks.map((l) => `${l.oid}:${l.mode}`));
+    for (const obs of observedLocks) {
+      if (!seen.has(`${obs.oid}:${obs.mode}`)) {
+        newLocks.push(obs);
+      }
+    }
+  }
+
   const rewrites = diffRelfilenodes(preSnapshot.relfilenodes, postSnapshot.relfilenodes);
   const columnChanges = diffColumns(preSnapshot.columns, postSnapshot.columns);
   const constraintChanges = diffConstraints(preSnapshot.constraints, postSnapshot.constraints);
