@@ -234,8 +234,13 @@ export async function waitForReady(
  * Force-remove a container by name.
  */
 export function stopContainer(name: string): void {
-  activeContainers.delete(name);
-  execFileSync('docker', ['rm', '-f', name], { stdio: 'pipe', timeout: 10_000 });
+  try {
+    execFileSync('docker', ['rm', '-f', name], { stdio: 'pipe', timeout: 10_000 });
+  } catch {
+    // Best effort: container may already be removed or Docker unresponsive
+  } finally {
+    activeContainers.delete(name);
+  }
 }
 
 /**

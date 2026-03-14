@@ -21,7 +21,7 @@ import type { PgfenceConfig, TableStats, TraceResult } from './types.js';
 
 /** Strip credentials from postgres:// URLs in error messages. */
 function sanitizeError(msg: string): string {
-  return msg.replace(/postgres:\/\/[^@\s]*@/g, 'postgres://***@');
+  return msg.replace(/postgre(?:s|sql):\/\/[^@\s]*@/gi, 'postgres://***@');
 }
 
 function parseRiskLevel(value: string): RiskLevel {
@@ -290,6 +290,11 @@ program
         for (let fileIdx = 0; fileIdx < staticResults.length; fileIdx++) {
           const staticResult = staticResults[fileIdx];
 
+          // Reset session state between files to prevent leakage (search_path, timeouts, etc.)
+          if (fileIdx > 0) {
+            await traceClient.query('RESET ALL');
+          }
+
           // Create isolated schema per file (safe: fileIdx is an integer)
           const schemaName = `pgfence_file_${fileIdx}`;
           await traceClient.query(`CREATE SCHEMA "${schemaName}"`);
@@ -379,7 +384,8 @@ program
           for (const result of traceResults) {
             if (RISK_ORDER.indexOf(result.maxRisk) > maxAllowedIdx) shouldFail = true;
             if (result.policyViolations.some(v => v.severity === 'error')) shouldFail = true;
-            if (result.mismatches > 0) shouldFail = true; // mismatches also fail CI
+            if (result.mismatches > 0) shouldFail = true;
+            if (result.errors > 0) shouldFail = true;
           }
           if (shouldFail) process.exit(1);
         }
@@ -407,7 +413,7 @@ program
       process.stdout.write(`Schema snapshot written to ${opts.output} (${snapshot.tables.length} tables)\n`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`pgfence snapshot error: ${message}\n`);
+      process.stderr.write(`pgfence snapshot error: ${sanitizeError(message)}\n`);
       process.exit(1);
     }
   });

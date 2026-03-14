@@ -45,6 +45,16 @@ export async function loadPlugins(paths: string[]): Promise<LoadedPlugins> {
     // Resolve relative to cwd and validate extension to prevent
     // arbitrary module loading (e.g., data: URLs, non-JS files)
     const resolved = path.resolve(process.cwd(), pluginPath);
+
+    // Prevent loading plugins from outside the project directory
+    const cwd = process.cwd();
+    if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
+      throw new Error(
+        `Plugin "${pluginPath}" resolves outside the project directory. ` +
+        `For security, plugins must be within the project root.`,
+      );
+    }
+
     const ext = path.extname(resolved).toLowerCase();
     if (!ALLOWED_PLUGIN_EXTENSIONS.has(ext)) {
       throw new Error(
