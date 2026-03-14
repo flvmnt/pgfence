@@ -403,4 +403,138 @@ describe('tracer', () => {
       expect(result.modified[0].indisvalid).toBe(true);
     });
   });
+
+  describe('traceStatement', () => {
+    function createMockClient() {
+      const calls: string[] = [];
+      const queryResults = new Map<string, { rows: Array<Record<string, unknown>> }>();
+
+      // Default: empty results for all catalog queries
+      const emptyResult = { rows: [] as Array<Record<string, unknown>> };
+
+      const client = {
+        query: vi.fn(async (sql: string, _params?: unknown[]) => {
+          calls.push(sql.trim().split('\n')[0].trim());
+          // Check for exact SQL matches first
+          if (queryResults.has(sql)) {
+            return queryResults.get(sql)!;
+          }
+          // Match by prefix for catalog queries
+          for (const [key, val] of queryResults.entries()) {
+            if (sql.includes(key)) {
+              return val;
+            }
+          }
+          return emptyResult;
+        }),
+      };
+
+      return { client, calls, queryResults };
+    }
+
+    it('wraps non-concurrent statement in BEGIN/COMMIT', async () => {
+      const { traceStatement } = await import('../src/tracer.js');
+      const { client, calls } = createMockClient();
+
+      await traceStatement(client, 'ALTER TABLE users ADD COLUMN email text', [], false);
+
+      // Verify the call order includes BEGIN, the statement, and COMMIT
+      expect(calls).toContain('BEGIN');
+      expect(calls).toContain('ALTER TABLE users ADD COLUMN email text');
+      expect(calls).toContain('COMMIT');
+
+      // BEGIN must come before the statement, COMMIT must come after
+      const beginIdx = calls.indexOf('BEGIN');
+      const stmtIdx = calls.indexOf('ALTER TABLE users ADD COLUMN email text');
+      const commitIdx = calls.indexOf('COMMIT');
+      expect(beginIdx).toBeLessThan(stmtIdx);
+      expect(stmtIdx).toBeLessThan(commitIdx);
+    });
+
+    it('does not wrap concurrent statement in BEGIN/COMMIT', async () => {
+      const { traceStatement } = await import('../src/tracer.js');
+      const { client, calls } = createMockClient();
+
+      await traceStatement(
+        client,
+        'CREATE INDEX CONCURRENTLY idx_email ON users(email)',
+        [],
+        true,
+      );
+
+      expect(calls).not.toContain('BEGIN');
+      expect(calls).not.toContain('COMMIT');
+      expect(calls).toContain('CREATE INDEX CONCURRENTLY idx_email ON users(email)');
+    });
+
+    it('captures execution error and sets executionError field', async () => {
+      const { traceStatement } = await import('../src/tracer.js');
+      const { client } = createMockClient();
+
+      // Make the actual statement fail, but let all other queries succeed
+      let callCount = 0;
+      client.query.mockImplementation(async (sql: string) => {
+        callCount++;
+        const trimmed = sql.trim();
+        if (trimmed === 'DROP TABLE nonexistent') {
+          throw new Error('relation "nonexistent" does not exist');
+        }
+        return { rows: [] };
+      });
+
+      const result = await traceStatement(client, 'DROP TABLE nonexistent', [], false);
+
+      expect(result.executionError).toBe('relation "nonexistent" does not exist');
+      expect(result.sql).toBe('DROP TABLE nonexistent');
+    });
+
+    it('calls ROLLBACK on error for non-concurrent statements', async () => {
+      const { traceStatement } = await import('../src/tracer.js');
+      const { client } = createMockClient();
+
+      const calls: string[] = [];
+      client.query.mockImplementation(async (sql: string) => {
+        const firstLine = sql.trim().split('\n')[0].trim();
+        calls.push(firstLine);
+        if (firstLine === 'ALTER TABLE users ALTER COLUMN id TYPE bigint') {
+          throw new Error('cannot alter type of a column used by a view');
+        }
+        return { rows: [] };
+      });
+
+      const result = await traceStatement(
+        client,
+        'ALTER TABLE users ALTER COLUMN id TYPE bigint',
+        [],
+        false,
+      );
+
+      expect(result.executionError).toBeDefined();
+      expect(calls).toContain('ROLLBACK');
+
+      // ROLLBACK should come after BEGIN
+      const beginIdx = calls.indexOf('BEGIN');
+      const rollbackIdx = calls.indexOf('ROLLBACK');
+      expect(beginIdx).toBeLessThan(rollbackIdx);
+
+      // No COMMIT should be present
+      expect(calls).not.toContain('COMMIT');
+    });
+
+    it('returns duration and empty diffs when statement has no catalog effects', async () => {
+      const { traceStatement } = await import('../src/tracer.js');
+      const { client } = createMockClient();
+
+      const result = await traceStatement(client, 'SELECT 1', [], false);
+
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+      expect(result.newLocks).toEqual([]);
+      expect(result.rewrites).toEqual([]);
+      expect(result.columnChanges).toEqual({ added: [], modified: [] });
+      expect(result.constraintChanges).toEqual({ added: [], modified: [] });
+      expect(result.indexChanges).toEqual({ added: [], modified: [] });
+      expect(result.newObjects).toEqual([]);
+      expect(result.executionError).toBeUndefined();
+    });
+  });
 });

@@ -408,3 +408,235 @@ export function diffIndexes(
 
   return { added, modified };
 }
+
+// --- Statement Execution ---
+
+export interface StatementTrace {
+  sql: string;
+  durationMs: number;
+  newLocks: LockSnapshot[];
+  rewrites: RelfilenodeSnapshot[];
+  columnChanges: { added: ColumnSnapshot[]; modified: ColumnSnapshot[] };
+  constraintChanges: { added: ConstraintSnapshot[]; modified: ConstraintSnapshot[] };
+  indexChanges: { added: IndexSnapshot[]; modified: IndexSnapshot[] };
+  newObjects: RelfilenodeSnapshot[];
+  executionError?: string;
+}
+
+/** Minimal pg client interface for catalog queries. */
+export type PgClient = {
+  query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+};
+
+// --- SQL Query Constants (module-internal) ---
+
+const LOCK_QUERY = `
+  SELECT n.nspname AS "schemaName",
+         c.relname AS "objectName",
+         c.relkind,
+         l.mode,
+         c.oid
+  FROM pg_locks l
+  JOIN pg_class c ON c.oid = l.relation
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE l.pid = pg_backend_pid()
+    AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+`;
+
+const RELFILENODE_QUERY = `
+  SELECT c.oid::int AS oid,
+         c.relfilenode::int AS relfilenode,
+         n.nspname,
+         c.relname,
+         c.relkind
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE c.oid = ANY($1)
+`;
+
+const COLUMN_QUERY = `
+  SELECT a.attrelid::int AS attrelid,
+         a.attname,
+         a.attnum::int AS attnum,
+         a.attnotnull,
+         t.typname,
+         a.atttypmod::int AS atttypmod
+  FROM pg_attribute a
+  JOIN pg_type t ON t.oid = a.atttypid
+  WHERE a.attrelid = ANY($1)
+    AND a.attnum > 0
+    AND NOT a.attisdropped
+  ORDER BY a.attrelid, a.attnum
+`;
+
+const CONSTRAINT_QUERY = `
+  SELECT c.conrelid::int AS conrelid,
+         c.conname,
+         c.contype,
+         c.convalidated,
+         pg_get_constraintdef(c.oid) AS definition
+  FROM pg_constraint c
+  WHERE c.conrelid = ANY($1)
+`;
+
+const INDEX_QUERY = `
+  SELECT i.indexrelid::int AS "indexrelid",
+         i.indrelid::int AS "indrelid",
+         i.indisvalid AS "indisvalid",
+         i.indisready AS "indisready",
+         i.indisprimary AS "indisprimary",
+         i.indisunique AS "indisunique",
+         ci.relname AS "indexName",
+         ct.relname AS "tableName"
+  FROM pg_index i
+  JOIN pg_class ci ON ci.oid = i.indexrelid
+  JOIN pg_class ct ON ct.oid = i.indrelid
+  WHERE i.indrelid = ANY($1)
+`;
+
+const ALL_OBJECTS_QUERY = `
+  SELECT c.oid::int AS oid,
+         c.relfilenode::int AS relfilenode,
+         n.nspname,
+         c.relname,
+         c.relkind
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+`;
+
+/**
+ * Take a catalog snapshot for the given tracked OIDs.
+ * Runs lock, relfilenode, column, constraint, and index queries in parallel.
+ */
+export async function snapshotCatalog(
+  client: PgClient,
+  trackedOids: number[],
+): Promise<CatalogSnapshot> {
+  const oidParam = trackedOids.length > 0 ? [trackedOids] : [[]];
+
+  const [lockResult, relfilenodeResult, columnResult, constraintResult, indexResult] =
+    await Promise.all([
+      client.query(LOCK_QUERY),
+      trackedOids.length > 0
+        ? client.query(RELFILENODE_QUERY, oidParam)
+        : Promise.resolve({ rows: [] as Array<Record<string, unknown>> }),
+      trackedOids.length > 0
+        ? client.query(COLUMN_QUERY, oidParam)
+        : Promise.resolve({ rows: [] as Array<Record<string, unknown>> }),
+      trackedOids.length > 0
+        ? client.query(CONSTRAINT_QUERY, oidParam)
+        : Promise.resolve({ rows: [] as Array<Record<string, unknown>> }),
+      trackedOids.length > 0
+        ? client.query(INDEX_QUERY, oidParam)
+        : Promise.resolve({ rows: [] as Array<Record<string, unknown>> }),
+    ]);
+
+  return {
+    locks: lockResult.rows as unknown as LockSnapshot[],
+    relfilenodes: relfilenodeResult.rows as unknown as RelfilenodeSnapshot[],
+    columns: columnResult.rows as unknown as ColumnSnapshot[],
+    constraints: constraintResult.rows as unknown as ConstraintSnapshot[],
+    indexes: indexResult.rows as unknown as IndexSnapshot[],
+  };
+}
+
+/**
+ * Execute a single SQL statement and capture its catalog effects.
+ *
+ * For non-concurrent statements, wraps execution in BEGIN/COMMIT so that
+ * locks are still held when the post-snapshot is taken. For concurrent
+ * operations (CREATE INDEX CONCURRENTLY, etc.) or on execution error,
+ * runs outside a transaction and snapshots after completion.
+ */
+export async function traceStatement(
+  client: PgClient,
+  sql: string,
+  trackedOids: number[],
+  isConcurrent: boolean,
+): Promise<StatementTrace> {
+  // Pre-snapshot: discover all existing objects
+  const allObjectsResult = await client.query(ALL_OBJECTS_QUERY);
+  const allObjects = allObjectsResult.rows as unknown as RelfilenodeSnapshot[];
+  const existingOids = new Set(allObjects.map((o) => o.oid));
+
+  // Combine existing OIDs with explicitly tracked OIDs
+  const preOids = [...new Set([...trackedOids, ...allObjects.map((o) => o.oid)])];
+  const preSnapshot = await snapshotCatalog(client, preOids);
+
+  const start = performance.now();
+  let executionError: string | undefined;
+  let postSnapshot: CatalogSnapshot;
+
+  if (isConcurrent) {
+    // Concurrent operations cannot run inside a transaction
+    try {
+      await client.query(sql);
+    } catch (err) {
+      executionError = err instanceof Error ? err.message : String(err);
+    }
+
+    // Discover any new objects after execution
+    const postObjectsResult = await client.query(ALL_OBJECTS_QUERY);
+    const postObjects = postObjectsResult.rows as unknown as RelfilenodeSnapshot[];
+    const postOids = [...new Set([...preOids, ...postObjects.map((o) => o.oid)])];
+    postSnapshot = await snapshotCatalog(client, postOids);
+  } else {
+    // Wrap in transaction so locks are still held during snapshot
+    let inTransaction = false;
+    try {
+      await client.query('BEGIN');
+      inTransaction = true;
+      await client.query(sql);
+
+      // Discover any new objects created by the statement
+      const postObjectsResult = await client.query(ALL_OBJECTS_QUERY);
+      const postObjects = postObjectsResult.rows as unknown as RelfilenodeSnapshot[];
+      const postOids = [...new Set([...preOids, ...postObjects.map((o) => o.oid)])];
+
+      // Snapshot while locks are still held
+      postSnapshot = await snapshotCatalog(client, postOids);
+      await client.query('COMMIT');
+    } catch (err) {
+      executionError = err instanceof Error ? err.message : String(err);
+      if (inTransaction) {
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          // Ignore rollback errors
+        }
+      }
+
+      // Snapshot after rollback (locks released, but structural changes visible if any)
+      const postObjectsResult = await client.query(ALL_OBJECTS_QUERY);
+      const postObjects = postObjectsResult.rows as unknown as RelfilenodeSnapshot[];
+      const postOids = [...new Set([...preOids, ...postObjects.map((o) => o.oid)])];
+      postSnapshot = await snapshotCatalog(client, postOids);
+    }
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+
+  // Diff pre vs post
+  const newLocks = diffLocks(preSnapshot.locks, postSnapshot.locks);
+  const rewrites = diffRelfilenodes(preSnapshot.relfilenodes, postSnapshot.relfilenodes);
+  const columnChanges = diffColumns(preSnapshot.columns, postSnapshot.columns);
+  const constraintChanges = diffConstraints(preSnapshot.constraints, postSnapshot.constraints);
+  const indexChanges = diffIndexes(preSnapshot.indexes, postSnapshot.indexes);
+
+  // Detect new objects (OIDs in post that were not in pre)
+  const postObjectsAll = postSnapshot.relfilenodes;
+  const newObjects = postObjectsAll.filter((o) => !existingOids.has(o.oid));
+
+  return {
+    sql,
+    durationMs,
+    newLocks,
+    rewrites,
+    columnChanges,
+    constraintChanges,
+    indexChanges,
+    newObjects,
+    ...(executionError !== undefined && { executionError }),
+  };
+}
