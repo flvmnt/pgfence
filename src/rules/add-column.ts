@@ -4,13 +4,13 @@
  * Detects:
  * - ADD COLUMN ... NOT NULL without DEFAULT (fails on non-empty table)
  * - ADD COLUMN with non-constant DEFAULT (table rewrite)
- * - ADD COLUMN with constant DEFAULT (instant on PG11+, LOW risk)
+ * - ADD COLUMN with constant DEFAULT (instant metadata-only, LOW risk)
  * - ADD COLUMN with type json instead of jsonb (common mistake)
  * - ADD COLUMN with serial/bigserial instead of IDENTITY (deprecated pseudo-type)
  * - ADD COLUMN with GENERATED ALWAYS AS ... STORED (table rewrite)
  *
  * Default detection strategy (per user feedback):
- * - Only A_Const and TypeCast(A_Const) are treated as "constant" (safe on PG11+)
+ * - Only A_Const and TypeCast(A_Const) are treated as "constant" (instant metadata-only)
  * - Everything else (FuncCall, SQLValueFunction, expressions) = non-constant = unsafe
  * - No hardcoded "volatile list", we don't pretend to know function immutability
  */

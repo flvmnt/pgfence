@@ -83,7 +83,7 @@ export function mergeConfig(
   const base: PgfenceConfig = {
     format: 'auto',
     output: 'cli',
-    minPostgresVersion: 11,
+    minPostgresVersion: 14,
     maxAllowedRisk: RiskLevel.HIGH,
     requireLockTimeout: true,
     requireStatementTimeout: true,

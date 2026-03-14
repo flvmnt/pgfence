@@ -99,7 +99,7 @@ export function checkBestPractices(stmt: ParsedStatement): CheckResult[] {
       });
     }
 
-    // prefer-identity: serial/bigserial -> IDENTITY (PG10+)
+    // prefer-identity: serial/bigserial -> IDENTITY
     if (isSerialType(typeName)) {
       const replacement = serialToIdentity(typeName);
       results.push({
@@ -109,7 +109,7 @@ export function checkBestPractices(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: RiskLevel.LOW,
-        message: `Column "${colDef.colname}" uses ${typeName}: use ${replacement} instead. SERIAL creates an implicit sequence with ownership quirks; IDENTITY columns (PG10+) are the standard, have cleaner semantics, and avoid permission issues`,
+        message: `Column "${colDef.colname}" uses ${typeName}: use ${replacement} instead. SERIAL creates an implicit sequence with ownership quirks; IDENTITY columns are the standard, have cleaner semantics, and avoid permission issues`,
         ruleId: 'prefer-identity',
         appliesToNewTables: true,
       });

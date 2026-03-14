@@ -58,7 +58,7 @@ program
   .option('--output <output>', 'Output format: cli, json, github, sarif', 'cli')
   .option('--db-url <url>', 'Database URL for size-aware risk scoring')
   .option('--stats-file <path>', 'Path to pgfence-stats.json for size-aware risk scoring (alternative to --db-url)')
-  .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume', '11')
+  .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume', '14')
   .option('--max-risk <risk>', 'Maximum allowed risk level for CI mode', 'high')
   .option('--ci', 'CI mode: exit 1 if max risk exceeded', false)
   .option('--no-lock-timeout', 'Disable lock_timeout requirement')
@@ -97,7 +97,7 @@ program
       output: opts.output as PgfenceConfig['output'],
       dbUrl: opts.dbUrl,
       tableStats,
-      minPostgresVersion: Number.isNaN(parseInt(opts.minPgVersion, 10)) ? 11 : parseInt(opts.minPgVersion, 10),
+      minPostgresVersion: Number.isNaN(parseInt(opts.minPgVersion, 10)) ? 14 : parseInt(opts.minPgVersion, 10),
       maxAllowedRisk: parseRiskLevel(opts.maxRisk),
       requireLockTimeout: opts.lockTimeout !== false,
       requireStatementTimeout: opts.statementTimeout !== false,
@@ -168,7 +168,7 @@ program
   .argument('<files...>', 'Migration files to trace')
   .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, drizzle, sequelize, auto', 'auto')
   .option('--output <output>', 'Output format: cli, json, github, sarif', 'cli')
-  .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume for static analysis', '11')
+  .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume for static analysis', '14')
   .option('--max-risk <risk>', 'Maximum allowed risk level for CI mode', 'high')
   .option('--ci', 'CI mode: exit 1 if max risk exceeded or mismatches detected', false)
   .option('--no-lock-timeout', 'Disable lock_timeout requirement')
@@ -195,7 +195,7 @@ program
     const cliOverrides: Partial<PgfenceConfig> = {
       format: opts.format as PgfenceConfig['format'],
       output: opts.output as PgfenceConfig['output'],
-      minPostgresVersion: Number.isNaN(parseInt(opts.minPgVersion, 10)) ? 11 : parseInt(opts.minPgVersion, 10),
+      minPostgresVersion: Number.isNaN(parseInt(opts.minPgVersion, 10)) ? 14 : parseInt(opts.minPgVersion, 10),
       maxAllowedRisk: parseRiskLevel(opts.maxRisk),
       requireLockTimeout: opts.lockTimeout !== false,
       requireStatementTimeout: opts.statementTimeout !== false,

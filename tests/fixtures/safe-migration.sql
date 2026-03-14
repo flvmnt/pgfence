@@ -9,7 +9,7 @@ SET application_name = 'migrate:safe_example';
 -- 1) Add nullable column (instant metadata change)
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS notes TEXT;
 
--- 2) Add column with constant default (instant on PG11+)
+-- 2) Add column with constant default (instant, metadata-only)
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS priority INT DEFAULT 0;
 
 -- 3) CREATE INDEX CONCURRENTLY (allows reads + writes)

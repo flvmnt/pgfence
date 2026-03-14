@@ -12,7 +12,7 @@ import type { CodeActionParams } from 'vscode-languageserver';
 const defaultConfig: PgfenceConfig = {
   format: 'auto',
   output: 'cli',
-  minPostgresVersion: 11,
+  minPostgresVersion: 14,
   maxAllowedRisk: RiskLevel.HIGH,
   requireLockTimeout: true,
   requireStatementTimeout: true,

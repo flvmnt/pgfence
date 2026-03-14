@@ -17,7 +17,7 @@ function fixture(name: string): string {
 const defaultConfig: PgfenceConfig = {
   format: 'auto',
   output: 'cli',
-  minPostgresVersion: 11,
+  minPostgresVersion: 14,
   maxAllowedRisk: RiskLevel.HIGH,
   requireLockTimeout: true,
   requireStatementTimeout: true,
@@ -803,13 +803,13 @@ DROP TABLE old_data;`;
 
   // --- Gap 7: Partition operations ---
 
-  it('should detect ATTACH PARTITION as HIGH risk with ACCESS EXCLUSIVE', async () => {
+  it('should detect ATTACH PARTITION as HIGH risk with SHARE UPDATE EXCLUSIVE (PG14 default)', async () => {
     const results = await analyze([fixture('partition.sql')], defaultConfig);
     const checks = results[0].checks;
     const attachCheck = checks.find((c) => c.ruleId === 'attach-partition');
     expect(attachCheck).toBeDefined();
     expect(attachCheck!.risk).toBe(RiskLevel.HIGH);
-    expect(attachCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(attachCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
     expect(attachCheck!.tableName).toBe('orders');
     expect(attachCheck!.safeRewrite).toBeDefined();
   });

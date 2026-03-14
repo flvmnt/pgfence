@@ -34,7 +34,7 @@ const mockResults: AnalysisResult[] = [
 ];
 
 const mockConfig: PgfenceConfig = {
-    minPostgresVersion: 11,
+    minPostgresVersion: 14,
     maxAllowedRisk: RiskLevel.CRITICAL,
     requireLockTimeout: false,
     requireStatementTimeout: false,
