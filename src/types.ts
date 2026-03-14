@@ -143,6 +143,96 @@ export interface RulesConfig {
   disable?: string[];
 }
 
+// --- Trace Mode Types ---
+
+export type TraceVerification =
+  | 'confirmed'
+  | 'mismatch'
+  | 'trace-only'
+  | 'static-only'
+  | 'error'
+  | 'cascade-error';
+
+export interface TracedLock {
+  schemaName: string;
+  objectName: string;
+  lockMode: LockMode;
+  objectType: string;
+}
+
+export interface TracedObject {
+  schemaName: string;
+  objectName: string;
+  objectType: string;
+}
+
+export interface ColumnChange {
+  tableName: string;
+  columnName: string;
+  changeType: 'added' | 'modified';
+  typeName?: string;
+  notNull?: boolean;
+}
+
+export interface ConstraintChange {
+  tableName: string;
+  constraintName: string;
+  changeType: 'added' | 'modified';
+  constraintType: string;
+  validated: boolean;
+  definition: string;
+}
+
+export interface IndexChange {
+  tableName: string;
+  indexName: string;
+  changeType: 'added' | 'modified';
+  isValid: boolean;
+  isReady: boolean;
+  isPrimary: boolean;
+  isUnique: boolean;
+}
+
+export interface TriggerChange {
+  tableName: string;
+  triggerName: string;
+  changeType: 'added' | 'modified';
+  enabled: string;
+  functionName: string;
+}
+
+export interface EnumChange {
+  typeName: string;
+  label: string;
+  changeType: 'added';
+}
+
+export interface TraceCheckResult extends CheckResult {
+  verification: TraceVerification;
+  tracedLockMode?: LockMode;
+  tracedLocksAll?: TracedLock[];
+  tableRewrite?: boolean;
+  durationMs?: number;
+  newObjects?: TracedObject[];
+  columnChanges?: ColumnChange[];
+  constraintChanges?: ConstraintChange[];
+  indexChanges?: IndexChange[];
+  triggerChanges?: TriggerChange[];
+  enumChanges?: EnumChange[];
+  executionError?: string;
+}
+
+export interface TraceResult extends AnalysisResult {
+  traceChecks: TraceCheckResult[];
+  verified: number;
+  mismatches: number;
+  traceOnly: number;
+  staticOnly: number;
+  errors: number;
+  pgVersion: number;
+  containerLifetimeMs: number;
+}
+
 /**
  * Lock mode conflict matrix.
  * For each lock mode, lists which other lock modes it conflicts with.
