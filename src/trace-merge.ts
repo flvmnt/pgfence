@@ -44,6 +44,40 @@ function lockStrength(mode: LockMode): number {
   return LOCK_STRENGTH.indexOf(mode);
 }
 
+const RISK_STRENGTH: RiskLevel[] = [
+  RiskLevel.SAFE,
+  RiskLevel.LOW,
+  RiskLevel.MEDIUM,
+  RiskLevel.HIGH,
+  RiskLevel.CRITICAL,
+];
+
+function riskStrength(risk: RiskLevel): number {
+  return RISK_STRENGTH.indexOf(risk);
+}
+
+/**
+ * Derive a risk level from an observed lock mode.
+ * Used for trace-only and mismatch findings where static risk may be inaccurate.
+ */
+function riskFromLockMode(mode: LockMode): RiskLevel {
+  switch (mode) {
+    case LockMode.ACCESS_SHARE:
+      return RiskLevel.SAFE;
+    case LockMode.ROW_SHARE:
+    case LockMode.ROW_EXCLUSIVE:
+      return RiskLevel.LOW;
+    case LockMode.SHARE_UPDATE_EXCLUSIVE:
+    case LockMode.SHARE:
+      return RiskLevel.MEDIUM;
+    case LockMode.SHARE_ROW_EXCLUSIVE:
+    case LockMode.EXCLUSIVE:
+      return RiskLevel.HIGH;
+    case LockMode.ACCESS_EXCLUSIVE:
+      return RiskLevel.CRITICAL;
+  }
+}
+
 /**
  * Find the strongest lock mode from a list of traced locks.
  */
@@ -244,7 +278,7 @@ export function mergeTraceWithStatic(
             ...check,
             verification,
             tracedLocksAll: tracedLocks.length > 0 ? tracedLocks : undefined,
-            tableRewrite: tableRewrite || undefined,
+            tableRewrite,
             durationMs,
             newObjects: newObjects && newObjects.length > 0 ? newObjects : undefined,
             columnChanges: columnChanges && columnChanges.length > 0 ? columnChanges : undefined,
@@ -261,7 +295,7 @@ export function mergeTraceWithStatic(
           tableName: null,
           lockMode: LockMode.ACCESS_SHARE,
           blocks: getBlockedOperations(LockMode.ACCESS_SHARE),
-          risk: RiskLevel.SAFE,
+          risk: RiskLevel.MEDIUM,
           message: `Statement execution failed: ${trace.executionError}`,
           ruleId: 'trace-error',
           verification,
@@ -307,7 +341,7 @@ export function mergeTraceWithStatic(
             ...check,
             verification: 'static-only',
             tracedLocksAll: tracedLocks.length > 0 ? tracedLocks : undefined,
-            tableRewrite: tableRewrite || undefined,
+            tableRewrite,
             durationMs,
             newObjects: newObjects && newObjects.length > 0 ? newObjects : undefined,
             columnChanges: columnChanges && columnChanges.length > 0 ? columnChanges : undefined,
@@ -325,7 +359,7 @@ export function mergeTraceWithStatic(
             ...check,
             verification: 'confirmed',
             tracedLocksAll: tracedLocks,
-            tableRewrite: tableRewrite || undefined,
+            tableRewrite,
             durationMs,
             newObjects: newObjects && newObjects.length > 0 ? newObjects : undefined,
             columnChanges: columnChanges && columnChanges.length > 0 ? columnChanges : undefined,
@@ -333,13 +367,20 @@ export function mergeTraceWithStatic(
             indexChanges: indexChanges && indexChanges.length > 0 ? indexChanges : undefined,
           });
         } else if (strongest !== null) {
-          // Mismatch: static predicted a different lock mode
+          // Mismatch: static predicted a different lock mode.
+          // Upgrade risk to the max of static and trace-derived risk (never downgrade).
+          const tracedRisk = riskFromLockMode(strongest);
+          const staticRisk = check.adjustedRisk ?? check.risk;
+          const effectiveRisk = riskStrength(tracedRisk) > riskStrength(staticRisk)
+            ? tracedRisk
+            : staticRisk;
           results.push({
             ...check,
             verification: 'mismatch',
+            risk: effectiveRisk,
             tracedLockMode: strongest,
             tracedLocksAll: tracedLocks,
-            tableRewrite: tableRewrite || undefined,
+            tableRewrite,
             durationMs,
             newObjects: newObjects && newObjects.length > 0 ? newObjects : undefined,
             columnChanges: columnChanges && columnChanges.length > 0 ? columnChanges : undefined,
@@ -375,7 +416,7 @@ export function mergeTraceWithStatic(
           tableName: tl.objectName,
           lockMode: tl.lockMode,
           blocks: getBlockedOperations(tl.lockMode),
-          risk: RiskLevel.LOW as RiskLevel,
+          risk: riskFromLockMode(tl.lockMode),
           message: `Trace observed ${tl.lockMode} lock on ${tl.objectName} (not predicted by static analysis)`,
           ruleId: 'trace-only',
           verification: 'trace-only',

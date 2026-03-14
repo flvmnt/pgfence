@@ -88,6 +88,8 @@ describe('mergeTraceWithStatic', () => {
       expect(results[0].verification).toBe('mismatch');
       expect(results[0].lockMode).toBe(LockMode.SHARE);
       expect(results[0].tracedLockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+      // Risk is upgraded to max of static (HIGH) and trace-derived (CRITICAL)
+      expect(results[0].risk).toBe(RiskLevel.CRITICAL);
     });
 
     it('should mark as static-only when check has null tableName (policy check)', () => {
@@ -162,6 +164,8 @@ describe('mergeTraceWithStatic', () => {
       expect(results[0].tableName).toBe('users');
       expect(results[0].tracedLockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
       expect(results[0].ruleId).toBe('trace-only');
+      // Risk is derived from observed lock mode, not hard-coded
+      expect(results[0].risk).toBe(RiskLevel.CRITICAL);
     });
 
     it('should mark as error when trace has executionError', () => {
@@ -385,6 +389,73 @@ describe('mergeTraceWithStatic', () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].verification).toBe('confirmed');
+    });
+  });
+
+  describe('risk derivation', () => {
+    it('should derive LOW risk for trace-only ROW EXCLUSIVE locks', () => {
+      const sql = 'INSERT INTO audit_log VALUES (1)';
+      const traces = [
+        makeTrace({
+          sql,
+          newLocks: [
+            {
+              schemaName: 'public',
+              objectName: 'audit_log',
+              relkind: 'r',
+              mode: 'RowExclusiveLock',
+              oid: 999,
+            },
+          ],
+        }),
+      ];
+
+      const results = mergeTraceWithStatic([], traces, [sql]);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].risk).toBe(RiskLevel.LOW);
+    });
+
+    it('should not downgrade risk when trace shows weaker lock than static', () => {
+      const sql = 'ALTER TABLE users ADD COLUMN age integer NOT NULL';
+      const checks = [
+        makeCheck({
+          statement: sql,
+          lockMode: LockMode.ACCESS_EXCLUSIVE,
+          risk: RiskLevel.HIGH,
+        }),
+      ];
+      const traces = [
+        makeTrace({
+          sql,
+          newLocks: [
+            {
+              schemaName: 'public',
+              objectName: 'users',
+              relkind: 'r',
+              mode: 'ShareUpdateExclusiveLock',
+              oid: 12345,
+            },
+          ],
+        }),
+      ];
+
+      const results = mergeTraceWithStatic(checks, traces, [sql]);
+
+      expect(results[0].verification).toBe('mismatch');
+      // Static risk HIGH is kept since trace-derived MEDIUM is lower
+      expect(results[0].risk).toBe(RiskLevel.HIGH);
+    });
+
+    it('should set MEDIUM risk for synthetic trace-error entries', () => {
+      const sql = 'SOME INVALID SQL';
+      const traces = [makeTrace({ sql, executionError: 'syntax error' })];
+
+      const results = mergeTraceWithStatic([], traces, [sql]);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].ruleId).toBe('trace-error');
+      expect(results[0].risk).toBe(RiskLevel.MEDIUM);
     });
   });
 
