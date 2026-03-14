@@ -81,7 +81,7 @@ export function reportTraceCLI(results: TraceResult[]): string {
   const lines: string[] = [];
 
   // Header with PG version info from first result
-  const pgVersion = results[0]?.pgVersion ?? 'unknown';
+  const pgVersion = results[0]?.pgVersion ?? 17;
   lines.push('');
   lines.push(chalk.bold(`pgfence - Trace Report (PostgreSQL ${pgVersion}, Docker)`));
 
@@ -100,7 +100,8 @@ export function reportTraceCLI(results: TraceResult[]): string {
     }
 
     // Statement checks table
-    if (result.checks.length > 0) {
+    const traceChecks: TraceCheckResult[] = result.traceChecks ?? result.checks as TraceCheckResult[];
+    if (traceChecks.length > 0) {
       const table = new Table({
         head: ['#', 'Statement', 'Lock Mode', 'Blocks', 'Risk', 'Verified', 'Duration'].map(
           (h) => chalk.dim(h),
@@ -112,7 +113,7 @@ export function reportTraceCLI(results: TraceResult[]): string {
 
       // Group checks by statement to avoid duplicate rows
       const grouped = new Map<string, TraceCheckResult[]>();
-      for (const check of result.checks) {
+      for (const check of traceChecks) {
         if (!grouped.has(check.statement)) grouped.set(check.statement, []);
         grouped.get(check.statement)!.push(check);
       }
@@ -161,14 +162,14 @@ export function reportTraceCLI(results: TraceResult[]): string {
 
       // Trace-only findings (table rewrites, trace-only checks)
       const traceFindings: string[] = [];
-      for (const check of result.checks) {
+      for (const check of traceChecks) {
         if (check.tableRewrite && check.tableName) {
           traceFindings.push(
             `Table rewrite detected on "${check.tableName}" (relfilenode changed)`,
           );
         }
       }
-      const traceOnlyChecks = result.checks.filter((c) => c.verification === 'trace-only');
+      const traceOnlyChecks = traceChecks.filter((c) => c.verification === 'trace-only');
       for (const check of traceOnlyChecks) {
         traceFindings.push(`${check.message} [${check.ruleId}]`);
       }
@@ -193,7 +194,7 @@ export function reportTraceCLI(results: TraceResult[]): string {
       }
 
       // Safe rewrite recipes
-      const actualRewrites = result.checks.filter(
+      const actualRewrites = traceChecks.filter(
         (c) =>
           c.safeRewrite &&
           (c.adjustedRisk ?? c.risk) !== RiskLevel.LOW &&
@@ -222,15 +223,15 @@ export function reportTraceCLI(results: TraceResult[]): string {
 
   // Coverage summary
   const totalStatements = results.reduce((sum, r) => sum + r.statementCount, 0);
-  const allChecks = results.flatMap((r) => r.checks);
+  const allChecks = results.flatMap((r) => r.traceChecks ?? r.checks as TraceCheckResult[]);
   const verified = allChecks.filter(
     (c) => c.verification === 'confirmed' || c.verification === 'mismatch',
   ).length;
   const mismatches = allChecks.filter((c) => c.verification === 'mismatch').length;
   const traceOnly = allChecks.filter((c) => c.verification === 'trace-only').length;
 
-  const dockerImage = results[0]?.dockerImage ?? 'unknown';
-  const containerLifetime = results.reduce((max, r) => Math.max(max, r.containerLifetimeSeconds), 0);
+  const dockerImage = 'postgres:' + (results[0]?.pgVersion ?? 17) + '-alpine';
+  const containerLifetime = results.reduce((max, r) => Math.max(max, r.containerLifetimeMs ?? 0), 0) / 1000;
 
   lines.push(chalk.bold('=== Coverage ==='));
   lines.push(
