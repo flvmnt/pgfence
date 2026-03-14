@@ -193,20 +193,6 @@ export interface IndexChange {
   isUnique: boolean;
 }
 
-export interface TriggerChange {
-  tableName: string;
-  triggerName: string;
-  changeType: 'added' | 'modified';
-  enabled: string;
-  functionName: string;
-}
-
-export interface EnumChange {
-  typeName: string;
-  label: string;
-  changeType: 'added';
-}
-
 export interface TraceCheckResult extends CheckResult {
   verification: TraceVerification;
   tracedLockMode?: LockMode;
@@ -217,8 +203,6 @@ export interface TraceCheckResult extends CheckResult {
   columnChanges?: ColumnChange[];
   constraintChanges?: ConstraintChange[];
   indexChanges?: IndexChange[];
-  triggerChanges?: TriggerChange[];
-  enumChanges?: EnumChange[];
   executionError?: string;
 }
 

@@ -207,7 +207,7 @@ export function checkAlterColumn(
             `ALTER TABLE ${tableName} ADD CONSTRAINT chk_${colName}_nn CHECK (${colName} IS NOT NULL) NOT VALID;`,
             `-- Migration 2: validate (SHARE UPDATE EXCLUSIVE, allows reads and writes)`,
             `ALTER TABLE ${tableName} VALIDATE CONSTRAINT chk_${colName}_nn;`,
-            `-- Migration 3: PG12+ uses the validated CHECK to skip the table scan`,
+            `-- Migration 3: the validated CHECK allows PostgreSQL to skip the full table scan`,
             `ALTER TABLE ${tableName} ALTER COLUMN ${colName} SET NOT NULL;`,
             `ALTER TABLE ${tableName} DROP CONSTRAINT chk_${colName}_nn;`,
           ],

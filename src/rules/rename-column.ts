@@ -15,7 +15,7 @@ import { makePreview } from '../parser.js';
 
 export function checkRenameColumn(
   stmt: ParsedStatement,
-  _config: PgfenceConfig,
+  config: PgfenceConfig,
 ): CheckResult[] {
   if (stmt.nodeType !== 'RenameStmt') return [];
 
@@ -32,6 +32,18 @@ export function checkRenameColumn(
   if (node.renameType === 'OBJECT_COLUMN') {
     const oldName = node.subname ?? '<unknown>';
     const newName = node.newname ?? '<unknown>';
+    const safeRewrite = config.minPostgresVersion < 14
+      ? {
+          description: 'Pre-PG14: use expand/contract pattern since RENAME takes a full ACCESS EXCLUSIVE lock',
+          steps: [
+            `ALTER TABLE ${tableName} ADD COLUMN ${newName} <type>;`,
+            `-- Backfill ${newName} from ${oldName} in batches`,
+            `-- Update application to read from ${newName}`,
+            `-- Drop old column after verification`,
+          ],
+        }
+      : undefined;
+
     results.push({
       statement: stmt.sql,
       statementPreview: makePreview(stmt.sql),
@@ -39,20 +51,11 @@ export function checkRenameColumn(
       lockMode: LockMode.ACCESS_EXCLUSIVE,
       blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
       risk: RiskLevel.LOW,
-      message: `RENAME COLUMN "${oldName}" TO "${newName}": acquires ACCESS EXCLUSIVE lock (instant metadata-only on PG14+)`,
+      message: config.minPostgresVersion >= 14
+        ? `RENAME COLUMN "${oldName}" TO "${newName}": instant metadata-only (ACCESS EXCLUSIVE lock is brief)`
+        : `RENAME COLUMN "${oldName}" TO "${newName}": acquires ACCESS EXCLUSIVE lock`,
       ruleId: 'rename-column',
-      safeRewrite: {
-        description:
-          'Instant on PG14+. On older versions, use expand/contract: add new column, migrate reads, drop old.',
-        steps: [
-          `-- PG14+: This is instant (metadata-only), generally safe for short-lived lock`,
-          `-- Pre-PG14 expand/contract:`,
-          `ALTER TABLE ${tableName} ADD COLUMN ${newName} <type>;`,
-          `-- Backfill ${newName} from ${oldName} in batches`,
-          `-- Update application to read from ${newName}`,
-          `-- Drop old column after verification`,
-        ],
-      },
+      ...(safeRewrite ? { safeRewrite } : {}),
     });
   }
 

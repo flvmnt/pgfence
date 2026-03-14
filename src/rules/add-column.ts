@@ -127,9 +127,9 @@ export function checkAddColumn(
           message: `ADD COLUMN "${colDef.colname}" with constant DEFAULT: instant metadata-only on PG11+ (ACCESS EXCLUSIVE lock is brief)${notNullNote}`,
           ruleId: 'add-column-constant-default',
           safeRewrite: {
-            description: 'Safe on Postgres 11+',
+            description: 'Safe: instant metadata-only on Postgres 11+',
             steps: [
-              `-- Note: on PG10 and below, this pattern can rewrite the entire table.`,
+              `-- This is safe: adding a column with a constant DEFAULT is metadata-only.`,
             ],
           },
         });

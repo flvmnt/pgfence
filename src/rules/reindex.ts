@@ -62,7 +62,7 @@ export function checkReindex(stmt: ParsedStatement): CheckResult[] {
       description: 'Use REINDEX CONCURRENTLY (PG12+) to avoid ACCESS EXCLUSIVE lock',
       steps: [
         `REINDEX ${kindLabel} CONCURRENTLY ${targetName};`,
-        `-- Note: REINDEX CONCURRENTLY requires PG12+ and must run outside a transaction block`,
+        `-- Note: REINDEX CONCURRENTLY must run outside a transaction block`,
       ],
     },
   }];
