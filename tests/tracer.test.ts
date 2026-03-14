@@ -578,9 +578,7 @@ describe('tracer', () => {
       const { client } = createMockClient();
 
       // Make the actual statement fail, but let all other queries succeed
-      let callCount = 0;
       client.query.mockImplementation(async (sql: string) => {
-        callCount++;
         const trimmed = sql.trim();
         if (trimmed === 'DROP TABLE nonexistent') {
           throw new Error('relation "nonexistent" does not exist');

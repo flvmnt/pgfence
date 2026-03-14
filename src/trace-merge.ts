@@ -360,7 +360,14 @@ export function mergeTraceWithStatic(
         (c) => c.tableName !== null && normalizeTableName(c.tableName) === normalizedTracedName,
       );
 
-      if (!hasStaticCoverage) {
+      // Skip internal Postgres objects (TOAST tables, system sequences, etc.)
+      const isInternalObject =
+        tl.objectName.startsWith('pg_toast') ||
+        tl.schemaName === 'pg_catalog' ||
+        tl.schemaName === 'pg_toast' ||
+        tl.schemaName === 'information_schema';
+
+      if (!hasStaticCoverage && !isInternalObject) {
         results.push({
           statement: statements[i],
           statementPreview: statements[i].slice(0, 100),
