@@ -114,7 +114,7 @@ export async function startContainer(opts: TraceOptions): Promise<ContainerInfo>
   const suffix = randomBytes(8).toString('hex');
   const name = `${CONTAINER_PREFIX}${suffix}`;
   const password = randomBytes(15).toString('base64url').slice(0, 20);
-  const pgVersion = opts.pgVersion ?? 16;
+  const pgVersion = opts.pgVersion ?? 17;
   const image = opts.dockerImage ?? `postgres:${pgVersion}-alpine`;
 
   if (!DOCKER_IMAGE_RE.test(image)) {

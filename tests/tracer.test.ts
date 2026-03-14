@@ -166,7 +166,7 @@ describe('tracer', () => {
       const { startContainer } = await import('../src/tracer.js');
       const info = await startContainer({});
 
-      expect(info.image).toBe('postgres:16-alpine');
+      expect(info.image).toBe('postgres:17-alpine');
 
       vi.restoreAllMocks();
     });

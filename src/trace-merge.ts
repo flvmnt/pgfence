@@ -422,7 +422,7 @@ export function mergeTraceWithStatic(
           verification: 'trace-only',
           tracedLockMode: tl.lockMode,
           tracedLocksAll: tracedLocks,
-          tableRewrite: tableRewrite || undefined,
+          tableRewrite,
           durationMs,
           newObjects: newObjects && newObjects.length > 0 ? newObjects : undefined,
         });
