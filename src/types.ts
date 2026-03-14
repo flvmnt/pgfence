@@ -290,6 +290,46 @@ export const LOCK_CONFLICTS: Record<LockMode, LockMode[]> = {
 };
 
 /**
+ * Verification status from trace mode.
+ * Indicates how the static analysis compares to the traced result.
+ */
+export type VerificationStatus =
+  | 'confirmed'     // static prediction matched trace
+  | 'mismatch'      // static prediction differed from trace
+  | 'trace-only'    // found by trace but not by static analysis
+  | 'static-only'   // found by static analysis but could not be traced
+  | 'error'         // trace execution failed
+  | 'cascade-error'; // trace failed due to earlier error
+
+/**
+ * Extended check result with trace verification data.
+ */
+export interface TraceCheckResult extends CheckResult {
+  /** How the static analysis result was verified against the trace */
+  verification: VerificationStatus;
+  /** Lock mode actually observed during trace execution */
+  tracedLockMode?: LockMode;
+  /** Time the statement took to execute in the traced container (ms) */
+  durationMs?: number;
+  /** Whether the statement caused a table rewrite (relfilenode changed) */
+  tableRewrite?: boolean;
+}
+
+/**
+ * Analysis result extended with trace metadata.
+ */
+export interface TraceResult extends AnalysisResult {
+  /** Trace-verified checks (replaces the base checks array) */
+  checks: TraceCheckResult[];
+  /** PostgreSQL version used for tracing */
+  pgVersion: string;
+  /** Docker image used */
+  dockerImage: string;
+  /** Total container lifetime in seconds */
+  containerLifetimeSeconds: number;
+}
+
+/**
  * Returns what operations a lock mode blocks.
  */
 export function getBlockedOperations(lockMode: LockMode): BlockedOperations {
