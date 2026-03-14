@@ -171,4 +171,36 @@ describe('Reporter: Trace CLI', () => {
     const output = reportTraceCLI([result]);
     expect(output).toContain('Trace-only');
   });
+
+  it('should display ERROR for error verification status', () => {
+    const check = makeCheck({
+      verification: 'error',
+      executionError: 'relation "nonexistent" does not exist',
+    });
+    const result = makeResult({
+      checks: [check],
+      traceChecks: [check],
+      errors: 1,
+    });
+    const output = reportTraceCLI([result]);
+    expect(output).toContain('Error');
+    expect(output).toContain('ERROR');
+    expect(output).toContain('Execution Errors:');
+    expect(output).toContain('relation "nonexistent" does not exist');
+  });
+
+  it('should display cascade-error and its error message', () => {
+    const check = makeCheck({
+      verification: 'cascade-error',
+      executionError: 'current transaction is aborted',
+    });
+    const result = makeResult({
+      checks: [check],
+      traceChecks: [check],
+      errors: 1,
+    });
+    const output = reportTraceCLI([result]);
+    expect(output).toContain('Cascade');
+    expect(output).toContain('current transaction is aborted');
+  });
 });

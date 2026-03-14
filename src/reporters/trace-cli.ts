@@ -50,7 +50,7 @@ function verifiedColor(status: TraceCheckResult['verification']): (s: string) =>
     case 'error':
       return chalk.red;
     case 'cascade-error':
-      return chalk.dim;
+      return chalk.red;
   }
 }
 
@@ -145,12 +145,13 @@ export function reportTraceCLI(results: TraceResult[]): string {
           lockMode = bestCheck.tracedLockMode;
         }
 
+        const isError = bestCheck.verification === 'error' || bestCheck.verification === 'cascade-error';
         table.push([
           String(i + 1),
           statementCell,
-          lockMode,
-          blocksStr(bestCheck),
-          rc(effectiveRisk),
+          isError ? chalk.dim('-') : lockMode,
+          isError ? chalk.dim('-') : blocksStr(bestCheck),
+          isError ? chalk.red('ERROR') : rc(effectiveRisk),
           vc(verifiedLabel(bestCheck.verification)),
           formatDuration(bestCheck.durationMs),
         ]);
@@ -179,6 +180,20 @@ export function reportTraceCLI(results: TraceResult[]): string {
         lines.push(chalk.bold('  Trace-Only Findings:'));
         for (const finding of traceFindings) {
           lines.push(chalk.yellow(`  ! ${finding}`));
+        }
+      }
+
+      // Execution errors
+      const errorChecks = traceChecks.filter(
+        (c) => (c.verification === 'error' || c.verification === 'cascade-error') && c.executionError,
+      );
+      if (errorChecks.length > 0) {
+        lines.push('');
+        lines.push(chalk.bold('  Execution Errors:'));
+        for (const check of errorChecks) {
+          const label = check.verification === 'cascade-error' ? 'Cascade' : 'Error';
+          lines.push(chalk.red(`  ! [${label}] ${check.statementPreview}`));
+          lines.push(chalk.dim(`    ${check.executionError}`));
         }
       }
 
