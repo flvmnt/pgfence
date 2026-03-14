@@ -315,7 +315,7 @@ export function detectFormat(filePath: string, content: string): PgfenceConfig['
   );
 }
 
-async function extractSQL(
+export async function extractSQL(
   filePath: string,
   config: PgfenceConfig,
 ): Promise<ExtractionResult> {

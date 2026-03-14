@@ -17,7 +17,7 @@ import { reportGitHub } from './reporters/github-pr.js';
 import { reportSARIF } from './reporters/sarif.js';
 import { loadConfigFile, mergeConfig } from './config.js';
 import { RiskLevel } from './types.js';
-import type { PgfenceConfig, TableStats } from './types.js';
+import type { PgfenceConfig, TableStats, TraceResult } from './types.js';
 
 function parseRiskLevel(value: string): RiskLevel {
   const upper = value.toUpperCase() as RiskLevel;
@@ -153,6 +153,216 @@ program
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence error: ${message}\n`);
+      process.exit(2);
+    }
+  });
+
+program
+  .command('trace')
+  .description('Trace migration files against a disposable Docker Postgres container')
+  .argument('<files...>', 'Migration files to trace')
+  .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, drizzle, sequelize, auto', 'auto')
+  .option('--output <output>', 'Output format: cli, json, github, sarif', 'cli')
+  .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume for static analysis', '11')
+  .option('--max-risk <risk>', 'Maximum allowed risk level for CI mode', 'high')
+  .option('--ci', 'CI mode: exit 1 if max risk exceeded or mismatches detected', false)
+  .option('--no-lock-timeout', 'Disable lock_timeout requirement')
+  .option('--no-statement-timeout', 'Disable statement_timeout requirement')
+  .option('--max-lock-timeout <ms>', 'Maximum allowed lock_timeout in ms (default: 5000)')
+  .option('--max-statement-timeout <ms>', 'Maximum allowed statement_timeout in ms (default: 600000)')
+  .option('--disable-rules <rules...>', 'Disable specific rules by ID')
+  .option('--enable-rules <rules...>', 'Enable only specific rules by ID (whitelist)')
+  .option('--snapshot <path>', 'Schema snapshot JSON for definitive type analysis')
+  .option('--plugin <paths...>', 'Plugin file paths for custom rules')
+  .option('--pg-version <version>', 'PostgreSQL version for the Docker container', '17')
+  .option('--docker-image <image>', 'Custom Docker image (overrides --pg-version)')
+  .action(async (files: string[], opts) => {
+    // 1. Check Docker availability (fail fast)
+    const { checkDockerAvailable, startContainer, waitForReady, stopContainer, traceStatement } = await import('./tracer.js');
+    if (!checkDockerAvailable()) {
+      process.stderr.write('pgfence trace: Docker is required. Install Docker or use "pgfence analyze" for static-only analysis.\n');
+      process.exit(2);
+    }
+
+    // 2. Load config (same as analyze, minus db-url/stats-file)
+    const fileConfig = await loadConfigFile(process.cwd());
+
+    const cliOverrides: Partial<PgfenceConfig> = {
+      format: opts.format as PgfenceConfig['format'],
+      output: opts.output as PgfenceConfig['output'],
+      minPostgresVersion: Number.isNaN(parseInt(opts.minPgVersion, 10)) ? 11 : parseInt(opts.minPgVersion, 10),
+      maxAllowedRisk: parseRiskLevel(opts.maxRisk),
+      requireLockTimeout: opts.lockTimeout !== false,
+      requireStatementTimeout: opts.statementTimeout !== false,
+    };
+
+    if (opts.maxLockTimeout) cliOverrides.maxLockTimeoutMs = parseInt(opts.maxLockTimeout, 10);
+    if (opts.maxStatementTimeout) cliOverrides.maxStatementTimeoutMs = parseInt(opts.maxStatementTimeout, 10);
+    if (opts.snapshot) cliOverrides.snapshotFile = opts.snapshot;
+    if (opts.plugin) cliOverrides.plugins = opts.plugin;
+    if (opts.disableRules || opts.enableRules) {
+      cliOverrides.rules = {};
+      if (opts.disableRules) cliOverrides.rules.disable = opts.disableRules;
+      if (opts.enableRules) cliOverrides.rules.enable = opts.enableRules;
+    }
+
+    const config = mergeConfig(fileConfig, cliOverrides);
+
+    try {
+      // 3. Run static analysis first (reuse existing analyze())
+      const staticResults = await analyze(files, config);
+
+      // 4. Start Docker container
+      const pgVersion = parseInt(opts.pgVersion, 10) || 17;
+      const container = await startContainer({
+        pgVersion,
+        dockerImage: opts.dockerImage,
+      });
+
+      try {
+        // 5. Wait for container to be ready
+        await waitForReady(container);
+        const containerStart = Date.now();
+
+        // 6. Connect to the container's default database
+        const pg = await import('pg');
+        const ClientClass = (pg.default?.Client ?? pg.Client) as new (config: {
+          host: string;
+          port: number;
+          user: string;
+          password: string;
+          database: string;
+        }) => {
+          connect(): Promise<void>;
+          query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+          end(): Promise<void>;
+        };
+        const client = new ClientClass({
+          host: '127.0.0.1',
+          port: container.port,
+          user: 'postgres',
+          password: container.password,
+          database: 'postgres',
+        });
+        await client.connect();
+
+        // Create a dedicated database for tracing
+        await client.query('CREATE DATABASE pgfence_trace');
+        await client.end();
+
+        // Reconnect to the trace database
+        const traceClient = new ClientClass({
+          host: '127.0.0.1',
+          port: container.port,
+          user: 'postgres',
+          password: container.password,
+          database: 'pgfence_trace',
+        });
+        await traceClient.connect();
+
+        // 7. For each file's static result, trace each statement
+        const { mergeTraceWithStatic } = await import('./trace-merge.js');
+        const { reportTraceCLI } = await import('./reporters/trace-cli.js');
+        const { parseSQL } = await import('./parser.js');
+        const { extractSQL } = await import('./analyzer.js');
+
+        const traceResults: TraceResult[] = [];
+
+        for (let fileIdx = 0; fileIdx < staticResults.length; fileIdx++) {
+          const staticResult = staticResults[fileIdx];
+
+          // Create isolated schema per file
+          const schemaName = `pgfence_file_${fileIdx}`;
+          await traceClient.query(`CREATE SCHEMA ${schemaName}`);
+          await traceClient.query(`SET search_path = ${schemaName}, public`);
+
+          // Re-read and extract SQL from the file (handles ORM formats)
+          const filePath = files[fileIdx];
+          const extraction = await extractSQL(filePath, config);
+          let statements: string[] = [];
+          if (extraction.sql.trim()) {
+            const parsed = await parseSQL(extraction.sql);
+            statements = parsed.map(s => s.sql);
+          }
+
+          // Trace each statement
+          const traces = [];
+          const trackedOids: number[] = [];
+          for (const sql of statements) {
+            const isConcurrent = sql.toLowerCase().includes('concurrently');
+            const trace = await traceStatement(traceClient, sql, trackedOids, isConcurrent);
+            traces.push(trace);
+            // Add new objects to tracked OIDs for subsequent statements
+            for (const obj of trace.newObjects) {
+              trackedOids.push(obj.oid);
+            }
+          }
+
+          // Merge static checks with traces
+          const traceChecks = mergeTraceWithStatic(staticResult.checks, traces, statements);
+
+          // Count verification outcomes
+          const verified = traceChecks.filter(c => c.verification === 'confirmed' || c.verification === 'mismatch').length;
+          const mismatches = traceChecks.filter(c => c.verification === 'mismatch').length;
+          const traceOnly = traceChecks.filter(c => c.verification === 'trace-only').length;
+          const staticOnly = traceChecks.filter(c => c.verification === 'static-only').length;
+          const errors = traceChecks.filter(c => c.verification === 'error').length;
+
+          traceResults.push({
+            ...staticResult,
+            traceChecks,
+            verified,
+            mismatches,
+            traceOnly,
+            staticOnly,
+            errors,
+            pgVersion,
+            containerLifetimeMs: Date.now() - containerStart,
+          });
+        }
+
+        await traceClient.end();
+        const containerLifetimeMs = Date.now() - containerStart;
+        // Update all results with final container lifetime
+        for (const r of traceResults) {
+          r.containerLifetimeMs = containerLifetimeMs;
+        }
+
+        // 8. Output
+        switch (config.output) {
+          case 'json':
+            process.stdout.write(reportJSON(traceResults) + '\n');
+            break;
+          case 'github':
+            process.stdout.write(reportGitHub(traceResults) + '\n');
+            break;
+          case 'sarif':
+            process.stdout.write(reportSARIF(traceResults) + '\n');
+            break;
+          case 'cli':
+          default:
+            process.stdout.write(reportTraceCLI(traceResults) + '\n');
+            break;
+        }
+
+        // 9. CI mode
+        if (opts.ci) {
+          const maxAllowedIdx = RISK_ORDER.indexOf(config.maxAllowedRisk);
+          let shouldFail = false;
+          for (const result of traceResults) {
+            if (RISK_ORDER.indexOf(result.maxRisk) > maxAllowedIdx) shouldFail = true;
+            if (result.policyViolations.some(v => v.severity === 'error')) shouldFail = true;
+            if (result.mismatches > 0) shouldFail = true; // mismatches also fail CI
+          }
+          if (shouldFail) process.exit(1);
+        }
+      } finally {
+        // 10. Always clean up the container
+        stopContainer(container.name);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`pgfence trace error: ${message}\n`);
       process.exit(2);
     }
   });
