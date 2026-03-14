@@ -417,6 +417,35 @@ Upload pgfence findings to GitHub Code Scanning for inline PR annotations:
     sarif_file: pgfence.sarif
 ```
 
+## Trace Mode (Verified Analysis)
+
+Run migrations against a real Postgres instance to verify pgfence's static analysis:
+
+```bash
+pgfence trace migrations/*.sql
+```
+
+Trace mode spins up a disposable Docker Postgres container, executes each statement, and compares actual lock behavior against pgfence's predictions. No credentials needed, no risk to real data.
+
+```bash
+# Specific PG version
+pgfence trace --pg-version 14 migrations/*.sql
+
+# Custom Docker image (for PostGIS, pgvector, etc.)
+pgfence trace --docker-image postgis/postgis:17 migrations/*.sql
+
+# CI mode (also fails on mismatches between static and traced locks)
+pgfence trace --ci --max-risk medium migrations/*.sql
+```
+
+Each statement gets a verification status:
+- **Confirmed**: static prediction matches actual Postgres behavior
+- **Mismatch**: static prediction was wrong (trace result takes precedence)
+- **Trace-only**: trace found something static analysis missed (e.g., table rewrite)
+- **Static-only**: policy/best-practice check that trace cannot verify
+
+Requires Docker. Use `pgfence analyze` for static-only analysis without Docker.
+
 ## pgfence Cloud (Coming Soon)
 
 Upgrade to **pgfence Cloud** for team-grade migration safety:
