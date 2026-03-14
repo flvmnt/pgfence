@@ -21,6 +21,7 @@ import type {
   ConstraintChange,
   IndexChange,
 } from './types.js';
+import { makePreview } from './parser.js';
 import { mapPgLockMode, mapRelkind } from './tracer.js';
 import type { StatementTrace, LockSnapshot } from './tracer.js';
 
@@ -256,7 +257,7 @@ export function mergeTraceWithStatic(
         // No static checks for this errored statement, create a trace-only error entry
         results.push({
           statement: statements[i],
-          statementPreview: statements[i].slice(0, 100),
+          statementPreview: makePreview(statements[i]),
           tableName: null,
           lockMode: LockMode.ACCESS_SHARE,
           blocks: getBlockedOperations(LockMode.ACCESS_SHARE),
@@ -370,7 +371,7 @@ export function mergeTraceWithStatic(
       if (!hasStaticCoverage && !isInternalObject) {
         results.push({
           statement: statements[i],
-          statementPreview: statements[i].slice(0, 100),
+          statementPreview: makePreview(statements[i]),
           tableName: tl.objectName,
           lockMode: tl.lockMode,
           blocks: getBlockedOperations(tl.lockMode),

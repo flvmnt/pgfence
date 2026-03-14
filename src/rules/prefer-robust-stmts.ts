@@ -19,18 +19,20 @@ export function checkPreferRobustStmts(stmt: ParsedStatement): CheckResult[] {
   const results: CheckResult[] = [];
 
   if (stmt.nodeType === 'IndexStmt') {
-    const node = stmt.node as { if_not_exists?: boolean; idxname?: string; relation?: { relname: string } };
+    const node = stmt.node as { if_not_exists?: boolean; idxname?: string; relation?: { relname: string }; concurrent?: boolean };
     if (node.if_not_exists === true) return results;
+    // Skip non-concurrent: create-index-not-concurrent already fires with IF NOT EXISTS in its safe rewrite
+    if (!node.concurrent) return results;
     const indexName = node.idxname ?? '<unnamed>';
     const tableName = node.relation?.relname ?? null;
     results.push({
       statement: stmt.sql,
       statementPreview: makePreview(stmt.sql),
       tableName,
-      lockMode: LockMode.SHARE,
-      blocks: getBlockedOperations(LockMode.SHARE),
+      lockMode: LockMode.SHARE_UPDATE_EXCLUSIVE,
+      blocks: getBlockedOperations(LockMode.SHARE_UPDATE_EXCLUSIVE),
       risk: RiskLevel.LOW,
-      message: `CREATE INDEX "${indexName}": add IF NOT EXISTS for idempotency`,
+      message: `CREATE INDEX CONCURRENTLY "${indexName}": add IF NOT EXISTS for idempotency (a failed concurrent build leaves an invalid index)`,
       ruleId: 'prefer-robust-create-index',
     });
   }

@@ -157,11 +157,16 @@ export async function analyze(
     for (const stmt of stmts) {
       // Flag DO blocks, functions, and procedures as unanalyzable for coverage stats
       if (stmt.nodeType === 'DoStmt' || stmt.nodeType === 'CreateFunctionStmt' || stmt.nodeType === 'CreateProcedureStmt') {
+        // Compute actual line from statement offset in extracted SQL
+        const prefix = extraction.sql.slice(0, stmt.startOffset);
+        const lineNum = prefix.split('\n').length;
+        const lastNl = prefix.lastIndexOf('\n');
+        const colNum = stmt.startOffset - lastNl;
         extraction.warnings.push({
           message: `Unanalyzable dynamic SQL block detected, manual review required`,
           filePath,
-          line: 1,
-          column: 1,
+          line: lineNum,
+          column: colNum,
         });
       }
 

@@ -37,6 +37,13 @@ export function checkAlterEnum(
       risk: RiskLevel.LOW,
       message: `ALTER TYPE "${typeName}" ADD VALUE '${newVal}': instant on PG12+, but the new value cannot be used in the same transaction. Lock is on the type object, not on any table.`,
       ruleId: 'alter-enum-add-value',
+      safeRewrite: {
+        description: 'Safe on PG12+, but the new enum value is not usable in the same transaction',
+        steps: [
+          `-- COMMIT after ADD VALUE before inserting rows that use the new value.`,
+          `-- Using the new value in the same transaction causes: "unsafe use of new value"`,
+        ],
+      },
     }];
   }
 

@@ -56,7 +56,7 @@ export function checkReindex(stmt: ParsedStatement): CheckResult[] {
       ? `REINDEX ${kindLabel} "${targetName}": acquires ACCESS EXCLUSIVE lock on every index in the ${kindLabel.toLowerCase()}, blocking all reads and writes`
       : isTable
         ? `REINDEX ${kindLabel} "${targetName}": acquires SHARE lock on the table (blocking writes) and ACCESS EXCLUSIVE on each index`
-        : `REINDEX ${kindLabel} "${targetName}": acquires ACCESS EXCLUSIVE lock, blocking all reads and writes`,
+        : `REINDEX ${kindLabel} "${targetName}": acquires ACCESS EXCLUSIVE lock on the index, queries using this index will block`,
     ruleId: 'reindex-non-concurrent',
     safeRewrite: {
       description: 'Use REINDEX CONCURRENTLY (PG12+) to avoid ACCESS EXCLUSIVE lock',

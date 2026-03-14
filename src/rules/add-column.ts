@@ -114,6 +114,9 @@ export function checkAddColumn(
 
       if (isConstant && config.minPostgresVersion >= 11) {
         // Constant default on PG11+ → instant metadata-only, LOW risk
+        const notNullNote = hasNotNull
+          ? `. NOT NULL is satisfied: the constant DEFAULT fills all existing rows`
+          : '';
         results.push({
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),
@@ -121,7 +124,7 @@ export function checkAddColumn(
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.LOW,
-          message: `ADD COLUMN "${colDef.colname}" with constant DEFAULT: instant metadata-only on PG11+ (ACCESS EXCLUSIVE lock is brief)`,
+          message: `ADD COLUMN "${colDef.colname}" with constant DEFAULT: instant metadata-only on PG11+ (ACCESS EXCLUSIVE lock is brief)${notNullNote}`,
           ruleId: 'add-column-constant-default',
           safeRewrite: {
             description: 'Safe on Postgres 11+',

@@ -74,6 +74,19 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
             },
           });
         }
+        if (subtype === 'AT_DropConstraint') {
+          const constraintName = cmd.AlterTableCmd.name ?? '<unknown>';
+          results.push({
+            statement: stmt.sql,
+            statementPreview: makePreview(stmt.sql),
+            tableName,
+            lockMode: LockMode.ACCESS_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            risk: RiskLevel.MEDIUM,
+            message: `DROP CONSTRAINT "${constraintName}" on "${tableName}": acquires ACCESS EXCLUSIVE lock`,
+            ruleId: 'drop-constraint',
+          });
+        }
       }
       break;
     }
