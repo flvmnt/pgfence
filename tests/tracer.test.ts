@@ -404,6 +404,112 @@ describe('tracer', () => {
     });
   });
 
+  describe('observeLocksDuring', () => {
+    it('collects locks observed during action', async () => {
+      const { observeLocksDuring } = await import('../src/tracer.js');
+
+      const lockRows = [
+        { schemaName: 'public', objectName: 'users', relkind: 'r', mode: 'ShareLock', oid: 100 },
+        { schemaName: 'public', objectName: 'users_email_idx', relkind: 'i', mode: 'AccessExclusiveLock', oid: 101 },
+      ];
+
+      const observerClient = {
+        query: vi.fn().mockResolvedValue({ rows: lockRows }),
+      };
+
+      // Action takes 100ms so the poll loop runs multiple times
+      const action = () => new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+      const result = await observeLocksDuring(observerClient, 42, action, 20);
+
+      expect(result).toHaveLength(2);
+      expect(result).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ oid: 100, mode: 'ShareLock' }),
+          expect.objectContaining({ oid: 101, mode: 'AccessExclusiveLock' }),
+        ]),
+      );
+
+      // Observer should have been polled at least once
+      expect(observerClient.query).toHaveBeenCalled();
+      // Verify the query was called with the target PID
+      expect(observerClient.query).toHaveBeenCalledWith(
+        expect.stringContaining('pg_locks'),
+        [42],
+      );
+    });
+
+    it('stops polling when action completes', async () => {
+      const { observeLocksDuring } = await import('../src/tracer.js');
+
+      const observerClient = {
+        query: vi.fn().mockResolvedValue({ rows: [] }),
+      };
+
+      // Action completes immediately
+      const action = () => Promise.resolve();
+
+      await observeLocksDuring(observerClient, 42, action, 10);
+
+      const callCount = observerClient.query.mock.calls.length;
+
+      // Wait to confirm no more queries are made after completion
+      await new Promise((r) => setTimeout(r, 50));
+      expect(observerClient.query.mock.calls.length).toBe(callCount);
+    });
+
+    it('handles observer query errors gracefully', async () => {
+      const { observeLocksDuring } = await import('../src/tracer.js');
+
+      let callNum = 0;
+      const observerClient = {
+        query: vi.fn().mockImplementation(async () => {
+          callNum++;
+          if (callNum % 2 === 1) {
+            throw new Error('connection busy');
+          }
+          return {
+            rows: [
+              { schemaName: 'public', objectName: 'users', relkind: 'r', mode: 'ShareLock', oid: 100 },
+            ],
+          };
+        }),
+      };
+
+      const action = () => new Promise<void>((resolve) => setTimeout(resolve, 120));
+
+      // Should not throw despite errors on odd-numbered polls
+      const result = await observeLocksDuring(observerClient, 42, action, 20);
+
+      // Should still have collected locks from successful polls
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result[0]).toEqual(
+        expect.objectContaining({ oid: 100, mode: 'ShareLock' }),
+      );
+    });
+
+    it('returns unique locks (deduplicates by oid:mode)', async () => {
+      const { observeLocksDuring } = await import('../src/tracer.js');
+
+      const sameRow = { schemaName: 'public', objectName: 'users', relkind: 'r', mode: 'ShareLock', oid: 100 };
+      const observerClient = {
+        query: vi.fn().mockResolvedValue({ rows: [sameRow] }),
+      };
+
+      // Action takes long enough for multiple polls
+      const action = () => new Promise<void>((resolve) => setTimeout(resolve, 100));
+
+      const result = await observeLocksDuring(observerClient, 42, action, 15);
+
+      // Despite multiple polls returning the same lock, only one entry
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual(expect.objectContaining({ oid: 100, mode: 'ShareLock' }));
+
+      // Verify multiple polls actually happened
+      expect(observerClient.query.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
   describe('traceStatement', () => {
     function createMockClient() {
       const calls: string[] = [];

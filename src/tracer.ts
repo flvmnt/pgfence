@@ -409,6 +409,57 @@ export function diffIndexes(
   return { added, modified };
 }
 
+// --- Observer Polling for CONCURRENTLY Statements ---
+
+/**
+ * Poll pg_locks from an observer connection while an action runs on another connection.
+ * Used for CONCURRENTLY statements that cannot run in a transaction.
+ * Returns all unique lock snapshots observed during the action.
+ */
+export async function observeLocksDuring(
+  observerClient: PgClient,
+  targetPid: number,
+  action: () => Promise<void>,
+  pollIntervalMs: number = 50,
+): Promise<LockSnapshot[]> {
+  const observed = new Map<string, LockSnapshot>();
+  let polling = true;
+
+  const pollLoop = async () => {
+    while (polling) {
+      try {
+        const result = await observerClient.query(
+          `SELECT n.nspname AS "schemaName", c.relname AS "objectName",
+                  c.relkind AS relkind, l.mode, c.oid::int AS oid
+           FROM pg_locks l
+           JOIN pg_class c ON c.oid = l.relation
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE l.locktype = 'relation' AND l.pid = $1`,
+          [targetPid],
+        );
+        for (const row of result.rows) {
+          const lock = row as unknown as LockSnapshot;
+          const key = `${lock.oid}:${lock.mode}`;
+          if (!observed.has(key)) observed.set(key, lock);
+        }
+      } catch {
+        /* connection may be busy, skip this poll */
+      }
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    }
+  };
+
+  const pollPromise = pollLoop();
+  try {
+    await action();
+  } finally {
+    polling = false;
+    await pollPromise;
+  }
+
+  return [...observed.values()];
+}
+
 // --- Statement Execution ---
 
 export interface StatementTrace {
