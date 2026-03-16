@@ -7,7 +7,7 @@
 
 import path from 'node:path';
 import type { ParsedStatement } from './parser.js';
-import type { CheckResult, PgfenceConfig, PolicyViolation } from './types.js';
+import type { CheckResult, ExtractionWarning, PgfenceConfig, PolicyViolation } from './types.js';
 
 const ALLOWED_PLUGIN_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts']);
 
@@ -110,6 +110,8 @@ export function runPluginRules(
   pluginRules: PgfencePluginRule[],
   stmt: ParsedStatement,
   config: PgfenceConfig,
+  warnings: ExtractionWarning[],
+  filePath: string,
 ): CheckResult[] {
   const results: CheckResult[] = [];
   for (const rule of pluginRules) {
@@ -118,6 +120,10 @@ export function runPluginRules(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence: plugin rule "${rule.ruleId}" threw: ${message}\n`);
+      warnings.push({
+        filePath,
+        message: `Plugin rule "${rule.ruleId}" crashed: ${message}. This rule's checks were skipped.`,
+      });
     }
   }
   return results;
@@ -130,6 +136,8 @@ export function runPluginPolicies(
   pluginPolicies: PgfencePluginPolicy[],
   stmts: ParsedStatement[],
   config: PgfenceConfig,
+  warnings: ExtractionWarning[],
+  filePath: string,
 ): PolicyViolation[] {
   const results: PolicyViolation[] = [];
   for (const policy of pluginPolicies) {
@@ -138,6 +146,10 @@ export function runPluginPolicies(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence: plugin policy "${policy.ruleId}" threw: ${message}\n`);
+      warnings.push({
+        filePath,
+        message: `Plugin policy "${policy.ruleId}" crashed: ${message}. This policy's checks were skipped.`,
+      });
     }
   }
   return results;

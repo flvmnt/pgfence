@@ -26,7 +26,15 @@ export async function fetchTableStats(dbUrl: string): Promise<TableStats[]> {
 
   const client = new Client({ connectionString: dbUrl, connectionTimeoutMillis: 5000 });
   try {
-    await client.connect();
+    try {
+      await client.connect();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Failed to connect to database for size-aware scoring: ${message}. ` +
+        `Verify the --db-url is correct and the database is accessible.`
+      );
+    }
     // Safety: read-only mode
     await client.query('SET default_transaction_read_only = on');
     await client.query("SET application_name = 'pgfence'");

@@ -40,8 +40,9 @@ const pkgPath = path.resolve(__dirname, '../package.json');
 let pkg: { version: string };
 try {
   pkg = JSON.parse(await readFile(pkgPath, 'utf8'));
-} catch {
-  process.stderr.write('pgfence: could not read package.json\n');
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`pgfence: could not read package.json at ${pkgPath}: ${message}\n`);
   process.exit(2);
 }
 
@@ -77,17 +78,22 @@ program
     let tableStats: TableStats[] | undefined;
     const statsFilePath = opts.statsFile ?? fileConfig?.['stats-file'];
     if (statsFilePath) {
-      const raw = await readFile(statsFilePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      tableStats = Array.isArray(parsed) ? parsed : parsed.tables ?? parsed;
-      if (tableStats && tableStats.length > 0) {
-        const sample = tableStats[0];
-        if (typeof sample.tableName !== 'string' || typeof sample.rowCount !== 'number') {
-          throw new Error(
-            `Invalid stats file format. Expected objects with {schemaName, tableName, rowCount, totalBytes}. ` +
-            `Got keys: ${Object.keys(sample).join(', ')}`,
-          );
+      try {
+        const raw = await readFile(statsFilePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        tableStats = Array.isArray(parsed) ? parsed : parsed.tables ?? parsed;
+        if (tableStats && tableStats.length > 0) {
+          const sample = tableStats[0];
+          if (typeof sample.tableName !== 'string' || typeof sample.rowCount !== 'number') {
+            throw new Error(
+              `Invalid stats file format. Expected objects with {schemaName, tableName, rowCount, totalBytes}. ` +
+              `Got keys: ${Object.keys(sample).join(', ')}`,
+            );
+          }
         }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to load stats file "${statsFilePath}": ${message}`);
       }
     }
 
@@ -103,8 +109,16 @@ program
       requireStatementTimeout: opts.statementTimeout !== false,
     };
 
-    if (opts.maxLockTimeout) cliOverrides.maxLockTimeoutMs = parseInt(opts.maxLockTimeout, 10);
-    if (opts.maxStatementTimeout) cliOverrides.maxStatementTimeoutMs = parseInt(opts.maxStatementTimeout, 10);
+    if (opts.maxLockTimeout) {
+      const parsed = parseInt(opts.maxLockTimeout, 10);
+      if (Number.isNaN(parsed)) throw new Error(`Invalid --max-lock-timeout value: "${opts.maxLockTimeout}"`);
+      cliOverrides.maxLockTimeoutMs = parsed;
+    }
+    if (opts.maxStatementTimeout) {
+      const parsed = parseInt(opts.maxStatementTimeout, 10);
+      if (Number.isNaN(parsed)) throw new Error(`Invalid --max-statement-timeout value: "${opts.maxStatementTimeout}"`);
+      cliOverrides.maxStatementTimeoutMs = parsed;
+    }
     if (opts.snapshot) cliOverrides.snapshotFile = opts.snapshot;
     if (opts.plugin) cliOverrides.plugins = opts.plugin;
     if (opts.disableRules || opts.enableRules) {
@@ -201,8 +215,16 @@ program
       requireStatementTimeout: opts.statementTimeout !== false,
     };
 
-    if (opts.maxLockTimeout) cliOverrides.maxLockTimeoutMs = parseInt(opts.maxLockTimeout, 10);
-    if (opts.maxStatementTimeout) cliOverrides.maxStatementTimeoutMs = parseInt(opts.maxStatementTimeout, 10);
+    if (opts.maxLockTimeout) {
+      const parsed = parseInt(opts.maxLockTimeout, 10);
+      if (Number.isNaN(parsed)) throw new Error(`Invalid --max-lock-timeout value: "${opts.maxLockTimeout}"`);
+      cliOverrides.maxLockTimeoutMs = parsed;
+    }
+    if (opts.maxStatementTimeout) {
+      const parsed = parseInt(opts.maxStatementTimeout, 10);
+      if (Number.isNaN(parsed)) throw new Error(`Invalid --max-statement-timeout value: "${opts.maxStatementTimeout}"`);
+      cliOverrides.maxStatementTimeoutMs = parsed;
+    }
     if (opts.snapshot) cliOverrides.snapshotFile = opts.snapshot;
     if (opts.plugin) cliOverrides.plugins = opts.plugin;
     if (opts.disableRules || opts.enableRules) {
@@ -223,6 +245,15 @@ program
         pgVersion,
         dockerImage: opts.dockerImage,
       });
+
+      // Declare DB clients outside try so they're accessible in finally for cleanup
+      type PgClient = {
+        end(): Promise<void>;
+        connect(): Promise<void>;
+        query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+      };
+      let traceClient: PgClient | undefined;
+      let observerClient: PgClient | undefined;
 
       try {
         // 5. Wait for container to be ready
@@ -256,7 +287,7 @@ program
         await client.end();
 
         // Reconnect to the trace database
-        const traceClient = new ClientClass({
+        traceClient = new ClientClass({
           host: '127.0.0.1',
           port: container.port,
           user: 'postgres',
@@ -266,7 +297,7 @@ program
         await traceClient.connect();
 
         // Create observer connection for CONCURRENTLY lock polling
-        const observerClient = new ClientClass({
+        observerClient = new ClientClass({
           host: '127.0.0.1',
           port: container.port,
           user: 'postgres',
@@ -390,7 +421,9 @@ program
           if (shouldFail) process.exit(1);
         }
       } finally {
-        // 10. Always clean up the container
+        // 10. Always clean up DB connections and the container
+        try { await observerClient?.end(); } catch { /* cleanup */ }
+        try { await traceClient?.end(); } catch { /* cleanup */ }
         stopContainer(container.name);
       }
     } catch (err) {
