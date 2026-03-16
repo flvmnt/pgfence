@@ -194,6 +194,32 @@ describe('pgfence analyzer', () => {
     expect(adjustRisk(RiskLevel.SAFE, 100_000_000)).toBe(RiskLevel.CRITICAL);
   });
 
+  // --- adjustRisk boundary tests ---
+
+  it('should bump risk at exactly 10,000 rows', () => {
+    expect(adjustRisk(RiskLevel.MEDIUM, 10_000)).toBe(RiskLevel.HIGH);
+  });
+
+  it('should NOT bump risk at 9,999 rows', () => {
+    expect(adjustRisk(RiskLevel.MEDIUM, 9_999)).toBe(RiskLevel.MEDIUM);
+  });
+
+  it('should bump +2 at exactly 1,000,000 rows', () => {
+    expect(adjustRisk(RiskLevel.LOW, 1_000_000)).toBe(RiskLevel.HIGH);
+  });
+
+  it('should bump +1 at 999,999 rows', () => {
+    expect(adjustRisk(RiskLevel.LOW, 999_999)).toBe(RiskLevel.MEDIUM);
+  });
+
+  it('should go CRITICAL at exactly 10,000,000 rows', () => {
+    expect(adjustRisk(RiskLevel.LOW, 10_000_000)).toBe(RiskLevel.CRITICAL);
+  });
+
+  it('should bump +2 at 9,999,999 rows', () => {
+    expect(adjustRisk(RiskLevel.LOW, 9_999_999)).toBe(RiskLevel.HIGH);
+  });
+
   it('should generate safe rewrite recipes for dangerous patterns', async () => {
     const results = await analyze([fixture('dangerous-add-column.sql')], defaultConfig);
     const checks = results[0].checks;
@@ -990,6 +1016,51 @@ DROP TABLE old_data;`;
     );
     // Should have extracted the CREATE INDEX even though it's in a conditional
     expect(results[0].statementCount).toBeGreaterThanOrEqual(3);
+  });
+
+  // --- DROP SCHEMA ---
+
+  it('should detect DROP SCHEMA', async () => {
+    const results = await analyze([fixture('drop-schema.sql')], defaultConfig);
+    const checks = results[0].checks;
+    expect(checks.some((c) => c.ruleId === 'drop-schema')).toBe(true);
+    const check = checks.find((c) => c.ruleId === 'drop-schema')!;
+    expect(check.risk).toBe(RiskLevel.CRITICAL);
+    expect(check.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+  });
+
+  it('should detect DROP SCHEMA CASCADE', async () => {
+    const results = await analyze([fixture('drop-schema-cascade.sql')], defaultConfig);
+    const checks = results[0].checks;
+    expect(checks.some((c) => c.ruleId === 'drop-schema-cascade')).toBe(true);
+    const check = checks.find((c) => c.ruleId === 'drop-schema-cascade')!;
+    expect(check.risk).toBe(RiskLevel.CRITICAL);
+    expect(check.message).toContain('CASCADE');
+  });
+
+  // --- DROP CONSTRAINT ---
+
+  it('should detect DROP CONSTRAINT', async () => {
+    const results = await analyze([fixture('drop-constraint.sql')], defaultConfig);
+    const checks = results[0].checks;
+    expect(checks.some((c) => c.ruleId === 'drop-constraint')).toBe(true);
+    const check = checks.find((c) => c.ruleId === 'drop-constraint')!;
+    expect(check.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(check.risk).toBe(RiskLevel.MEDIUM);
+    expect(check.tableName).toBe('users');
+  });
+
+  // --- REFRESH MATERIALIZED VIEW WITH NO DATA ---
+
+  it('should assign MEDIUM risk to REFRESH MATERIALIZED VIEW WITH NO DATA', async () => {
+    const results = await analyze([fixture('refresh-matview-no-data.sql')], defaultConfig);
+    const check = results[0].checks.find((c) => c.ruleId === 'refresh-matview-blocking');
+    expect(check).toBeDefined();
+    expect(check!.risk).toBe(RiskLevel.MEDIUM);
+    expect(check!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(check!.message).toContain('WITH NO DATA');
+    // WITH NO DATA should not have a safeRewrite (it is already brief)
+    expect(check!.safeRewrite).toBeUndefined();
   });
 });
 
