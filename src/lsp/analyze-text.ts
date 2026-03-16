@@ -78,12 +78,8 @@ async function extractSQLFromContent(
     return { sql, warnings: [] };
   }
 
-  // For ORM formats, we need the extractors. They currently read from disk,
-  // so we use a temp-file-free approach: write the content to the extractor's
-  // parse function if it accepts a string, or fall back to the file-based path.
-  // For now, use a dynamic import and pass the content through a temp approach.
-  // Most ORM extractors read from file, so for LSP we write a lightweight
-  // content-based extraction for TypeORM/Knex/Sequelize.
+  // For ORM formats, extraction currently reads from disk.
+  // The LSP server relies on the file being saved to disk before analysis for ORM-format files.
 
   switch (format) {
     case 'typeorm': {
@@ -126,8 +122,14 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   if (format === 'auto') {
     try {
       format = detectFormat(filePath, content);
-    } catch {
-      // Can't detect format, treat as raw SQL
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      result.extractionWarnings.push({
+        filePath,
+        message: `Format auto-detection failed: ${message}. Treating as raw SQL.`,
+        line: 1,
+        column: 1,
+      });
       format = 'sql';
     }
   }
@@ -190,6 +192,7 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
         filePath,
         line: warnLine,
         column: 0,
+        unanalyzable: true,
       });
     }
 

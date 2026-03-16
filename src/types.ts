@@ -82,6 +82,8 @@ export interface ExtractionWarning {
   line?: number;
   column?: number;
   message: string;
+  /** If true, this warning represents a statement that could not be statically analyzed */
+  unanalyzable?: boolean;
 }
 
 export interface ExtractionResult {

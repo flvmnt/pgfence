@@ -115,7 +115,7 @@ export function reportSARIF(results: AnalysisResult[]): string {
   for (const result of results) {
     sarifResults.push(...toSarifResults(result, rules));
     totalStatements += result.statementCount;
-    dynamicWarnings += result.extractionWarnings?.length ?? 0;
+    dynamicWarnings += result.extractionWarnings?.filter(w => w.unanalyzable).length ?? 0;
   }
 
   const coveragePct = totalStatements > 0

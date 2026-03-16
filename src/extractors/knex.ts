@@ -80,6 +80,7 @@ export async function extractKnexSQL(filePath: string): Promise<ExtractionResult
             line: loc.line,
             column: loc.column,
             message: 'Dynamic SQL: cannot statically analyze knex.raw() argument',
+            unanalyzable: true,
           });
         }
       } else if (isSchemaBuilderCall(node)) {
@@ -94,6 +95,7 @@ export async function extractKnexSQL(filePath: string): Promise<ExtractionResult
             line: loc.line,
             column: loc.column,
             message: 'Schema builder call: could not transpile to SQL',
+            unanalyzable: true,
           });
         }
         warnings.push(...result.warnings);

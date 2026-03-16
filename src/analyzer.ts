@@ -132,6 +132,7 @@ export async function analyze(
           filePath,
           line: 1,
           column: 1,
+          unanalyzable: true,
         });
       }
     }
@@ -167,13 +168,14 @@ export async function analyze(
           filePath,
           line: lineNum,
           column: colNum,
+          unanalyzable: true,
         });
       }
 
       const builtInChecks = applyRules(stmt, config);
       // Gap 14: Run plugin rules alongside built-in rules
       if (plugins.rules.length > 0) {
-        builtInChecks.push(...runPluginRules(plugins.rules, stmt, config));
+        builtInChecks.push(...runPluginRules(plugins.rules, stmt, config, extraction.warnings, filePath));
       }
       const rawChecks = filterByRulesConfig(builtInChecks, config.rules);
       for (const check of rawChecks) {
@@ -191,7 +193,7 @@ export async function analyze(
     const builtInPolicies = checkPolicies(stmts, config, { autoCommit: extraction.autoCommit });
     // Gap 14: Run plugin policies alongside built-in policies
     if (plugins.policies.length > 0) {
-      builtInPolicies.push(...runPluginPolicies(plugins.policies, stmts, config));
+      builtInPolicies.push(...runPluginPolicies(plugins.policies, stmts, config, extraction.warnings, filePath));
     }
     const policyViolations = filterByRulesConfig(builtInPolicies, config.rules);
 

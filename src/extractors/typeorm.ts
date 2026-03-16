@@ -133,6 +133,7 @@ export async function extractTypeORMSQL(filePath: string): Promise<ExtractionRes
               line: loc.line,
               column: loc.column,
               message: 'Dynamic SQL -- cannot statically analyze queryRunner.query() argument',
+              unanalyzable: true,
             });
           }
         }

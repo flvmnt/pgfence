@@ -78,6 +78,7 @@ export async function extractSequelizeSQL(filePath: string): Promise<ExtractionR
                             line: loc.line,
                             column: loc.column,
                             message: 'Dynamic SQL: cannot statically analyze sequelize.query() argument',
+                            unanalyzable: true,
                         });
                     }
                 } else if (isQueryInterfaceBuilder(node)) {
@@ -93,6 +94,7 @@ export async function extractSequelizeSQL(filePath: string): Promise<ExtractionR
                             line: loc.line,
                             column: loc.column,
                             message: 'queryInterface builder call could not be transpiled to SQL, manual review required',
+                            unanalyzable: true,
                         });
                     }
                     warnings.push(...result.warnings);

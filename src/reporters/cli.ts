@@ -202,7 +202,7 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
   // Coverage summary (Trust Contract requirement)
   const totalStatements = results.reduce((sum, r) => sum + r.statementCount, 0);
   const dynamicWarnings = results.reduce(
-    (sum, r) => sum + (r.extractionWarnings?.length ?? 0),
+    (sum, r) => sum + (r.extractionWarnings?.filter(w => w.unanalyzable).length ?? 0),
     0,
   );
   lines.push(chalk.bold('=== Coverage ==='));
