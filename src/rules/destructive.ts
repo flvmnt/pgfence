@@ -10,6 +10,7 @@
  * - DELETE without WHERE (ROW EXCLUSIVE, HIGH)
  * - VACUUM FULL (ACCESS EXCLUSIVE, HIGH)
  * - SET LOGGED/UNLOGGED (ACCESS EXCLUSIVE, HIGH) - full table rewrite
+ * - DROP CONSTRAINT (ACCESS EXCLUSIVE, MEDIUM)
  */
 
 import type { ParsedStatement } from '../parser.js';

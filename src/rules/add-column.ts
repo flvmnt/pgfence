@@ -3,7 +3,7 @@
  *
  * Detects:
  * - ADD COLUMN ... NOT NULL without DEFAULT (fails on non-empty table)
- * - ADD COLUMN with non-constant DEFAULT (table rewrite)
+ * - ADD COLUMN with non-constant DEFAULT (potential table rewrite, flagged as HIGH risk)
  * - ADD COLUMN with constant DEFAULT (instant metadata-only, LOW risk)
  * - ADD COLUMN with type json instead of jsonb (common mistake)
  * - ADD COLUMN with serial/bigserial instead of IDENTITY (deprecated pseudo-type)

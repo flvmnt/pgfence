@@ -2,7 +2,7 @@
  * Rule: Partition operations (ATTACH/DETACH)
  *
  * Detects:
- * - ATTACH PARTITION: HIGH risk, ACCESS EXCLUSIVE (validates partition constraint)
+ * - ATTACH PARTITION: HIGH risk, SHARE UPDATE EXCLUSIVE on parent (PG12+), ACCESS EXCLUSIVE on partition
  * - DETACH PARTITION (non-concurrent): HIGH risk, ACCESS EXCLUSIVE
  * - DETACH PARTITION CONCURRENTLY (PG14+): LOW risk, SHARE UPDATE EXCLUSIVE
  */

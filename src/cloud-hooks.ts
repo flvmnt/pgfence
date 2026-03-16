@@ -36,7 +36,7 @@ export async function getCloudHooks(): Promise<CloudHooks> {
             }
         }
     } catch (err: unknown) {
-        // MODULE_NOT_FOUND or ERR_MODULE_NOT_FOUND is expected in OS mode.
+        // MODULE_NOT_FOUND or ERR_MODULE_NOT_FOUND is expected in open-source mode (when cloud/ directory is absent).
         // Anything else might be a compilation error inside the cloud module.
         const error = err as { code?: string, message?: string };
         const isNotFound = error.code === 'MODULE_NOT_FOUND' || error.code === 'ERR_MODULE_NOT_FOUND';

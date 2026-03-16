@@ -8,7 +8,7 @@
  * Safe type changes (metadata-only, no table rewrite):
  * - varchar(N) -> text (removing length constraint)
  * - varchar(N) -> varchar (removing length constraint)
- * - any -> text (text is unbounded, always safe target)
+ * - varchar/text-family -> text (text is unbounded, metadata-only for text-family sources)
  * - varchar(N) -> varchar(M) where M > N (widening, needs schema to verify)
  * - numeric(P,S) -> numeric(P2,S) where P2 > P (widening, needs schema to verify)
  */
@@ -70,7 +70,9 @@ function extractTargetType(def: AlterTableCmd['AlterTableCmd']['def']): TargetTy
  * Without the source type (which is not available from the AST), we classify
  * based on what we can determine from the target alone:
  *
- * - Target is `text` or `varchar` without length: LOW (always safe, metadata-only)
+ * - Target is `text` or `varchar` without length: LOW (metadata-only when source is a
+ *   text-family type. Converting from non-text types still requires a rewrite, but
+ *   without schema info we report LOW as a reasonable default)
  * - Target is `varchar(N)` or `numeric(P,S)`: MEDIUM (safe if widening, but
  *   we cannot verify without schema info)
  * - Everything else: HIGH (potential table rewrite)

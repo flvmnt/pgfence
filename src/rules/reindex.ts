@@ -2,7 +2,8 @@
  * Rule: REINDEX (non-concurrent)
  *
  * Detects:
- * - REINDEX TABLE/INDEX without CONCURRENTLY: HIGH risk, ACCESS EXCLUSIVE
+ * - REINDEX TABLE without CONCURRENTLY: HIGH risk, SHARE lock on table (ACCESS EXCLUSIVE on each index internally)
+ * - REINDEX INDEX without CONCURRENTLY: HIGH risk, ACCESS EXCLUSIVE
  * - REINDEX SCHEMA/DATABASE without CONCURRENTLY: CRITICAL risk, ACCESS EXCLUSIVE
  * - REINDEX CONCURRENTLY: safe (no check emitted)
  */

@@ -13,7 +13,7 @@ import type { LockMode } from './types.js';
 export interface TransactionState {
   /** Whether we're inside an explicit transaction */
   active: boolean;
-  /** Transaction depth (for nested BEGIN support, though PG doesn't support it) */
+  /** Transaction depth. PostgreSQL ignores nested BEGIN (issues a WARNING), but we track depth to avoid false state transitions from stray BEGIN statements. */
   depth: number;
   /** Stack of savepoint names */
   savepoints: string[];

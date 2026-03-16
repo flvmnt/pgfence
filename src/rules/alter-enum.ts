@@ -2,7 +2,7 @@
  * Rule: ALTER TYPE ... ADD VALUE (enum)
  *
  * Detects:
- * - ALTER TYPE ... ADD VALUE on PG < 12: MEDIUM risk, ACCESS EXCLUSIVE
+ * - ALTER TYPE ... ADD VALUE on PG < 12: MEDIUM risk, ACCESS EXCLUSIVE lock on the type object (not on any table)
  * - ALTER TYPE ... ADD VALUE on PG12+: LOW risk (instant, but can't use in same tx)
  */
 

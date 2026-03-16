@@ -62,7 +62,7 @@ export function checkBestPractices(stmt: ParsedStatement): CheckResult[] {
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.LOW,
-          message: `Column "${colDef.colname}" uses varchar(N): use text instead. Changing varchar length later requires ACCESS EXCLUSIVE lock + table rewrite. text with a CHECK constraint is equally safe and changeable`,
+          message: `Column "${colDef.colname}" uses varchar(N): use text instead. Narrowing varchar length later requires ACCESS EXCLUSIVE lock + table rewrite. Widening is metadata-only. text with a CHECK constraint is equally safe and changeable`,
           ruleId: 'prefer-text-field',
           appliesToNewTables: true,
         });

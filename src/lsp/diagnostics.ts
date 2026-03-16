@@ -16,6 +16,9 @@ import type { SourceRange } from './analyze-text.js';
  * Convert a character offset in a text string to a line/character Position.
  * The parser converts libpg-query byte offsets to character indices,
  * so this function works directly with character offsets.
+ *
+ * This distinction matters for files containing multi-byte UTF-8 characters
+ * (e.g., table/column names with accented characters).
  */
 export function offsetToPosition(text: string, offset: number): Position {
   const clampedOffset = Math.min(offset, text.length);
