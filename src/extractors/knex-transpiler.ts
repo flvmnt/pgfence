@@ -88,6 +88,7 @@ export function transpileKnexSchemaCall(
         line: callNode.loc?.start?.line ?? 0,
         column: callNode.loc?.start?.column ?? 0,
         message: `Unsupported Knex schema builder method: ${methodName}`,
+        unanalyzable: true,
       });
       return { sql, warnings };
   }
@@ -113,7 +114,16 @@ function transpileCreateTable(
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
 
-  if (args.length < 2) return { sql, warnings };
+  if (args.length < 2) {
+    warnings.push({
+      filePath,
+      line: args[0]?.loc?.start?.line ?? 0,
+      column: args[0]?.loc?.start?.column ?? 0,
+      message: `createTable() called with ${args.length} arguments (expected 2): cannot transpile, manual review required`,
+      unanalyzable: true,
+    });
+    return { sql, warnings };
+  }
 
   const tableName = getStringArg(args[0]);
   if (!tableName) {
@@ -122,6 +132,7 @@ function transpileCreateTable(
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
       message: 'Dynamic table name in createTable: cannot transpile',
+      unanalyzable: true,
     });
     return { sql, warnings };
   }
@@ -133,12 +144,22 @@ function transpileCreateTable(
       line: callback.loc?.start?.line ?? 0,
       column: callback.loc?.start?.column ?? 0,
       message: 'Non-function callback in createTable: cannot transpile',
+      unanalyzable: true,
     });
     return { sql, warnings };
   }
 
   const paramName = getCallbackParamName(callback);
-  if (!paramName) return { sql, warnings };
+  if (!paramName) {
+    warnings.push({
+      filePath,
+      line: callback.loc?.start?.line ?? 0,
+      column: callback.loc?.start?.column ?? 0,
+      message: 'Cannot extract callback parameter name in createTable: destructured or unsupported parameter pattern, manual review required',
+      unanalyzable: true,
+    });
+    return { sql, warnings };
+  }
 
   const columns = extractColumnDefs(callback, paramName, filePath, warnings);
   const ifNE = ifNotExists ? ' IF NOT EXISTS' : '';
@@ -152,7 +173,16 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
 
-  if (args.length < 2) return { sql, warnings };
+  if (args.length < 2) {
+    warnings.push({
+      filePath,
+      line: args[0]?.loc?.start?.line ?? 0,
+      column: args[0]?.loc?.start?.column ?? 0,
+      message: `alterTable() called with ${args.length} arguments (expected 2): cannot transpile, manual review required`,
+      unanalyzable: true,
+    });
+    return { sql, warnings };
+  }
 
   const tableName = getStringArg(args[0]);
   if (!tableName) {
@@ -161,6 +191,7 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
       message: 'Dynamic table name in alterTable: cannot transpile',
+      unanalyzable: true,
     });
     return { sql, warnings };
   }
@@ -172,12 +203,22 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
       line: callback.loc?.start?.line ?? 0,
       column: callback.loc?.start?.column ?? 0,
       message: 'Non-function callback in alterTable: cannot transpile',
+      unanalyzable: true,
     });
     return { sql, warnings };
   }
 
   const paramName = getCallbackParamName(callback);
-  if (!paramName) return { sql, warnings };
+  if (!paramName) {
+    warnings.push({
+      filePath,
+      line: callback.loc?.start?.line ?? 0,
+      column: callback.loc?.start?.column ?? 0,
+      message: 'Cannot extract callback parameter name in alterTable: destructured or unsupported parameter pattern, manual review required',
+      unanalyzable: true,
+    });
+    return { sql, warnings };
+  }
 
   // Walk the callback body for column definitions and alterations
   const columns = extractColumnDefs(callback, paramName, filePath, warnings);
@@ -262,7 +303,16 @@ function transpileDropTable(args: TSNode[], ifExists: boolean, filePath: string)
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
 
-  if (args.length < 1) return { sql, warnings };
+  if (args.length < 1) {
+    warnings.push({
+      filePath,
+      line: 0,
+      column: 0,
+      message: `dropTable() called with ${args.length} arguments (expected 1): cannot transpile, manual review required`,
+      unanalyzable: true,
+    });
+    return { sql, warnings };
+  }
   const tableName = getStringArg(args[0]);
   if (tableName) {
     const ifE = ifExists ? ' IF EXISTS' : '';
@@ -273,6 +323,7 @@ function transpileDropTable(args: TSNode[], ifExists: boolean, filePath: string)
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
       message: 'Dynamic table name in dropTable: cannot statically analyze',
+      unanalyzable: true,
     });
   }
 
@@ -283,7 +334,16 @@ function transpileRenameTable(args: TSNode[], filePath: string): TranspileResult
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
 
-  if (args.length < 2) return { sql, warnings };
+  if (args.length < 2) {
+    warnings.push({
+      filePath,
+      line: args[0]?.loc?.start?.line ?? 0,
+      column: args[0]?.loc?.start?.column ?? 0,
+      message: `renameTable() called with ${args.length} arguments (expected 2): cannot transpile, manual review required`,
+      unanalyzable: true,
+    });
+    return { sql, warnings };
+  }
   const from = getStringArg(args[0]);
   const to = getStringArg(args[1]);
   if (from && to) {
@@ -294,6 +354,7 @@ function transpileRenameTable(args: TSNode[], filePath: string): TranspileResult
       line: args[0].loc?.start?.line ?? 0,
       column: args[0].loc?.start?.column ?? 0,
       message: 'Dynamic table name in renameTable: cannot statically analyze',
+      unanalyzable: true,
     });
   }
 
