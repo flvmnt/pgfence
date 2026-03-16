@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.4.1 (2026-03-16)
+
+### Trust Contract
+
+- **Transpiler silent failures eliminated**: 18 early-return paths in Knex (6) and Sequelize (12) transpilers that silently dropped migration statements now emit `ExtractionWarning` with descriptive messages. Previously, a `knex.schema.dropTable()` with a dynamic argument would vanish from analysis entirely.
+- **Plugin crashes surfaced in structured output**: plugin rule/policy errors now appear as `ExtractionWarning` entries in JSON, GitHub, and SARIF output (not just stderr). A crashing custom plugin no longer silently passes CI.
+- **Coverage calculation fixed**: added `unanalyzable` flag to `ExtractionWarning` to distinguish truly unanalyzable statements (dynamic SQL, transpile failures) from informational warnings (builder API detection, conditional SQL advisories). Coverage percentage now accurately reflects what was and was not analyzed.
+
+### Bug Fixes
+
+- **Trace mode DB connection leak**: `traceClient` and `observerClient` are now closed in the `finally` block. Previously, if any error was thrown between connect and end, both connections leaked and the container could hang.
+- **Policy ignore bleed**: `fileIgnoredRules` now only reads from the first statement's `ignoredRules` (file-level comments), not from every statement. A `pgfence-ignore` comment on a DDL statement in the middle of the file no longer suppresses file-level policy checks.
+- **`lock-timeout-after-dangerous-statement` now suppressible**: consistent with all other policy violations, this rule can now be suppressed via `-- pgfence-ignore`.
+- **Stale `adjustedRisk` in trace-merge**: mismatch results now explicitly clear `adjustedRisk` so downstream code uses the recalculated risk, not the stale DB-size-adjusted value from static analysis.
+- **NaN guard on timeout CLI options**: `--max-lock-timeout` and `--max-statement-timeout` now throw a descriptive error on non-numeric values instead of silently disabling threshold checks.
+- **Stats file error context**: malformed `--stats-file` now shows the file path and specific parse error.
+- **package.json error context**: includes the actual error message and file path.
+
+### LSP Fixes
+
+- Format auto-detection failure now emits an `ExtractionWarning` instead of silently falling back to raw SQL
+- Analysis crash now clears stale diagnostics (previously, old "safe" diagnostics would persist after a crash)
+- Configuration fetch errors are now logged for non-capability errors (was a bare catch swallowing everything)
+
+### Comment Accuracy
+
+- Fixed 11 stale/inaccurate comments across rule files: REINDEX TABLE lock mode (SHARE, not ACCESS EXCLUSIVE), ATTACH PARTITION PG12+ behavior, ALTER TYPE ADD VALUE type-object lock clarification, DROP CONSTRAINT added to destructive header, policy.ts state machine description, analyze-text.ts temp-file comment, alter-column.ts text conversion accuracy, best-practices.ts varchar widening note, cloud-hooks.ts "open-source mode" clarification, add-column.ts non-constant default description, add-constraint.ts VALIDATE lock description
+- `db-stats.ts`: descriptive connection error messages
+- `transaction-state.ts`: accurate depth tracking JSDoc
+- `diagnostics.ts`: UTF-8 multi-byte character note
+- `alter-column.ts`: accurate `classifyTypeChange` JSDoc
+
+### Tests
+
+- 393 tests (was 371 in 0.4.0)
+- 10 new SARIF reporter tests (was zero coverage)
+- DROP SCHEMA, DROP SCHEMA CASCADE, DROP CONSTRAINT tests with fixtures
+- 6 `adjustRisk` boundary condition tests (exact thresholds: 9,999 vs 10,000, etc.)
+- REFRESH MATERIALIZED VIEW WITH NO DATA test
+- 2 coverage calculation tests verifying informational warnings do not deflate coverage
+
 ## 0.4.0 (2026-03-14)
 
 ### Trace Mode (new)
