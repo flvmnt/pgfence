@@ -378,6 +378,7 @@ export function mergeTraceWithStatic(
             ...check,
             verification: 'mismatch',
             risk: effectiveRisk,
+            adjustedRisk: undefined,
             tracedLockMode: strongest,
             tracedLocksAll: tracedLocks,
             tableRewrite,

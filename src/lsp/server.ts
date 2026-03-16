@@ -144,6 +144,7 @@ export function createServer(conn: Connection) {
       connection.sendDiagnostics({ uri, diagnostics, version });
     } catch (err) {
       connection.console.error(`pgfence analysis failed for ${uri}: ${err}`);
+      connection.sendDiagnostics({ uri, diagnostics: [] });
     }
   }
 
@@ -193,8 +194,13 @@ export function createServer(conn: Connection) {
         if (typeof items.requireLockTimeout === 'boolean') serverConfig.requireLockTimeout = items.requireLockTimeout;
         if (typeof items.requireStatementTimeout === 'boolean') serverConfig.requireStatementTimeout = items.requireStatementTimeout;
       }
-    } catch {
+    } catch (err) {
       // Client may not support workspace/configuration (e.g. minimal Neovim/Helix LSP configs)
+      // Log non-capability errors so they're not completely invisible
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes('not supported') && !message.includes('Unhandled method')) {
+        connection.console.warn(`pgfence: failed to read configuration: ${message}`);
+      }
     }
     for (const doc of documents.all()) {
       scheduleAnalysis(doc.uri);

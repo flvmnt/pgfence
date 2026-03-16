@@ -12,7 +12,7 @@
  * 8. Multiple statements after ACCESS EXCLUSIVE lock (compounding danger)
  * 9. Timeout value validation (lock_timeout > threshold = warning)
  *
- * Transaction tracking uses a depth counter (not boolean) for nested BEGIN/COMMIT.
+ * Transaction tracking uses a state machine (from transaction-state.ts) that handles savepoints, lock accumulation, and wide-lock-window detection.
  */
 
 import type { ParsedStatement } from '../parser.js';
@@ -290,24 +290,23 @@ export function checkPolicies(
     }
   }
 
+  // Collect file-level ignored rules from the first statement's preceding comments
+  const fileIgnoredRules = new Set<string>();
+  if (stmts.length > 0 && stmts[0].ignoredRules) {
+    for (const rule of stmts[0].ignoredRules) {
+      fileIgnoredRules.add(rule);
+    }
+  }
+
   // Gap 2: lock_timeout ordering validation
-  if (lockTimeoutIndex >= 0 && firstDangerousIndex >= 0 && firstDangerousIndex < lockTimeoutIndex) {
+  if (lockTimeoutIndex >= 0 && firstDangerousIndex >= 0 && firstDangerousIndex < lockTimeoutIndex
+    && !fileIgnoredRules.has('lock-timeout-after-dangerous-statement') && !fileIgnoredRules.has('*')) {
     violations.push({
       ruleId: 'lock-timeout-after-dangerous-statement',
       message: `SET lock_timeout appears AFTER the first ACCESS EXCLUSIVE statement ("${firstDangerousSql}"): the dangerous DDL runs without timeout protection`,
       suggestion: "Move SET lock_timeout = '2s'; to the very start of the migration, before any DDL statements",
       severity: 'error',
     });
-  }
-
-  // Collect file-level ignored rules from the first statement's preceding comments
-  const fileIgnoredRules = new Set<string>();
-  for (const stmt of stmts) {
-    if (stmt.ignoredRules) {
-      for (const rule of stmt.ignoredRules) {
-        fileIgnoredRules.add(rule);
-      }
-    }
   }
 
   // Check required policies
