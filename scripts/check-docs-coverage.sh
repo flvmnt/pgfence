@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Checks that every rule in src/rules/ has a corresponding entry in tracked docs
-# plus the main README. If the private website docs checkout exists locally, it is
-# included as an extra source, but public CI does not depend on it.
+# plus the main README. Local-only website docs may be included explicitly, but
+# CI and pre-push should pass against tracked files alone.
 #
 set -euo pipefail
 
@@ -13,7 +13,14 @@ EXIT_CODE=0
 DOC_TARGETS=()
 
 is_tracked_path() {
-  git ls-files -- "$1" | grep -q .
+  local candidate="$1"
+
+  if [ -d "$candidate" ]; then
+    git ls-files | grep -Fq "$candidate/"
+    return
+  fi
+
+  git ls-files -- "$candidate" | grep -q .
 }
 
 add_doc_target() {
@@ -28,7 +35,7 @@ add_doc_target() {
     return
   fi
 
-  if [[ "$candidate" == website/* ]]; then
+  if [[ "${PGFENCE_INCLUDE_LOCAL_DOCS:-0}" == "1" && "$candidate" == website/* ]]; then
     DOC_TARGETS+=("$candidate")
   fi
 }
@@ -37,6 +44,7 @@ echo "Checking docs coverage for pgfence rules..."
 echo ""
 
 add_doc_target "CHANGELOG.md"
+add_doc_target "checks-overview.md"
 add_doc_target "proof-points.md"
 add_doc_target "blog"
 add_doc_target "docs"

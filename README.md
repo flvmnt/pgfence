@@ -49,6 +49,7 @@ Works with **raw SQL**, **TypeORM**, **Prisma**, **Knex**, **Drizzle**, and **Se
 - GitLab Code Quality output is shipped in the repo, with reporter tests covering repeated findings, extraction warnings, and coverage visibility.
 - The public changelog records major shipped surfaces such as GitHub PR comments, SARIF, LSP, and trace mode.
 - The evidence trail lives in [proof-points.md](proof-points.md), which separates repo-backed proof from external references.
+- The tracked rule-family reference lives in [checks-overview.md](checks-overview.md), and the concrete risky-migration walkthrough lives in [examples/pr-review-demo](examples/pr-review-demo/README.md).
 
 ## Quick Demo
 

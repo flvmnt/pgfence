@@ -1,0 +1,217 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "pgfence",
+          "informationUri": "https://pgfence.com",
+          "rules": [
+            {
+              "id": "add-column-non-constant-default",
+              "name": "AddColumnNonConstantDefault",
+              "shortDescription": {
+                "text": "ADD COLUMN \"last_seen_at\" with non-constant DEFAULT: causes table rewrite under ACCESS EXCLUSIVE lock. Column is also NOT NULL, requiring an additional constraint step"
+              },
+              "helpUri": "https://pgfence.com/docs/checks/lock-safety",
+              "properties": {
+                "tags": [
+                  "postgres",
+                  "migration",
+                  "locks"
+                ]
+              }
+            },
+            {
+              "id": "create-index-not-concurrent",
+              "name": "CreateIndexNotConcurrent",
+              "shortDescription": {
+                "text": "CREATE INDEX \"idx_users_last_seen_at\" without CONCURRENTLY: acquires SHARE lock, blocking all writes on \"users\""
+              },
+              "helpUri": "https://pgfence.com/docs/checks/lock-safety",
+              "properties": {
+                "tags": [
+                  "postgres",
+                  "migration",
+                  "locks"
+                ]
+              }
+            },
+            {
+              "id": "policy-missing-lock-timeout",
+              "name": "PolicyMissingLockTimeout",
+              "shortDescription": {
+                "text": "Missing SET lock_timeout: without this, an ACCESS EXCLUSIVE lock will queue behind running queries and every new query queues behind it, causing a lock queue death spiral"
+              },
+              "helpUri": "https://pgfence.com/docs/checks/policy",
+              "properties": {
+                "tags": [
+                  "postgres",
+                  "migration",
+                  "policy"
+                ]
+              }
+            },
+            {
+              "id": "policy-missing-statement-timeout",
+              "name": "PolicyMissingStatementTimeout",
+              "shortDescription": {
+                "text": "Missing SET statement_timeout: long-running operations can block other queries indefinitely"
+              },
+              "helpUri": "https://pgfence.com/docs/checks/policy",
+              "properties": {
+                "tags": [
+                  "postgres",
+                  "migration",
+                  "policy"
+                ]
+              }
+            },
+            {
+              "id": "policy-missing-application-name",
+              "name": "PolicyMissingApplicationName",
+              "shortDescription": {
+                "text": "Missing SET application_name: makes it harder to identify migration locks in pg_stat_activity"
+              },
+              "helpUri": "https://pgfence.com/docs/checks/policy",
+              "properties": {
+                "tags": [
+                  "postgres",
+                  "migration",
+                  "policy"
+                ]
+              }
+            },
+            {
+              "id": "policy-missing-idle-timeout",
+              "name": "PolicyMissingIdleTimeout",
+              "shortDescription": {
+                "text": "Missing SET idle_in_transaction_session_timeout: orphaned connections with open transactions can hold locks indefinitely"
+              },
+              "helpUri": "https://pgfence.com/docs/checks/policy",
+              "properties": {
+                "tags": [
+                  "postgres",
+                  "migration",
+                  "policy"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "add-column-non-constant-default",
+          "level": "error",
+          "message": {
+            "text": "ADD COLUMN \"last_seen_at\" with non-constant DEFAULT: causes table rewrite under ACCESS EXCLUSIVE lock. Column is also NOT NULL, requiring an additional constraint step Safe rewrite: Add column without default, backfill in batches, then set default"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/pr-review-demo/migrations/20260415_add_last_seen_at.sql",
+                  "uriBaseId": "%SRCROOT%"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "create-index-not-concurrent",
+          "level": "warning",
+          "message": {
+            "text": "CREATE INDEX \"idx_users_last_seen_at\" without CONCURRENTLY: acquires SHARE lock, blocking all writes on \"users\" Safe rewrite: Use CREATE INDEX CONCURRENTLY to allow reads and writes during index build."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/pr-review-demo/migrations/20260415_add_last_seen_at.sql",
+                  "uriBaseId": "%SRCROOT%"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "policy-missing-lock-timeout",
+          "level": "error",
+          "message": {
+            "text": "Missing SET lock_timeout: without this, an ACCESS EXCLUSIVE lock will queue behind running queries and every new query queues behind it, causing a lock queue death spiral Fix: Add SET lock_timeout = '2s'; at the start of the migration"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/pr-review-demo/migrations/20260415_add_last_seen_at.sql",
+                  "uriBaseId": "%SRCROOT%"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "policy-missing-statement-timeout",
+          "level": "warning",
+          "message": {
+            "text": "Missing SET statement_timeout: long-running operations can block other queries indefinitely Fix: Add SET statement_timeout = '5min'; at the start of the migration"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/pr-review-demo/migrations/20260415_add_last_seen_at.sql",
+                  "uriBaseId": "%SRCROOT%"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "policy-missing-application-name",
+          "level": "warning",
+          "message": {
+            "text": "Missing SET application_name: makes it harder to identify migration locks in pg_stat_activity Fix: Add SET application_name = 'migrate:<migration_name>';"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/pr-review-demo/migrations/20260415_add_last_seen_at.sql",
+                  "uriBaseId": "%SRCROOT%"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "policy-missing-idle-timeout",
+          "level": "warning",
+          "message": {
+            "text": "Missing SET idle_in_transaction_session_timeout: orphaned connections with open transactions can hold locks indefinitely Fix: Add SET idle_in_transaction_session_timeout = '30s';"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "examples/pr-review-demo/migrations/20260415_add_last_seen_at.sql",
+                  "uriBaseId": "%SRCROOT%"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "properties": {
+        "coverageSummary": {
+          "totalStatements": 2,
+          "dynamicStatements": 0,
+          "coveragePercent": 100
+        }
+      }
+    }
+  ]
+}
