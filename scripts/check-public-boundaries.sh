@@ -39,7 +39,15 @@ fi
 PACK_JSON=$(npm pack --dry-run --json)
 
 PACK_JSON="$PACK_JSON" node <<'NODE'
-const pack = JSON.parse(process.env.PACK_JSON ?? '[]');
+function parsePackJson(raw) {
+  const jsonStart = raw.search(/\[\s*{/s);
+  if (jsonStart === -1) {
+    throw new Error('npm pack --json did not emit a JSON payload');
+  }
+  return JSON.parse(raw.slice(jsonStart));
+}
+
+const pack = parsePackJson(process.env.PACK_JSON ?? '[]');
 const files = pack.flatMap((entry) => entry.files ?? []).map((file) => file.path);
 const forbidden = files.filter((file) => /^(src\/cloud\/|src\/agent\/|dist\/cloud\/|dist\/agent\/|tests\/cloud\/)/.test(file));
 if (forbidden.length > 0) {

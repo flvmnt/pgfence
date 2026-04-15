@@ -24,15 +24,21 @@ function buildSourcePathForArtifact(filePath: string): string {
     .replace(/\.js$/, '.ts');
 }
 
+function parsePackJson(rawPackJson: string): Array<{ files?: Array<{ path: string }> }> {
+  const jsonStart = rawPackJson.search(/\[\s*{/s);
+  if (jsonStart === -1) {
+    throw new Error('npm pack --json did not emit a JSON payload');
+  }
+  return JSON.parse(rawPackJson.slice(jsonStart)) as Array<{ files?: Array<{ path: string }> }>;
+}
+
 describe('package surface', () => {
   it('only ships dist artifacts backed by tracked public source files', () => {
     const packJson = execFileSync('npm', ['pack', '--dry-run', '--json'], {
       cwd: process.cwd(),
       encoding: 'utf8',
     });
-    const pack = JSON.parse(packJson) as Array<{
-      files?: Array<{ path: string }>;
-    }>;
+    const pack = parsePackJson(packJson);
     const files = pack.flatMap((entry) => entry.files ?? []).map((file) => file.path);
 
     const trackedSources = listTrackedSourceFiles();
