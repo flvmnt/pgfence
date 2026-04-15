@@ -17,6 +17,8 @@ import type { ParsedStatement } from '../parser.js';
 import type { CheckResult, PgfenceConfig } from '../types.js';
 import { LockMode, RiskLevel, getBlockedOperations } from '../types.js';
 import { makePreview } from '../parser.js';
+import type { SchemaLookup } from '../schema-snapshot.js';
+import { getRelationKey } from '../table-ref.js';
 
 interface TypeNameNode {
   names?: Array<{ String?: { sval: string } }>;
@@ -77,17 +79,36 @@ function extractTargetType(def: AlterTableCmd['AlterTableCmd']['def']): TargetTy
  *   we cannot verify without schema info)
  * - Everything else: HIGH (potential table rewrite)
  */
+interface SourceColumn {
+  dataType: string;
+  udtName: string;
+  characterMaximumLength: number | null;
+  numericPrecision: number | null;
+  numericScale: number | null;
+}
+
 interface TypeClassification {
   risk: RiskLevel;
   message: string;
 }
 
-function classifyTypeChange(target: TargetType | null): TypeClassification | null {
+const TEXT_FAMILY_TYPES = new Set(['text', 'varchar', 'bpchar']);
+
+function classifyTypeChange(target: TargetType | null, sourceColumn?: SourceColumn | null): TypeClassification | null {
   if (!target) return null;
 
   const { name, modifier } = target;
+  const sourceType = sourceColumn?.udtName.toLowerCase() ?? null;
+  const sourceIsTextFamily = sourceType ? TEXT_FAMILY_TYPES.has(sourceType) : false;
+  const sourceTypeLabel = sourceColumn?.dataType ?? null;
 
   if (name === 'text') {
+    if (sourceColumn && !sourceIsTextFamily) {
+      return {
+        risk: RiskLevel.HIGH,
+        message: `TYPE text: rewrites the table when the current type is ${sourceTypeLabel}`,
+      };
+    }
     return {
       risk: RiskLevel.LOW,
       message: 'metadata-only type change (target is text, no table rewrite)',
@@ -95,6 +116,12 @@ function classifyTypeChange(target: TargetType | null): TypeClassification | nul
   }
 
   if (name === 'varchar' && modifier === null) {
+    if (sourceColumn && !sourceIsTextFamily) {
+      return {
+        risk: RiskLevel.HIGH,
+        message: `TYPE varchar: rewrites the table when the current type is ${sourceTypeLabel}`,
+      };
+    }
     return {
       risk: RiskLevel.LOW,
       message: 'metadata-only type change (removing varchar length constraint, no table rewrite)',
@@ -102,6 +129,20 @@ function classifyTypeChange(target: TargetType | null): TypeClassification | nul
   }
 
   if (name === 'varchar' && modifier !== null) {
+    if (sourceColumn) {
+      if (!sourceIsTextFamily) {
+        return {
+          risk: RiskLevel.HIGH,
+          message: `TYPE varchar(${modifier}): rewrites the table when the current type is ${sourceTypeLabel}`,
+        };
+      }
+      if (sourceColumn.characterMaximumLength !== null && sourceColumn.characterMaximumLength <= modifier) {
+        return {
+          risk: RiskLevel.MEDIUM,
+          message: `TYPE varchar(${modifier}), safe if widening from varchar(${sourceColumn.characterMaximumLength}), but requires schema to verify. Narrowing causes a table rewrite.`,
+        };
+      }
+    }
     return {
       risk: RiskLevel.MEDIUM,
       message: `TYPE varchar(${modifier}), safe if widening (increasing length), but requires schema to verify. Narrowing causes a table rewrite.`,
@@ -109,6 +150,12 @@ function classifyTypeChange(target: TargetType | null): TypeClassification | nul
   }
 
   if (name === 'numeric' && modifier !== null) {
+    if (sourceColumn && sourceType !== 'numeric') {
+      return {
+        risk: RiskLevel.HIGH,
+        message: `TYPE numeric: rewrites the table when the current type is ${sourceTypeLabel}`,
+      };
+    }
     return {
       risk: RiskLevel.MEDIUM,
       message: `TYPE numeric, safe if widening precision, but requires schema to verify. Narrowing causes a table rewrite.`,
@@ -121,6 +168,7 @@ function classifyTypeChange(target: TargetType | null): TypeClassification | nul
 export function checkAlterColumn(
   stmt: ParsedStatement,
   _config: PgfenceConfig,
+  schemaLookup?: SchemaLookup,
 ): CheckResult[] {
   if (stmt.nodeType !== 'AlterTableStmt') return [];
 
@@ -131,6 +179,7 @@ export function checkAlterColumn(
 
   const results: CheckResult[] = [];
   const tableName = node.relation?.relname ?? null;
+  const tableKey = getRelationKey(node.relation ?? null);
 
   for (const cmd of node.cmds ?? []) {
     const c = cmd.AlterTableCmd;
@@ -138,19 +187,44 @@ export function checkAlterColumn(
     if (c.subtype === 'AT_AlterColumnType') {
       const colName = c.name ?? '<unknown>';
       const target = extractTargetType(c.def);
-      const classification = classifyTypeChange(target);
+      const sourceColumn = schemaLookup && tableKey
+        ? schemaLookup.getColumn(tableKey, colName)
+        : null;
+      const classification = classifyTypeChange(target, sourceColumn ? {
+        dataType: sourceColumn.dataType,
+        udtName: sourceColumn.udtName,
+        characterMaximumLength: sourceColumn.characterMaximumLength,
+        numericPrecision: sourceColumn.numericPrecision,
+        numericScale: sourceColumn.numericScale,
+      } : null);
 
-      if (classification && classification.risk !== RiskLevel.HIGH) {
-        const safeRewrite = classification.risk === RiskLevel.MEDIUM
-          ? {
-              description: 'Verify this is a widening change (increasing length/precision). Narrowing requires expand/contract.',
-              steps: [
-                `-- Confirm the current type of "${colName}" is narrower than the target.`,
-                `-- If widening: this ALTER is metadata-only and safe.`,
-                `-- If narrowing: use the expand/contract pattern instead.`,
-              ],
-            }
-          : undefined;
+      if (classification) {
+        let safeRewrite;
+        if (classification.risk === RiskLevel.MEDIUM) {
+          safeRewrite = {
+            description: 'Verify this is a widening change (increasing length/precision). Narrowing requires expand/contract.',
+            steps: [
+              `-- Confirm the current type of "${colName}" is narrower than the target.`,
+              `-- If widening: this ALTER is metadata-only and safe.`,
+              `-- If narrowing: use the expand/contract pattern instead.`,
+            ],
+          };
+        } else if (classification.risk === RiskLevel.HIGH) {
+          safeRewrite = {
+            description: 'Use expand/contract pattern: add new column, backfill, swap',
+            steps: [
+              `-- 1. Add new column with target type`,
+              `ALTER TABLE ${tableName} ADD COLUMN ${colName}_new <new_type>;`,
+              `-- 2. Backfill out-of-band in batches (repeat until 0 rows updated):`,
+              `-- WITH batch AS (`,
+              `--   SELECT ctid FROM ${tableName} WHERE ${colName}_new IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED`,
+              `-- )`,
+              `-- UPDATE ${tableName} t SET ${colName}_new = ${colName}::<new_type> FROM batch WHERE t.ctid = batch.ctid;`,
+              `-- 3. Swap columns (application-level)`,
+              `-- 4. Drop old column after verification`,
+            ],
+          };
+        }
 
         results.push({
           statement: stmt.sql,
@@ -212,6 +286,29 @@ export function checkAlterColumn(
             `-- Migration 3: the validated CHECK allows PostgreSQL to skip the full table scan`,
             `ALTER TABLE ${tableName} ALTER COLUMN ${colName} SET NOT NULL;`,
             `ALTER TABLE ${tableName} DROP CONSTRAINT chk_${colName}_nn;`,
+          ],
+        },
+      });
+    }
+
+    if (c.subtype === 'AT_DropNotNull') {
+      const colName = c.name ?? '<unknown>';
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.LOW,
+        message: `ALTER COLUMN "${colName}" DROP NOT NULL: takes ACCESS EXCLUSIVE lock but is instant (metadata-only on Postgres 9+, no table scan or rewrite)`,
+        ruleId: 'drop-not-null',
+        safeRewrite: {
+          description: 'Instant on Postgres 9+. The ACCESS EXCLUSIVE lock is brief (metadata-only). No table rewrite occurs.',
+          steps: [
+            `-- This operation is already as safe as it can be.`,
+            `-- Set lock_timeout to bound worst-case wait time.`,
+            `SET lock_timeout = '2s';`,
+            `ALTER TABLE ${tableName} ALTER COLUMN ${colName} DROP NOT NULL;`,
           ],
         },
       });

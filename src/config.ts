@@ -1,5 +1,6 @@
 /**
- * Load .pgfence.toml (or .pgfence.json) from cwd or ancestor dirs and merge with CLI options.
+ * Load .pgfence.toml (or .pgfence.json) from the current working directory
+ * and merge with CLI options.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -25,17 +26,6 @@ export interface PgfenceConfigFile {
   plugins?: string[];
 }
 
-function findConfigDir(startDir: string): string | null {
-  let dir = path.resolve(startDir);
-  for (; ;) {
-    if (existsSync(path.join(dir, '.pgfence.toml'))) return dir;
-    if (existsSync(path.join(dir, '.pgfence.json'))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
-
 async function loadToml(configPath: string): Promise<PgfenceConfigFile> {
   const mod = await import('@iarna/toml');
   const parse = mod.parse ?? (mod.default as { parse?: (s: string) => PgfenceConfigFile })?.parse;
@@ -56,12 +46,11 @@ async function loadJson(configPath: string): Promise<PgfenceConfigFile> {
 }
 
 /**
- * Load config from .pgfence.toml or .pgfence.json in cwd or any parent.
+ * Load config from .pgfence.toml or .pgfence.json in cwd only.
  * Returns null if no file found.
  */
 export async function loadConfigFile(cwd: string): Promise<PgfenceConfigFile | null> {
-  const configDir = findConfigDir(cwd);
-  if (!configDir) return null;
+  const configDir = path.resolve(cwd);
   const tomlPath = path.join(configDir, '.pgfence.toml');
   const jsonPath = path.join(configDir, '.pgfence.json');
   if (existsSync(tomlPath)) {

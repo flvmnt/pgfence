@@ -17,6 +17,31 @@ import type { CodeActionParams } from 'vscode-languageserver';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { AnalyzeTextResult } from './analyze-text.js';
 import { offsetToPosition } from './diagnostics.js';
+import type { SafeRewrite } from '../types.js';
+
+function isExecutableSafeRewrite(safeRewrite: SafeRewrite): boolean {
+  let hasExecutableStep = false;
+
+  for (const step of safeRewrite.steps) {
+    for (const line of step.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      // Placeholder-heavy steps are guidance, not runnable edits.
+      if (/[<][^>]+[>]/.test(trimmed)) return false;
+      if (/\.\.\./.test(trimmed)) return false;
+
+      // Comment-only lines are fine in hover text, but they should not be
+      // turned into executable quick fixes unless there is at least one real
+      // SQL/edit line in the rewrite.
+      if (trimmed.startsWith('--')) continue;
+
+      hasExecutableStep = true;
+    }
+  }
+
+  return hasExecutableStep;
+}
 
 /**
  * Generate code actions for diagnostics in the requested range.
@@ -51,7 +76,7 @@ export function getCodeActions(
       if (endPos.line < requestRange.start.line || startPos.line > requestRange.end.line) continue;
 
       // 1. Safe rewrite quick fix
-      if (check.safeRewrite) {
+      if (check.safeRewrite && isExecutableSafeRewrite(check.safeRewrite)) {
         const safeRewriteSteps = check.safeRewrite.steps.join('\n') + '\n';
         const editRange = Range.create(startPos, endPos);
 

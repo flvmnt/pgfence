@@ -108,9 +108,13 @@ describe('pgfence analyzer', () => {
     );
     expect(highOrCritical).toHaveLength(0);
 
+    expect(results[0].maxRisk).toBe(RiskLevel.LOW);
+
     // No error-severity policy violations
     const errorPolicies = results[0].policyViolations.filter((v) => v.severity === 'error');
     expect(errorPolicies).toHaveLength(0);
+
+    expect(results[0].policyViolations.find((v) => v.ruleId === 'pg14-index-concurrent-bug')).toBeUndefined();
   });
 
   it('should detect missing lock_timeout as policy violation', async () => {
@@ -128,6 +132,28 @@ describe('pgfence analyzer', () => {
 
     const stmtTimeout = violations.find((v) => v.ruleId === 'missing-statement-timeout');
     expect(stmtTimeout).toBeDefined();
+  });
+
+  it('should clear policy compliance when RESET or DEFAULT is used', async () => {
+    const sql = `SET lock_timeout = '2s';
+RESET lock_timeout;
+SET statement_timeout = '5min';
+SET statement_timeout = DEFAULT;
+SET application_name = 'migrate:reset-test';
+RESET application_name;
+SET idle_in_transaction_session_timeout = '30s';
+SET idle_in_transaction_session_timeout = DEFAULT;
+ALTER TABLE users ADD COLUMN x int;`;
+    const tmpFile = '/tmp/pgfence-policy-reset-default.sql';
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(tmpFile, sql, 'utf8');
+    const results = await analyze([tmpFile], defaultConfig);
+    const violations = results[0].policyViolations;
+
+    expect(violations.find((v) => v.ruleId === 'missing-lock-timeout')).toBeDefined();
+    expect(violations.find((v) => v.ruleId === 'missing-statement-timeout')).toBeDefined();
+    expect(violations.find((v) => v.ruleId === 'missing-application-name')).toBeDefined();
+    expect(violations.find((v) => v.ruleId === 'missing-idle-timeout')).toBeDefined();
   });
 
   it('should detect CREATE INDEX CONCURRENTLY inside transaction', async () => {
@@ -295,6 +321,14 @@ describe('pgfence analyzer', () => {
     expect(deleteCheck!.risk).toBe(RiskLevel.HIGH);
     expect(deleteCheck!.lockMode).toBe(LockMode.ROW_EXCLUSIVE);
     expect(deleteCheck!.tableName).toBe('audit_log');
+  });
+
+  it('should detect tautological DELETE predicates as destructive', async () => {
+    const results = await analyze([fixture('delete-tautologies.sql')], defaultConfig);
+    const checks = results[0].checks.filter((c) => c.ruleId === 'delete-without-where');
+
+    expect(checks).toHaveLength(3);
+    expect(checks.every((c) => c.tableName === 'audit_log')).toBe(true);
   });
 
   it('should detect VACUUM FULL as HIGH risk', async () => {
@@ -507,6 +541,24 @@ DROP TABLE old_data;`;
     expect(lockChecks).toHaveLength(0);
   });
 
+  it('should stop suppressing once a newly-created table receives DML', async () => {
+    const results = await analyze([fixture('new-table-after-dml.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const notNullCheck = checks.find((c) => c.ruleId === 'add-column-not-null-no-default');
+    expect(notNullCheck).toBeDefined();
+    expect(notNullCheck!.tableName).toBe('fresh_table');
+  });
+
+  it('should not suppress checks across schema-qualified table names', async () => {
+    const results = await analyze([fixture('new-table-schema-collision.sql')], defaultConfig);
+    const checks = results[0].checks;
+
+    const notNullCheck = checks.find((c) => c.ruleId === 'add-column-not-null-no-default');
+    expect(notNullCheck).toBeDefined();
+    expect(notNullCheck!.tableName).toBe('shared');
+  });
+
   // --- P1: ADD COLUMN json ---
 
   it('should detect ADD COLUMN with json type and suggest jsonb', async () => {
@@ -649,6 +701,18 @@ DROP TABLE old_data;`;
     expect(highRisk).toHaveLength(1);
     expect(highRisk[0].message).toContain('rewrites the entire table');
     expect(highRisk[0].safeRewrite).toBeDefined();
+  });
+
+  it('should use schema snapshot data for ALTER COLUMN TYPE classification', async () => {
+    const results = await analyze([fixture('snapshot-alter-column.sql')], {
+      ...defaultConfig,
+      snapshotFile: fixture('pgfence-snapshot-sample.json'),
+    });
+    const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
+
+    const snapshotCheck = checks.find((c) => c.message.includes('current type is bigint'));
+    expect(snapshotCheck).toBeDefined();
+    expect(snapshotCheck!.risk).toBe(RiskLevel.HIGH);
   });
 
   // --- FP #2: UNIQUE/PK USING INDEX should be LOW risk ---
@@ -1227,6 +1291,34 @@ describe('SchemaSnapshot', () => {
     expect(col!.udtName).toBe('varchar');
   });
 
+  it('should keep schema-qualified snapshot lookups unambiguous', () => {
+    const snapshot: SchemaSnapshot = {
+      version: 1,
+      generatedAt: '2025-01-01T00:00:00.000Z',
+      tables: [
+        {
+          schemaName: 'public',
+          tableName: 'users',
+          columns: [],
+          constraints: [],
+          indexes: [],
+        },
+        {
+          schemaName: 'archive',
+          tableName: 'users',
+          columns: [],
+          constraints: [],
+          indexes: [],
+        },
+      ],
+    };
+
+    const lookup = loadSnapshot(snapshot);
+    expect(lookup.getTable('public.users')).toBeDefined();
+    expect(lookup.getTable('archive.users')).toBeDefined();
+    expect(lookup.getTable('users')).toBeNull();
+  });
+
   it('should support case-insensitive lookups', () => {
     const snapshot: SchemaSnapshot = {
       version: 1,
@@ -1470,5 +1562,208 @@ describe('Plugin system', () => {
     // Clean up
     const { unlink } = await import('node:fs/promises');
     await unlink(badPlugin);
+  });
+
+  // --- drop-not-null ---
+
+  it('should detect ALTER COLUMN DROP NOT NULL as LOW risk with ACCESS EXCLUSIVE', async () => {
+    const results = await analyze(
+      [fixture('drop-not-null.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    expect(results).toHaveLength(1);
+    const check = results[0].checks.find((c) => c.ruleId === 'drop-not-null');
+    expect(check).toBeDefined();
+    expect(check!.risk).toBe(RiskLevel.LOW);
+    expect(check!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(check!.tableName).toBe('appointments');
+    expect(check!.blocks.reads).toBe(true);
+    expect(check!.blocks.writes).toBe(true);
+    expect(check!.safeRewrite).toBeDefined();
+  });
+
+  it('should NOT fire statement-after-access-exclusive for DROP NOT NULL (instant operation)', async () => {
+    const results = await analyze(
+      [fixture('drop-not-null.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    const compounding = results[0].policyViolations.find((v) => v.ruleId === 'statement-after-access-exclusive');
+    expect(compounding).toBeUndefined();
+  });
+
+  // --- rename-schema ---
+
+  it('should detect RENAME SCHEMA as HIGH risk with ACCESS EXCLUSIVE', async () => {
+    const results = await analyze(
+      [fixture('rename-schema.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    expect(results).toHaveLength(1);
+    const check = results[0].checks.find((c) => c.ruleId === 'rename-schema');
+    expect(check).toBeDefined();
+    expect(check!.risk).toBe(RiskLevel.HIGH);
+    expect(check!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(check!.tableName).toBeNull();
+    expect(check!.message).toContain('myschema');
+    expect(check!.message).toContain('newschema');
+    expect(check!.safeRewrite).toBeDefined();
+  });
+
+  it('should NOT fire rename-schema on RENAME COLUMN', async () => {
+    const results = await analyze([fixture('dangerous-rename-column.sql')], defaultConfig);
+    expect(results[0].checks.find((c) => c.ruleId === 'rename-schema')).toBeUndefined();
+  });
+
+  it('should NOT fire rename-schema on RENAME TABLE', async () => {
+    const results = await analyze(
+      [fixture('rename-table.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    expect(results[0].checks.find((c) => c.ruleId === 'rename-schema')).toBeUndefined();
+  });
+
+  // --- fk-missing-index ---
+
+  it('should warn about missing FK index even when NOT VALID is used', async () => {
+    const results = await analyze(
+      [fixture('fk-not-valid-missing-index.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    const checks = results[0].checks;
+    expect(checks.find((c) => c.ruleId === 'add-constraint-fk-no-not-valid')).toBeUndefined();
+    const indexCheck = checks.find((c) => c.ruleId === 'fk-missing-index');
+    expect(indexCheck).toBeDefined();
+    expect(indexCheck!.risk).toBe(RiskLevel.LOW);
+    expect(indexCheck!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
+    expect(indexCheck!.message).toContain('user_id');
+    expect(indexCheck!.safeRewrite).toBeDefined();
+    expect(indexCheck!.safeRewrite!.steps[0]).toContain('CREATE INDEX CONCURRENTLY');
+  });
+
+  it('should fire both fk-missing-index and add-constraint-fk-no-not-valid for FK without NOT VALID', async () => {
+    const results = await analyze(
+      [fixture('dangerous-constraint.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    const checks = results[0].checks;
+    expect(checks.find((c) => c.ruleId === 'add-constraint-fk-no-not-valid')).toBeDefined();
+    const indexCheck = checks.find((c) => c.ruleId === 'fk-missing-index');
+    expect(indexCheck).toBeDefined();
+    expect(indexCheck!.risk).toBe(RiskLevel.LOW);
+  });
+
+  it('fk-missing-index safeRewrite should suggest CREATE INDEX CONCURRENTLY', async () => {
+    const results = await analyze(
+      [fixture('fk-not-valid-missing-index.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    const check = results[0].checks.find((c) => c.ruleId === 'fk-missing-index');
+    expect(check).toBeDefined();
+    expect(check!.safeRewrite!.steps[0]).toMatch(/CREATE INDEX CONCURRENTLY/);
+  });
+
+  // --- unclosed-transaction ---
+
+  it('should warn when transaction is not committed', async () => {
+    const results = await analyze(
+      [fixture('unclosed-transaction.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    const unclosed = results[0].policyViolations.find((v) => v.ruleId === 'unclosed-transaction');
+    expect(unclosed).toBeDefined();
+    expect(unclosed!.severity).toBe('warning');
+    expect(unclosed!.suggestion).toContain('COMMIT');
+  });
+
+  it('should NOT warn unclosed-transaction when BEGIN has matching COMMIT', async () => {
+    // safe-policies.sql uses BEGIN ... COMMIT
+    const results = await analyze([fixture('safe-policies.sql')], defaultConfig);
+    expect(results[0].policyViolations.find((v) => v.ruleId === 'unclosed-transaction')).toBeUndefined();
+  });
+
+  it('should NOT warn unclosed-transaction when migration has no explicit transaction', async () => {
+    const results = await analyze(
+      [fixture('drop-not-null.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    expect(results[0].policyViolations.find((v) => v.ruleId === 'unclosed-transaction')).toBeUndefined();
+  });
+
+  it('should NOT warn unclosed-transaction when transaction is rolled back', async () => {
+    const { writeFile, unlink } = await import('node:fs/promises');
+    const tmpFile = path.join(FIXTURES, 'pgfence-rollback-tx-test.sql');
+    await writeFile(tmpFile, [
+      "SET lock_timeout = '2s';",
+      "SET statement_timeout = '5min';",
+      "SET application_name = 'migrate:rollback';",
+      "SET idle_in_transaction_session_timeout = '30s';",
+      'BEGIN;',
+      'ALTER TABLE appointments ALTER COLUMN status DROP NOT NULL;',
+      'ROLLBACK;',
+    ].join('\n'), 'utf8');
+    try {
+      const results = await analyze([tmpFile], defaultConfig);
+      expect(results[0].policyViolations.find((v) => v.ruleId === 'unclosed-transaction')).toBeUndefined();
+    } finally {
+      await unlink(tmpFile).catch(() => {});
+    }
+  });
+
+  // --- alter-enum-no-ordering ---
+
+  it('should emit alter-enum-no-ordering when no BEFORE/AFTER is specified', async () => {
+    const results = await analyze(
+      [fixture('enum-no-ordering.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    const check = results[0].checks.find((c) => c.ruleId === 'alter-enum-no-ordering');
+    expect(check).toBeDefined();
+    expect(check!.risk).toBe(RiskLevel.LOW);
+    expect(check!.message).toContain('END of the enum ordering');
+    expect(check!.message).toContain('permanent');
+    expect(check!.safeRewrite).toBeDefined();
+    expect(check!.safeRewrite!.description).toContain('BEFORE or AFTER');
+  });
+
+  it('should also emit alter-enum-add-value alongside alter-enum-no-ordering', async () => {
+    const results = await analyze(
+      [fixture('enum-no-ordering.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    const checks = results[0].checks;
+    expect(checks.find((c) => c.ruleId === 'alter-enum-add-value')).toBeDefined();
+    expect(checks.find((c) => c.ruleId === 'alter-enum-no-ordering')).toBeDefined();
+  });
+
+  it('should NOT emit alter-enum-no-ordering when AFTER is specified', async () => {
+    const results = await analyze(
+      [fixture('enum-with-ordering.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    );
+    expect(results[0].checks.find((c) => c.ruleId === 'alter-enum-no-ordering')).toBeUndefined();
+    expect(results[0].checks.find((c) => c.ruleId === 'alter-enum-add-value')).toBeDefined();
+  });
+
+  it('should fire alter-enum-no-ordering on both PG11 and PG14', async () => {
+    const pg11 = await analyze(
+      [fixture('enum-no-ordering.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false, minPostgresVersion: 11 },
+    );
+    const pg14 = await analyze(
+      [fixture('enum-no-ordering.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false, minPostgresVersion: 14 },
+    );
+    expect(pg11[0].checks.find((c) => c.ruleId === 'alter-enum-no-ordering')).toBeDefined();
+    expect(pg14[0].checks.find((c) => c.ruleId === 'alter-enum-no-ordering')).toBeDefined();
+    expect(pg11[0].checks.find((c) => c.ruleId === 'alter-enum-no-ordering')!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(pg14[0].checks.find((c) => c.ruleId === 'alter-enum-no-ordering')!.lockMode).toBe(LockMode.EXCLUSIVE);
+  });
+
+  it('should not over-warn on CREATE INDEX CONCURRENTLY with the default PG14 config', async () => {
+    const results = await analyze(
+      [fixture('safe-migration.sql')],
+      { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false, minPostgresVersion: 14 },
+    );
+    expect(results[0].policyViolations.find((v) => v.ruleId === 'pg14-index-concurrent-bug')).toBeUndefined();
   });
 });

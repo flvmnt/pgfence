@@ -6,11 +6,10 @@
  * 2. SET statement_timeout present
  * 3. SET application_name present (enables pg_stat_activity visibility)
  * 4. SET idle_in_transaction_session_timeout present (prevents orphaned locks)
- * 5. CREATE INDEX CONCURRENTLY not inside BEGIN/COMMIT (will fail)
- * 6. UPDATE inside migration (should be out-of-band)
- * 7. NOT VALID + VALIDATE CONSTRAINT in same transaction (defeats the purpose)
- * 8. Multiple statements after ACCESS EXCLUSIVE lock (compounding danger)
- * 9. Timeout value validation (lock_timeout > threshold = warning)
+ * 5. UPDATE inside migration (should be out-of-band)
+ * 6. NOT VALID + VALIDATE CONSTRAINT in same transaction (defeats the purpose)
+ * 7. Multiple statements after ACCESS EXCLUSIVE lock (compounding danger)
+ * 8. Timeout value validation (lock_timeout > threshold = warning)
  *
  * Transaction tracking uses a state machine (from transaction-state.ts) that handles savepoints, lock accumulation, and wide-lock-window detection.
  */
@@ -70,6 +69,10 @@ function parsePostgresTimeoutMs(node: { kind?: string; args?: unknown[] }): { ms
   return null;
 }
 
+function isSetToValue(kind?: string): boolean {
+  return kind === undefined || kind === 'VAR_SET_VALUE';
+}
+
 export function checkPolicies(
   stmts: ParsedStatement[],
   config: PgfenceConfig,
@@ -78,13 +81,16 @@ export function checkPolicies(
   const violations: PolicyViolation[] = [];
 
   // Index-based tracking for ordering validation (Gap 2)
-  let lockTimeoutIndex = -1;
-  let statementTimeoutIndex = -1;
+  const lockTimeoutState = { active: false, index: -1 };
+  const statementTimeoutState = { active: false, index: -1 };
   let hasApplicationName = false;
   let hasIdleTimeout = false;
 
   // Gap 12: Transaction state machine (replaces txDepth counter)
   const txState = createTransactionState();
+
+  // Track whether an explicit BEGIN was seen (for unclosed-transaction detection)
+  let hadExplicitBegin = false;
 
   // Track first dangerous statement position for ordering validation
   let firstDangerousIndex = -1;
@@ -103,11 +109,11 @@ export function checkPolicies(
     // Track VariableSetStmt
     if (stmt.nodeType === 'VariableSetStmt') {
       const node = stmt.node as { name: string; kind?: string; args?: unknown[] };
+      const isValueSet = isSetToValue(node.kind);
       switch (node.name) {
         case 'lock_timeout': {
-          if (lockTimeoutIndex === -1 && node.kind !== 'VAR_RESET' && node.kind !== 'VAR_SET_DEFAULT') {
-            lockTimeoutIndex = i;
-          }
+          lockTimeoutState.active = isValueSet;
+          lockTimeoutState.index = isValueSet ? i : -1;
           // Gap 5: timeout value validation
           const parsed = parsePostgresTimeoutMs(node);
           const threshold = config.maxLockTimeoutMs ?? 5000;
@@ -133,9 +139,8 @@ export function checkPolicies(
           break;
         }
         case 'statement_timeout': {
-          if (statementTimeoutIndex === -1 && node.kind !== 'VAR_RESET' && node.kind !== 'VAR_SET_DEFAULT') {
-            statementTimeoutIndex = i;
-          }
+          statementTimeoutState.active = isValueSet;
+          statementTimeoutState.index = isValueSet ? i : -1;
           const parsed = parsePostgresTimeoutMs(node);
           const threshold = config.maxStatementTimeoutMs ?? 600000;
           if (parsed !== null && parsed.ms > threshold) {
@@ -150,10 +155,10 @@ export function checkPolicies(
           break;
         }
         case 'application_name':
-          hasApplicationName = true;
+          hasApplicationName = isValueSet;
           break;
         case 'idle_in_transaction_session_timeout':
-          hasIdleTimeout = true;
+          hasIdleTimeout = isValueSet;
           break;
       }
     }
@@ -163,6 +168,10 @@ export function checkPolicies(
       const node = stmt.node as { kind: string; savepoint_name?: string; options?: Array<{ DefElem?: { defname: string; arg?: { String?: { sval: string } } } }> };
       const savepointName = node.savepoint_name ??
         node.options?.find((o) => o.DefElem?.defname === 'savepoint_name')?.DefElem?.arg?.String?.sval;
+
+      if (node.kind === 'TRANS_STMT_BEGIN' || node.kind === 'TRANS_STMT_START') {
+        hadExplicitBegin = true;
+      }
 
       const wasActive = txState.active;
       processTransactionStmt(txState, node.kind, savepointName);
@@ -272,6 +281,7 @@ export function checkPolicies(
           statementIndex: i,
         });
       }
+
     }
 
     // UPDATE inside migration → warning (only flag bulk updates without WHERE)
@@ -298,8 +308,19 @@ export function checkPolicies(
     }
   }
 
+  // Unclosed transaction: BEGIN without matching COMMIT or ROLLBACK
+  if (hadExplicitBegin && txState.active && !options?.autoCommit &&
+    !fileIgnoredRules.has('unclosed-transaction') && !fileIgnoredRules.has('*')) {
+    violations.push({
+      ruleId: 'unclosed-transaction',
+      message: 'BEGIN without matching COMMIT or ROLLBACK: the transaction is left open at the end of the migration file',
+      suggestion: 'Add COMMIT; at the end of the migration, or ROLLBACK; if the transaction should be aborted',
+      severity: 'warning',
+    });
+  }
+
   // Gap 2: lock_timeout ordering validation
-  if (lockTimeoutIndex >= 0 && firstDangerousIndex >= 0 && firstDangerousIndex < lockTimeoutIndex
+  if (lockTimeoutState.active && lockTimeoutState.index >= 0 && firstDangerousIndex >= 0 && firstDangerousIndex < lockTimeoutState.index
     && !fileIgnoredRules.has('lock-timeout-after-dangerous-statement') && !fileIgnoredRules.has('*')) {
     violations.push({
       ruleId: 'lock-timeout-after-dangerous-statement',
@@ -310,7 +331,7 @@ export function checkPolicies(
   }
 
   // Check required policies
-  if (config.requireLockTimeout && lockTimeoutIndex === -1 && !fileIgnoredRules.has('missing-lock-timeout') && !fileIgnoredRules.has('*')) {
+  if (config.requireLockTimeout && !lockTimeoutState.active && !fileIgnoredRules.has('missing-lock-timeout') && !fileIgnoredRules.has('*')) {
     violations.push({
       ruleId: 'missing-lock-timeout',
       message: 'Missing SET lock_timeout: without this, an ACCESS EXCLUSIVE lock will queue behind running queries and every new query queues behind it, causing a lock queue death spiral',
@@ -319,7 +340,7 @@ export function checkPolicies(
     });
   }
 
-  if (config.requireStatementTimeout && statementTimeoutIndex === -1 && !fileIgnoredRules.has('missing-statement-timeout') && !fileIgnoredRules.has('*')) {
+  if (config.requireStatementTimeout && !statementTimeoutState.active && !fileIgnoredRules.has('missing-statement-timeout') && !fileIgnoredRules.has('*')) {
     violations.push({
       ruleId: 'missing-statement-timeout',
       message: 'Missing SET statement_timeout: long-running operations can block other queries indefinitely',
@@ -375,6 +396,8 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
         if (sub === 'AT_ValidateConstraint') continue;
         // ADD COLUMN is technically ACCESS EXCLUSIVE but instant - skip
         if (sub === 'AT_AddColumn') continue;
+        // DROP NOT NULL is instant (metadata-only on Postgres 9+) - skip
+        if (sub === 'AT_DropNotNull') continue;
         // ADD CONSTRAINT with NOT VALID is brief (metadata only) - skip
         if (sub === 'AT_AddConstraint' && cmd.AlterTableCmd.def?.Constraint?.skip_validation === true) continue;
         // ENABLE/DISABLE TRIGGER takes SHARE ROW EXCLUSIVE - skip

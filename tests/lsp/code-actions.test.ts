@@ -79,6 +79,37 @@ describe('Code Actions', () => {
     expect(edit[0].newText).toContain('-- pgfence-ignore:');
   });
 
+  it('should not offer a quick fix for placeholder-heavy ADD COLUMN rewrites', async () => {
+    const sql = 'ALTER TABLE users ADD COLUMN name text NOT NULL;';
+    const uri = 'file:///test.sql';
+    const doc = makeDoc(uri, sql);
+    const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: defaultConfig });
+    const diagnostics = makeDiagnosticsFromAnalysis(analysis, sql);
+
+    const params = makeParams(uri, Range.create(0, 0, 0, 47), diagnostics);
+    const actions = getCodeActions(params, analysis, doc);
+
+    const safeRewrite = actions.find(a => a.title.startsWith('Safe rewrite:'));
+    expect(safeRewrite).toBeUndefined();
+
+    const ignore = actions.find(a => a.title.startsWith('pgfence-ignore:'));
+    expect(ignore).toBeDefined();
+  });
+
+  it('should not offer a quick fix for documentation-only ALTER ENUM rewrites', async () => {
+    const sql = "ALTER TYPE mood ADD VALUE 'happy';";
+    const uri = 'file:///test.sql';
+    const doc = makeDoc(uri, sql);
+    const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: defaultConfig });
+    const diagnostics = makeDiagnosticsFromAnalysis(analysis, sql);
+
+    const params = makeParams(uri, Range.create(0, 0, 0, 33), diagnostics);
+    const actions = getCodeActions(params, analysis, doc);
+
+    const safeRewrite = actions.find(a => a.title.startsWith('Safe rewrite:'));
+    expect(safeRewrite).toBeUndefined();
+  });
+
   it('should still provide ignore action for DROP TABLE', async () => {
     const sql = 'DROP TABLE users;';
     const uri = 'file:///test.sql';
@@ -112,7 +143,7 @@ describe('Code Actions', () => {
     expect(actions).toHaveLength(0);
   });
 
-  it('should provide safe rewrite for ADD COLUMN NOT NULL', async () => {
+  it('should not offer a quick fix for ADD COLUMN NOT NULL placeholder rewrites', async () => {
     const sql = 'ALTER TABLE users ADD COLUMN name text NOT NULL;';
     const uri = 'file:///test.sql';
     const doc = makeDoc(uri, sql);
@@ -123,8 +154,6 @@ describe('Code Actions', () => {
     const actions = getCodeActions(params, analysis, doc);
 
     const safeRewrite = actions.find(a => a.title.startsWith('Safe rewrite:'));
-    expect(safeRewrite).toBeDefined();
-    const newText = safeRewrite!.edit!.changes![uri][0].newText;
-    expect(newText).toContain('ADD COLUMN');
+    expect(safeRewrite).toBeUndefined();
   });
 });

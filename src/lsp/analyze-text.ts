@@ -10,6 +10,8 @@ import { parseSQL } from '../parser.js';
 import type { ParsedStatement } from '../parser.js';
 import { applyRules, filterByRulesConfig, adjustRisk, detectFormat, RISK_ORDER } from '../analyzer.js';
 import { checkPolicies } from '../rules/policy.js';
+import { getStatementTableKey } from '../table-ref.js';
+import { loadSnapshot, loadSnapshotFile } from '../schema-snapshot.js';
 import { RiskLevel } from '../types.js';
 import type {
   CheckResult,
@@ -19,6 +21,7 @@ import type {
   RiskLevel as RiskLevelType,
   TableStats,
 } from '../types.js';
+import type { SchemaLookup } from '../schema-snapshot.js';
 
 export interface AnalyzeTextOptions {
   /** In-memory file content */
@@ -78,23 +81,18 @@ async function extractSQLFromContent(
     return { sql, warnings: [] };
   }
 
-  // For ORM formats, extraction currently reads from disk.
-  // The LSP server relies on the file being saved to disk before analysis for ORM-format files.
-
   switch (format) {
     case 'typeorm': {
-      const { extractTypeORMSQL } = await import('../extractors/typeorm.js');
-      // TypeORM extractor reads from file; for LSP we need to pass content.
-      // Fall back to file-based extraction (file must exist on disk for ORM formats).
-      return extractTypeORMSQL(filePath);
+      const { extractTypeORMSQLFromSource } = await import('../extractors/typeorm.js');
+      return extractTypeORMSQLFromSource(content, filePath);
     }
     case 'knex': {
-      const { extractKnexSQL } = await import('../extractors/knex.js');
-      return extractKnexSQL(filePath);
+      const { extractKnexSQLFromSource } = await import('../extractors/knex.js');
+      return extractKnexSQLFromSource(content, filePath);
     }
     case 'sequelize': {
-      const { extractSequelizeSQL } = await import('../extractors/sequelize.js');
-      return extractSequelizeSQL(filePath);
+      const { extractSequelizeSQLFromSource } = await import('../extractors/sequelize.js');
+      return extractSequelizeSQLFromSource(content, filePath);
     }
     default:
       return { sql: content, warnings: [] };
@@ -141,15 +139,15 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
     const extraction = await extractSQLFromContent(content, filePath, format);
     sql = extraction.sql;
     autoCommit = extraction.autoCommit;
-    result.extractionWarnings = extraction.warnings;
+    result.extractionWarnings.push(...extraction.warnings);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    result.extractionWarnings = [{
+    result.extractionWarnings.push({
       message: `SQL extraction error: ${message}`,
       filePath,
       line: 1,
       column: 1,
-    }];
+    });
     return result;
   }
 
@@ -167,19 +165,24 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
 
   result.statementCount = stmts.length;
 
+  const schemaLookup: SchemaLookup | undefined = config.snapshotFile
+    ? loadSnapshot(await loadSnapshotFile(config.snapshotFile))
+    : undefined;
+
   // Track tables created in this migration
   const createdTables = new Set<string>();
-  for (const stmt of stmts) {
-    if (stmt.nodeType === 'CreateStmt') {
-      const createNode = stmt.node as { relation?: { relname?: string } };
-      if (createNode.relation?.relname) {
-        createdTables.add(createNode.relation.relname.toLowerCase());
-      }
-    }
-  }
+  const writtenTables = new Set<string>();
 
   // Apply statement-level rules
   for (const stmt of stmts) {
+    const stmtTableKey = getStatementTableKey(stmt);
+    if (stmt.nodeType === 'CreateStmt' && stmtTableKey) {
+      createdTables.add(stmtTableKey);
+    }
+    if (stmtTableKey && isDataModifyingStatement(stmt)) {
+      writtenTables.add(stmtTableKey);
+    }
+
     // Flag DO blocks/functions as unanalyzable
     if (stmt.nodeType === 'DoStmt' || stmt.nodeType === 'CreateFunctionStmt' || stmt.nodeType === 'CreateProcedureStmt') {
       // Compute actual line from statement offset
@@ -196,12 +199,12 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
       });
     }
 
-    const rawChecks = filterByRulesConfig(applyRules(stmt, config), config.rules);
+    const rawChecks = filterByRulesConfig(applyRules(stmt, config, schemaLookup), config.rules);
     for (const check of rawChecks) {
       // Inline ignore directives
       if (stmt.ignoredRules?.includes('*') || stmt.ignoredRules?.includes(check.ruleId)) continue;
       // Visibility: skip for newly-created tables
-      if (check.tableName && createdTables.has(check.tableName.toLowerCase()) && !check.appliesToNewTables) continue;
+      if (stmtTableKey && createdTables.has(stmtTableKey) && !writtenTables.has(stmtTableKey) && !check.appliesToNewTables) continue;
 
       result.checks.push(check);
       result.sourceRanges.push({
@@ -258,4 +261,17 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   result.maxRisk = maxRisk;
 
   return result;
+}
+
+function isDataModifyingStatement(stmt: ParsedStatement): boolean {
+  switch (stmt.nodeType) {
+    case 'CopyStmt':
+    case 'DeleteStmt':
+    case 'InsertStmt':
+    case 'MergeStmt':
+    case 'UpdateStmt':
+      return true;
+    default:
+      return false;
+  }
 }

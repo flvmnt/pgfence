@@ -124,6 +124,12 @@ export async function startContainer(opts: TraceOptions): Promise<ContainerInfo>
     );
   }
 
+  // Register for signal cleanup before docker run so a mid-startup SIGINT
+  // still reaches the container. stopContainer() is idempotent: if docker run
+  // fails below, the rm -f on a non-existent container is caught and ignored.
+  activeContainers.add(name);
+  registerCleanupHandlers();
+
   execFileSync(
     'docker',
     [
@@ -157,10 +163,6 @@ export async function startContainer(opts: TraceOptions): Promise<ContainerInfo>
   const port = parseInt(portMatch[1], 10);
 
   const container: ContainerInfo = { name, port, password, image };
-
-  // Track container for module-level signal cleanup (no handler accumulation)
-  activeContainers.add(name);
-  registerCleanupHandlers();
 
   return container;
 }

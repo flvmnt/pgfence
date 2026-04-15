@@ -7,6 +7,27 @@
 import type { AnalysisResult, CheckResult } from '../types.js';
 import { RiskLevel } from '../types.js';
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeTableText(text: string): string {
+  return escapeHtml(text).replace(/\|/g, '&#124;').replace(/\r?\n/g, '<br>');
+}
+
+function renderInline(text: string): string {
+  return `<code>${escapeHtml(text)}</code>`;
+}
+
+function renderTableCell(text: string): string {
+  return `<code>${escapeTableText(text)}</code>`;
+}
+
 function riskEmoji(risk: RiskLevel): string {
   switch (risk) {
     case RiskLevel.SAFE: return ':white_check_mark:';
@@ -32,13 +53,13 @@ export function reportGitHub(results: AnalysisResult[]): string {
 
   for (const result of results) {
     const emoji = riskEmoji(result.maxRisk);
-    lines.push(`### \`${result.filePath}\` ${emoji} ${result.maxRisk}`);
+    lines.push(`### ${renderInline(result.filePath)} ${emoji} ${result.maxRisk}`);
     lines.push('');
 
     // Extraction warnings
     if (result.extractionWarnings && result.extractionWarnings.length > 0) {
       for (const w of result.extractionWarnings) {
-        lines.push(`> :warning: **${w.message}** (\`${w.filePath}:${w.line}:${w.column}\`)`);
+        lines.push(`> :warning: ${renderInline(w.message)} ${renderInline(`(${w.filePath}:${w.line}:${w.column})`)}`);
       }
       lines.push('');
     }
@@ -53,26 +74,42 @@ export function reportGitHub(results: AnalysisResult[]): string {
         const riskStr = c.adjustedRisk
           ? `${riskEmoji(effectiveRisk)} ${effectiveRisk} (was ${c.risk})`
           : `${riskEmoji(effectiveRisk)} ${effectiveRisk}`;
-        // Escape pipes in preview
-        const preview = c.statementPreview.replace(/\|/g, '\\|');
-        const msg = c.message.replace(/\|/g, '\\|');
-        lines.push(`| ${i + 1} | \`${preview}\` | ${c.lockMode} | ${blocksStr(c)} | ${riskStr} | ${msg} |`);
+        const preview = renderTableCell(c.statementPreview);
+        const msg = renderTableCell(c.message);
+        lines.push(`| ${i + 1} | ${preview} | ${renderTableCell(c.lockMode)} | ${renderTableCell(blocksStr(c))} | ${riskStr} | ${msg} |`);
       }
       lines.push('');
 
-      // Safe rewrite recipes
-      const rewrites = result.checks.filter((c) => c.safeRewrite);
+      // Safe rewrite recipes (MEDIUM+ risk only, matching CLI reporter behavior)
+      const rewrites = result.checks.filter((c) => c.safeRewrite && (c.adjustedRisk ?? c.risk) !== RiskLevel.LOW && (c.adjustedRisk ?? c.risk) !== RiskLevel.SAFE);
+      const safeNotes = result.checks.filter((c) => c.safeRewrite && ((c.adjustedRisk ?? c.risk) === RiskLevel.LOW || (c.adjustedRisk ?? c.risk) === RiskLevel.SAFE));
       if (rewrites.length > 0) {
         lines.push('<details>');
         lines.push('<summary>Safe Rewrite Recipes</summary>');
         lines.push('');
         for (const c of rewrites) {
-          lines.push(`#### \`${c.ruleId}\`: ${c.safeRewrite!.description}`);
-          lines.push('```sql');
+          lines.push(`#### ${renderInline(c.ruleId)} ${renderInline(c.safeRewrite!.description)}`);
+          lines.push('<pre><code class="language-sql">');
           for (const step of c.safeRewrite!.steps) {
-            lines.push(step);
+            lines.push(escapeHtml(step));
           }
-          lines.push('```');
+          lines.push('</code></pre>');
+          lines.push('');
+        }
+        lines.push('</details>');
+        lines.push('');
+      }
+      if (safeNotes.length > 0) {
+        lines.push('<details>');
+        lines.push('<summary>Notes / Why this is safe</summary>');
+        lines.push('');
+        for (const c of safeNotes) {
+          lines.push(`#### ${renderInline(c.ruleId)} ${renderInline(c.safeRewrite!.description)}`);
+          lines.push('<pre><code class="language-sql">');
+          for (const step of c.safeRewrite!.steps) {
+            lines.push(escapeHtml(step));
+          }
+          lines.push('</code></pre>');
           lines.push('');
         }
         lines.push('</details>');
@@ -91,9 +128,9 @@ export function reportGitHub(results: AnalysisResult[]): string {
       lines.push('|----------|------|---------|------------|');
       for (const v of result.policyViolations) {
         const sev = v.severity === 'error' ? ':red_circle: error' : ':warning: warning';
-        const msg = v.message.replace(/\|/g, '\\|');
-        const sug = v.suggestion.replace(/\|/g, '\\|');
-        lines.push(`| ${sev} | \`${v.ruleId}\` | ${msg} | ${sug} |`);
+        const msg = renderTableCell(v.message);
+        const sug = renderTableCell(v.suggestion);
+        lines.push(`| ${sev} | ${renderTableCell(v.ruleId)} | ${msg} | ${sug} |`);
       }
       lines.push('');
     }

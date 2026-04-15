@@ -5,11 +5,18 @@
  * Plugin rule IDs must be namespaced with `plugin:` to avoid conflicts.
  */
 
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { ParsedStatement } from './parser.js';
 import type { CheckResult, ExtractionWarning, PgfenceConfig, PolicyViolation } from './types.js';
 
 const ALLOWED_PLUGIN_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts']);
+
+function isWithinRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
 
 export interface PgfencePluginRule {
   ruleId: string;
@@ -40,29 +47,37 @@ export async function loadPlugins(paths: string[]): Promise<LoadedPlugins> {
   const rules: PgfencePluginRule[] = [];
   const policies: PgfencePluginPolicy[] = [];
   const seenIds = new Set<string>();
+  const projectRoot = await realpath(process.cwd());
 
   for (const pluginPath of paths) {
-    // Resolve relative to cwd and validate extension to prevent
-    // arbitrary module loading (e.g., data: URLs, non-JS files)
-    const resolved = path.resolve(process.cwd(), pluginPath);
+    // Resolve relative to cwd, then collapse symlinks so the real target
+    // must also stay inside the trusted project root.
+    const resolved = path.resolve(projectRoot, pluginPath);
+    let realPluginPath: string;
+    try {
+      realPluginPath = await realpath(resolved);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Plugin "${pluginPath}" could not be resolved: ${message}`);
+    }
 
-    // Prevent loading plugins from outside the project directory
-    const cwd = process.cwd();
-    if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
+    // Prevent loading plugins from outside the project directory, including
+    // symlink escapes that resolve to a path outside the repo root.
+    if (!isWithinRoot(projectRoot, realPluginPath)) {
       throw new Error(
         `Plugin "${pluginPath}" resolves outside the project directory. ` +
         `For security, plugins must be within the project root.`,
       );
     }
 
-    const ext = path.extname(resolved).toLowerCase();
+    const ext = path.extname(realPluginPath).toLowerCase();
     if (!ALLOWED_PLUGIN_EXTENSIONS.has(ext)) {
       throw new Error(
         `Plugin "${pluginPath}" has unsupported extension "${ext}". ` +
         `Allowed: ${[...ALLOWED_PLUGIN_EXTENSIONS].join(', ')}`,
       );
     }
-    const mod = await import(resolved);
+    const mod = await import(pathToFileURL(realPluginPath).href);
     const plugin: PgfencePlugin = mod.default ?? mod;
 
     if (!plugin.name || typeof plugin.name !== 'string') {

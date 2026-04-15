@@ -85,6 +85,12 @@ describe.skipIf(!hasBuiltCli())('CLI e2e (built binary)', () => {
             execPromise(`node "${distCliPath}" analyze --ci --max-risk medium "${fixture}"`),
         ).rejects.toMatchObject({ code: 1 });
     });
+
+    it('exits 2 on system error (snapshot with bad db url)', async () => {
+        await expect(
+            execPromise(`node "${distCliPath}" snapshot --db-url postgres://bad:bad@localhost:0/noexist`),
+        ).rejects.toMatchObject({ code: 2 });
+    });
 });
 
 describe('CLI tests', () => {

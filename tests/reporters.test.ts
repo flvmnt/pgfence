@@ -3,6 +3,7 @@ import { reportJSON } from '../src/reporters/json.js';
 import { reportCLI } from '../src/reporters/cli.js';
 import { reportGitHub } from '../src/reporters/github-pr.js';
 import { reportSARIF } from '../src/reporters/sarif.js';
+import { reportGitLab } from '../src/reporters/gitlab.js';
 import { AnalysisResult, RiskLevel, LockMode, PgfenceConfig } from '../src/types.js';
 
 const mockCheck: AnalysisResult['checks'][0] = {
@@ -42,6 +43,31 @@ const mockConfig: PgfenceConfig = {
     output: 'cli',
     format: 'sql',
 };
+
+function stripAnsi(text: string): string {
+    let result = '';
+    let i = 0;
+
+    while (i < text.length) {
+        if (text.charCodeAt(i) === 27 && text[i + 1] === '[') {
+            i += 2;
+            while (i < text.length) {
+                const code = text.charCodeAt(i);
+                if (code >= 64 && code <= 126) {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        result += text[i];
+        i += 1;
+    }
+
+    return result;
+}
 
 describe('Reporter: JSON', () => {
     it('should format output as JSON correctly', () => {
@@ -172,6 +198,62 @@ describe('Reporter: CLI', () => {
         expect(output).toMatch(/Unanalyzable: 0/);
         expect(output).toMatch(/Coverage: 100%/);
     });
+
+    it('should display [UNANALYZABLE] header label for safe files with unanalyzable warnings', () => {
+        const unanalyzableResults: AnalysisResult[] = [{
+            ...mockResults[0],
+            checks: [],
+            policyViolations: [],
+            maxRisk: RiskLevel.SAFE,
+            extractionWarnings: [
+                { filePath: 'test.ts', line: 3, column: 2, message: 'Dynamic SQL', unanalyzable: true },
+            ],
+        }];
+        const output = reportCLI(unanalyzableResults, mockConfig);
+        expect(output).toContain('[UNANALYZABLE]');
+        expect(output).not.toContain('No dangerous statements detected.');
+        expect(output).toContain('unanalyzable statements requiring manual review');
+    });
+
+    it('should put LOW-risk safe rewrites in Notes section, not Safe Rewrite Recipes', () => {
+        const lowRiskWithRewrite: AnalysisResult[] = [{
+            ...mockResults[0],
+            checks: [
+                {
+                    ...mockCheck,
+                    risk: RiskLevel.LOW,
+                    safeRewrite: { description: 'Low risk note', steps: ['-- no action needed'] },
+                }
+            ]
+        }];
+        const output = reportCLI(lowRiskWithRewrite, mockConfig);
+        expect(output).toContain('Notes / Why this is safe:');
+        expect(output).not.toContain('Safe Rewrite Recipes:');
+        expect(output).toContain('Low risk note');
+    });
+
+    it('should display "(was X)" when a check has adjustedRisk different from base risk', () => {
+        const adjustedResults: AnalysisResult[] = [{
+            ...mockResults[0],
+            policyViolations: [],
+            checks: [
+                {
+                    ...mockCheck,
+                    risk: RiskLevel.LOW,
+                    adjustedRisk: RiskLevel.HIGH,
+                    message: 'This is safe but table is large',
+                    ruleId: 'rename-column',
+                }
+            ],
+            maxRisk: RiskLevel.HIGH,
+        }];
+        const output = reportCLI(adjustedResults, mockConfig);
+        // cli-table3 may word-wrap "(was LOW)" across cell rows, so check the parts separately.
+        const noAnsi = stripAnsi(output);
+        expect(noAnsi).toContain('(was');
+        expect(noAnsi).toContain('LOW)');
+        expect(noAnsi).toContain('HIGH');
+    });
 });
 
 describe('Reporter: GitHub PR', () => {
@@ -179,7 +261,7 @@ describe('Reporter: GitHub PR', () => {
         const output = reportGitHub(mockResults);
 
         expect(output).toContain('## pgfence Migration Safety Report');
-        expect(output).toContain('`test.sql`');
+        expect(output).toContain('<code>test.sql</code>');
         expect(output).toContain('ALTER TABLE users ADD COLUMN foo');
         expect(output).toContain('ACCESS EXCLUSIVE');
         expect(output).toContain(':red_circle: HIGH');
@@ -201,7 +283,7 @@ describe('Reporter: GitHub PR', () => {
         }];
 
         const output = reportGitHub(resultsWithWarnings);
-        expect(output).toContain('> :warning: **Dynamic SQL**');
+        expect(output).toContain('> :warning: <code>Dynamic SQL</code>');
     });
 
     it('should output safe rewrite recipes details block', () => {
@@ -224,6 +306,31 @@ describe('Reporter: GitHub PR', () => {
         expect(output).toContain('SELECT 1;');
     });
 
+    it('should escape user-controlled markdown and HTML in rendered content', () => {
+        const maliciousResults: AnalysisResult[] = [{
+            ...mockResults[0],
+            policyViolations: [],
+            checks: [
+                {
+                    ...mockCheck,
+                    statementPreview: 'ALTER TABLE users ADD COLUMN foo | **bold** <script>alert(1)</script>',
+                    message: 'Use [link](https://example.com) and `code`',
+                    safeRewrite: {
+                        description: 'desc </summary><script>alert(1)</script>',
+                        steps: ['ALTER TABLE users ADD COLUMN foo text; -- keep | safe'],
+                    },
+                },
+            ],
+        }];
+
+        const output = reportGitHub(maliciousResults);
+        expect(output).toContain('&#124;');
+        expect(output).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+        expect(output).toContain('<code>Use [link](https://example.com) and `code`</code>');
+        expect(output).not.toContain('<a href="https://example.com">');
+        expect(output).not.toContain('</summary><script>');
+    });
+
     it('should include coverage summary per Trust Contract (Analyzed N SQL statements, M dynamic not analyzable, Coverage P%)', () => {
         const output = reportGitHub(mockResults);
         expect(output).toContain('### Coverage');
@@ -244,6 +351,23 @@ describe('Reporter: GitHub PR', () => {
         expect(output).toContain('### Coverage');
         expect(output).toMatch(/\*\*1\*\* dynamic statements not analyzable/);
         expect(output).toMatch(/Coverage: \*\*50%\*\*/);
+    });
+
+    it('should put LOW-risk safe rewrites in Notes section, not Safe Rewrite Recipes', () => {
+        const lowRiskWithRewrite: AnalysisResult[] = [{
+            ...mockResults[0],
+            checks: [
+                {
+                    ...mockCheck,
+                    risk: RiskLevel.LOW,
+                    safeRewrite: { description: 'Low risk note', steps: ['-- no lock taken'] },
+                }
+            ]
+        }];
+        const output = reportGitHub(lowRiskWithRewrite);
+        expect(output).toContain('Notes / Why this is safe');
+        expect(output).not.toContain('Safe Rewrite Recipes');
+        expect(output).toContain('Low risk note');
     });
 });
 
@@ -363,5 +487,139 @@ describe('Reporter: SARIF', () => {
         const sarif = JSON.parse(output);
         const result = sarif.runs[0].results[0];
         expect(result.message.text).toContain('Safe rewrite: Use NOT VALID then VALIDATE');
+    });
+});
+
+describe('Reporter: GitLab CI', () => {
+    it('should produce a valid JSON array (not an object)', () => {
+        const output = reportGitLab(mockResults);
+        const parsed = JSON.parse(output);
+        expect(Array.isArray(parsed)).toBe(true);
+    });
+
+    it('should include required GitLab Code Quality fields', () => {
+        const output = reportGitLab(mockResults);
+        const parsed = JSON.parse(output);
+        expect(parsed.length).toBeGreaterThan(0);
+        const violation = parsed[0];
+        expect(violation).toHaveProperty('description');
+        expect(violation).toHaveProperty('check_name');
+        expect(violation).toHaveProperty('fingerprint');
+        expect(violation).toHaveProperty('severity');
+        expect(violation).toHaveProperty('location');
+        expect(violation.location).toHaveProperty('path');
+        expect(violation.location).toHaveProperty('lines');
+        expect(violation.location.lines).toHaveProperty('begin');
+    });
+
+    it('should map HIGH risk to "major" severity', () => {
+        const output = reportGitLab(mockResults);
+        const parsed = JSON.parse(output);
+        const checkViolation = parsed.find((v: { check_name: string }) => v.check_name === 'add-column-not-null-no-default');
+        expect(checkViolation).toBeDefined();
+        expect(checkViolation.severity).toBe('major');
+    });
+
+    it('should map CRITICAL risk to "blocker" severity', () => {
+        const criticalResults: AnalysisResult[] = [{
+            ...mockResults[0],
+            policyViolations: [],
+            checks: [{ ...mockCheck, risk: RiskLevel.CRITICAL }],
+            maxRisk: RiskLevel.CRITICAL,
+        }];
+        const output = reportGitLab(criticalResults);
+        const parsed = JSON.parse(output);
+        expect(parsed[0].severity).toBe('blocker');
+    });
+
+    it('should map policy error severity to "critical"', () => {
+        const output = reportGitLab(mockResults);
+        const parsed = JSON.parse(output);
+        const policyViolation = parsed.find((v: { check_name: string }) => v.check_name === 'policy-missing-lock-timeout');
+        expect(policyViolation).toBeDefined();
+        expect(policyViolation.severity).toBe('critical');
+    });
+
+    it('should produce stable fingerprints for identical inputs', () => {
+        const output1 = reportGitLab(mockResults);
+        const output2 = reportGitLab(mockResults);
+        const p1 = JSON.parse(output1);
+        const p2 = JSON.parse(output2);
+        expect(p1[0].fingerprint).toBe(p2[0].fingerprint);
+    });
+
+    it('should strip leading "./" from file paths', () => {
+        const resultsWithRelPath: AnalysisResult[] = [{
+            ...mockResults[0],
+            filePath: './migrations/001.sql',
+        }];
+        const output = reportGitLab(resultsWithRelPath);
+        const parsed = JSON.parse(output);
+        expect(parsed[0].location.path).toBe('migrations/001.sql');
+    });
+
+    it('should strip leading "/" from file paths', () => {
+        const resultsWithAbsPath: AnalysisResult[] = [{
+            ...mockResults[0],
+            filePath: '/migrations/001.sql',
+        }];
+        const output = reportGitLab(resultsWithAbsPath);
+        const parsed = JSON.parse(output);
+        expect(parsed[0].location.path).toBe('migrations/001.sql');
+    });
+
+    it('should include both checks and policy violations', () => {
+        const output = reportGitLab(mockResults);
+        const parsed = JSON.parse(output);
+        const checkEntry = parsed.find((v: { check_name: string }) => v.check_name === 'add-column-not-null-no-default');
+        const policyEntry = parsed.find((v: { check_name: string }) => v.check_name === 'policy-missing-lock-timeout');
+        expect(checkEntry).toBeDefined();
+        expect(policyEntry).toBeDefined();
+    });
+
+    it('should keep repeated findings distinct via fingerprints', () => {
+        const repeatedResults: AnalysisResult[] = [{
+            ...mockResults[0],
+            policyViolations: [],
+            checks: [
+                mockCheck,
+                { ...mockCheck },
+            ],
+        }];
+
+        const output = reportGitLab(repeatedResults);
+        const parsed = JSON.parse(output);
+        const findings = parsed.filter((v: { check_name: string }) => v.check_name === 'add-column-not-null-no-default');
+        expect(findings).toHaveLength(2);
+        expect(new Set(findings.map((v: { fingerprint: string }) => v.fingerprint)).size).toBe(2);
+    });
+
+    it('should preserve extraction warnings and emit a coverage summary entry', () => {
+        const resultsWithWarnings: AnalysisResult[] = [{
+            ...mockResults[0],
+            statementCount: 2,
+            extractionWarnings: [
+                { filePath: 'test.sql', line: 7, column: 3, message: 'Dynamic SQL', unanalyzable: true },
+            ],
+        }];
+
+        const output = reportGitLab(resultsWithWarnings);
+        const parsed = JSON.parse(output);
+        const warning = parsed.find((v: { check_name: string }) => v.check_name === 'pgfence-extraction-warning');
+        const coverage = parsed.find((v: { check_name: string }) => v.check_name === 'pgfence-coverage-summary');
+
+        expect(warning).toBeDefined();
+        expect(warning.severity).toBe('minor');
+        expect(coverage).toBeDefined();
+        expect(coverage.description).toContain('Analyzed 2 SQL statements');
+        expect(coverage.description).toContain('1 dynamic statements not analyzable');
+    });
+});
+
+describe('LSP Export Safety', () => {
+    it('should import the public LSP subpath without auto-starting the server', async () => {
+        const mod = await import('../src/lsp/server.js');
+        expect(typeof mod.createServer).toBe('function');
+        expect(typeof mod.startStdioServer).toBe('function');
     });
 });

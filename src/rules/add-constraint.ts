@@ -85,8 +85,32 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
 
     switch (constraint.contype) {
       case 'CONSTR_FOREIGN': {
-        if (constraint.skip_validation === true) continue; // NOT VALID → safe
         const refTable = constraint.pktable?.relname ?? '<unknown>';
+        const fkCols = (constraint.fk_attrs ?? []).map((a: { String: { sval: string } }) => a.String?.sval ?? '?').join(', ');
+
+        // Always fire: missing index advisory regardless of NOT VALID.
+        // Without an index on the FK columns, deletes/updates on the referenced table
+        // cause a full sequential scan of the referencing table.
+        results.push({
+          statement: stmt.sql,
+          statementPreview: makePreview(stmt.sql),
+          tableName,
+          lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
+          risk: RiskLevel.LOW,
+          message: `ADD FOREIGN KEY "${conName}" on (${fkCols || '<columns>'}): consider adding an index on the referencing columns to avoid sequential scans during CASCADE and DELETE operations on "${refTable}"`,
+          ruleId: 'fk-missing-index',
+          safeRewrite: {
+            description: 'Create a covering index on the FK columns before adding the constraint',
+            steps: [
+              `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_${(tableName ?? 'tbl').toLowerCase()}_${(fkCols || 'fk_col').replace(/,\s*/g, '_').toLowerCase()} ON ${tableName}(${fkCols || '<columns>'});`,
+              `-- Run CONCURRENTLY outside a transaction (cannot be used inside BEGIN/COMMIT).`,
+            ],
+          },
+        });
+
+        if (constraint.skip_validation === true) break; // NOT VALID: only index advisory fires
+
         results.push({
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),

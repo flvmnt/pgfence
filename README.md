@@ -8,6 +8,7 @@
   <td>
     <h1>pgfence</h1>
     <p>Postgres migration safety CLI. Know your lock modes, risk levels, and safe rewrite recipes before you merge.</p>
+    <p><strong>The only migration linter that understands your ORM: TypeORM, Prisma, Knex, Drizzle, Sequelize.</strong></p>
     <p>
       <a href="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml"><img src="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
       <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/v/@flvmnt/pgfence" alt="npm" /></a>
@@ -105,15 +106,19 @@ To explicitly acknowledge a statement pgfence cannot analyze, add `-- pgfence-ig
 
 Other tools in this space worth knowing about:
 
-| Tool | Language | Focus |
-|------|----------|-------|
-| [Squawk](https://github.com/sbdchd/squawk) | Rust | SQL linter with GitHub Action |
-| [Eugene](https://github.com/kaaveland/eugene) | Rust | DDL lint + trace modes |
-| [strong_migrations](https://github.com/ankane/strong_migrations) | Ruby | Rails/ActiveRecord migration checks |
+| Tool | Language | Rules | Focus |
+|------|----------|-------|-------|
+| [Squawk](https://github.com/sbdchd/squawk) | Rust | 32 | SQL linter with GitHub Action |
+| [Eugene](https://github.com/kaaveland/eugene) | Rust | 12 | DDL lint + trace modes |
+| [strong_migrations](https://github.com/ankane/strong_migrations) | Ruby | 21 | Rails/ActiveRecord migration checks |
+| [pgroll](https://github.com/xataio/pgroll) | Go | - | Migration **executor** (runs migrations with rollback). Complementary to pgfence. |
+| **pgfence** | **TypeScript** | **42** | **Multi-ORM, DB-size-aware, safe rewrites** |
 
-These tools only analyze raw SQL. pgfence is the only migration linter that can analyze ORM migration files (TypeORM, Prisma, Knex, Drizzle, Sequelize), with full AST-walking transpilers that convert builder patterns into analyzable SQL. It also provides DB-size-aware risk scoring and complete expand/contract rewrite recipes.
+pgfence is the only linter that analyzes ORM migration files (TypeORM, Prisma, Knex, Drizzle, Sequelize), with full AST-walking transpilers that convert builder patterns into analyzable SQL. It also provides DB-size-aware risk scoring and complete expand/contract rewrite recipes.
 
-pgfence's safety rules have been [adopted by postgres-language-server](https://github.com/supabase-community/postgres-language-server/pull/703) (5,100+ stars, Supabase community), which ported 18 rules with explicit source attribution.
+pgroll is not a competitor: it is a runtime executor (runs migrations with automatic rollback). pgfence analyzes before you run; pgroll handles how you run. They are complementary.
+
+pgfence is featured in the [pglt Related Work](https://github.com/supabase-community/postgres-language-server/blob/main/docs/reference/related_work.md) page (postgres-language-server, Supabase community).
 
 ## VS Code Extension
 
@@ -418,6 +423,20 @@ Upload pgfence findings to GitHub Code Scanning for inline PR annotations:
   uses: github/codeql-action/upload-sarif@v3
   with:
     sarif_file: pgfence.sarif
+```
+
+### GitLab Code Quality
+
+Upload pgfence findings to GitLab's Code Quality widget:
+
+```yaml
+# .gitlab-ci.yml
+pgfence:
+  script:
+    - npx @flvmnt/pgfence analyze --output gitlab migrations/*.sql > gl-code-quality-report.json
+  artifacts:
+    reports:
+      codequality: gl-code-quality-report.json
 ```
 
 ## Trace Mode (Verified Analysis)

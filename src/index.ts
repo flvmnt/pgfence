@@ -15,6 +15,7 @@ import { reportCLI } from './reporters/cli.js';
 import { reportJSON } from './reporters/json.js';
 import { reportGitHub } from './reporters/github-pr.js';
 import { reportSARIF } from './reporters/sarif.js';
+import { reportGitLab } from './reporters/gitlab.js';
 import { loadConfigFile, mergeConfig } from './config.js';
 import { RiskLevel } from './types.js';
 import type { PgfenceConfig, TableStats, TraceResult } from './types.js';
@@ -56,7 +57,7 @@ program
   .description('Analyze migration files for safety issues')
   .argument('<files...>', 'Migration files to analyze')
   .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, drizzle, sequelize, auto', 'auto')
-  .option('--output <output>', 'Output format: cli, json, github, sarif', 'cli')
+  .option('--output <output>', 'Output format: cli, json, github, sarif, gitlab', 'cli')
   .option('--db-url <url>', 'Database URL for size-aware risk scoring')
   .option('--stats-file <path>', 'Path to pgfence-stats.json for size-aware risk scoring (alternative to --db-url)')
   .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume', '14')
@@ -111,12 +112,12 @@ program
 
     if (opts.maxLockTimeout) {
       const parsed = parseInt(opts.maxLockTimeout, 10);
-      if (Number.isNaN(parsed)) throw new Error(`Invalid --max-lock-timeout value: "${opts.maxLockTimeout}"`);
+      if (Number.isNaN(parsed) || parsed <= 0) throw new Error(`Invalid --max-lock-timeout value: "${opts.maxLockTimeout}" (must be a positive integer)`);
       cliOverrides.maxLockTimeoutMs = parsed;
     }
     if (opts.maxStatementTimeout) {
       const parsed = parseInt(opts.maxStatementTimeout, 10);
-      if (Number.isNaN(parsed)) throw new Error(`Invalid --max-statement-timeout value: "${opts.maxStatementTimeout}"`);
+      if (Number.isNaN(parsed) || parsed <= 0) throw new Error(`Invalid --max-statement-timeout value: "${opts.maxStatementTimeout}" (must be a positive integer)`);
       cliOverrides.maxStatementTimeoutMs = parsed;
     }
     if (opts.snapshot) cliOverrides.snapshotFile = opts.snapshot;
@@ -142,6 +143,9 @@ program
           break;
         case 'sarif':
           process.stdout.write(reportSARIF(results) + '\n');
+          break;
+        case 'gitlab':
+          process.stdout.write(reportGitLab(results) + '\n');
           break;
         case 'cli':
         default:
@@ -181,7 +185,7 @@ program
   .description('Trace migration files against a disposable Docker Postgres container')
   .argument('<files...>', 'Migration files to trace')
   .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, drizzle, sequelize, auto', 'auto')
-  .option('--output <output>', 'Output format: cli, json, github, sarif', 'cli')
+  .option('--output <output>', 'Output format: cli, json, github, sarif, gitlab', 'cli')
   .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume for static analysis', '14')
   .option('--max-risk <risk>', 'Maximum allowed risk level for CI mode', 'high')
   .option('--ci', 'CI mode: exit 1 if max risk exceeded or mismatches detected', false)
@@ -217,12 +221,12 @@ program
 
     if (opts.maxLockTimeout) {
       const parsed = parseInt(opts.maxLockTimeout, 10);
-      if (Number.isNaN(parsed)) throw new Error(`Invalid --max-lock-timeout value: "${opts.maxLockTimeout}"`);
+      if (Number.isNaN(parsed) || parsed <= 0) throw new Error(`Invalid --max-lock-timeout value: "${opts.maxLockTimeout}" (must be a positive integer)`);
       cliOverrides.maxLockTimeoutMs = parsed;
     }
     if (opts.maxStatementTimeout) {
       const parsed = parseInt(opts.maxStatementTimeout, 10);
-      if (Number.isNaN(parsed)) throw new Error(`Invalid --max-statement-timeout value: "${opts.maxStatementTimeout}"`);
+      if (Number.isNaN(parsed) || parsed <= 0) throw new Error(`Invalid --max-statement-timeout value: "${opts.maxStatementTimeout}" (must be a positive integer)`);
       cliOverrides.maxStatementTimeoutMs = parsed;
     }
     if (opts.snapshot) cliOverrides.snapshotFile = opts.snapshot;
@@ -402,6 +406,9 @@ program
           case 'sarif':
             process.stdout.write(reportSARIF(traceResults) + '\n');
             break;
+          case 'gitlab':
+            process.stdout.write(reportGitLab(traceResults) + '\n');
+            break;
           case 'cli':
           default:
             process.stdout.write(reportTraceCLI(traceResults) + '\n');
@@ -447,7 +454,7 @@ program
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence snapshot error: ${sanitizeError(message)}\n`);
-      process.exit(1);
+      process.exit(2);
     }
   });
 
@@ -461,7 +468,7 @@ program
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence init error: ${message}\n`);
-      process.exit(1);
+      process.exit(2);
     }
   });
 
@@ -470,11 +477,12 @@ program
   .description('Start the pgfence Language Server Protocol server (stdio)')
   .action(async () => {
     try {
-      await import('./lsp/server.js');
+      const { startStdioServer } = await import('./lsp/server.js');
+      await startStdioServer();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence lsp error: ${message}\n`);
-      process.exit(1);
+      process.exit(2);
     }
   });
 

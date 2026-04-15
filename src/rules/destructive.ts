@@ -193,9 +193,9 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
         relation: { relname: string };
         whereClause?: unknown;
       };
-      // Only flag DELETE without WHERE
-      // whereClause can be absent, null, or empty object - all mean no WHERE
-      if (node.whereClause && typeof node.whereClause === 'object' && Object.keys(node.whereClause as Record<string, unknown>).length > 0) break;
+      // Flag DELETE when the predicate is absent or provably tautological.
+      // Unknown predicates are left alone rather than over-approximated.
+      if (node.whereClause && !isAlwaysTrueWhereClause(node.whereClause)) break;
 
       const tableName = node.relation?.relname ?? null;
       results.push({
@@ -266,6 +266,91 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
   }
 
   return results;
+}
+
+function isAlwaysTrueWhereClause(whereClause: unknown): boolean {
+  const value = evaluateBooleanExpression(whereClause);
+  return value === true;
+}
+
+function evaluateBooleanExpression(expr: unknown): boolean | null {
+  if (!expr || typeof expr !== 'object') return null;
+
+  const node = expr as Record<string, unknown>;
+  if (node.A_Const) {
+    return readBooleanConst(node.A_Const) ?? null;
+  }
+
+  if (node.BoolExpr) {
+    const boolExpr = node.BoolExpr as { boolop?: string; args?: unknown[] };
+    const args = boolExpr.args ?? [];
+    if (boolExpr.boolop === 'NOT_EXPR' && args.length === 1) {
+      const value = evaluateBooleanExpression(args[0]);
+      return value === null ? null : !value;
+    }
+    if (boolExpr.boolop === 'AND_EXPR') {
+      let sawUnknown = false;
+      for (const arg of args) {
+        const value = evaluateBooleanExpression(arg);
+        if (value === false) return false;
+        if (value === null) sawUnknown = true;
+      }
+      return sawUnknown ? null : true;
+    }
+    if (boolExpr.boolop === 'OR_EXPR') {
+      let sawUnknown = false;
+      for (const arg of args) {
+        const value = evaluateBooleanExpression(arg);
+        if (value === true) return true;
+        if (value === null) sawUnknown = true;
+      }
+      return sawUnknown ? null : false;
+    }
+    return null;
+  }
+
+  if (node.A_Expr) {
+    const exprNode = node.A_Expr as {
+      kind?: string;
+      name?: Array<{ String?: { sval?: string } }>;
+      lexpr?: unknown;
+      rexpr?: unknown;
+    };
+    const op = exprNode.name?.[0]?.String?.sval;
+    if (exprNode.kind === 'AEXPR_OP' && (op === '=' || op === '<>' || op === '!=')) {
+      const left = readLiteralValue(exprNode.lexpr);
+      const right = readLiteralValue(exprNode.rexpr);
+      if (left === null || right === null) return null;
+      const equal = left === right;
+      return op === '=' ? equal : !equal;
+    }
+  }
+
+  return null;
+}
+
+function readBooleanConst(node: unknown): boolean | null {
+  if (!node || typeof node !== 'object') return null;
+  const constNode = node as { boolval?: { boolval?: boolean } };
+  if (constNode.boolval === undefined) return null;
+  return constNode.boolval.boolval === true;
+}
+
+function readLiteralValue(node: unknown): string | number | boolean | null {
+  if (!node || typeof node !== 'object') return null;
+  const constNode = node as {
+    A_Const?: {
+      boolval?: { boolval?: boolean };
+      ival?: { ival?: number };
+      sval?: { sval?: string };
+    };
+  };
+  if (!constNode.A_Const) return null;
+  const value = constNode.A_Const;
+  if (value.boolval !== undefined) return value.boolval.boolval === true;
+  if (value.ival?.ival !== undefined) return value.ival.ival;
+  if (value.sval?.sval !== undefined) return value.sval.sval;
+  return null;
 }
 
 function extractDropTableName(

@@ -44,7 +44,7 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
   const lines: string[] = [];
 
   for (const result of results) {
-    const hasUnanalyzable = result.extractionWarnings?.some(w => w.message.includes('Unanalyzable'));
+    const hasUnanalyzable = result.extractionWarnings?.some(w => w.unanalyzable);
     const displayRisk = (result.maxRisk === RiskLevel.SAFE && hasUnanalyzable) ? 'UNANALYZABLE' : result.maxRisk;
     const color = displayRisk === 'UNANALYZABLE' ? chalk.yellow : riskColor(result.maxRisk);
 
@@ -177,7 +177,7 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
         }
       }
     } else {
-      const hasUnanalyzable = result.extractionWarnings?.some(w => w.message.includes('Unanalyzable'));
+      const hasUnanalyzable = result.extractionWarnings?.some(w => w.unanalyzable);
       if (hasUnanalyzable) {
         lines.push(chalk.yellow('  File contains unanalyzable statements requiring manual review.'));
       } else {

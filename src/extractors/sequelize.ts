@@ -19,6 +19,13 @@ interface TSNode {
 
 export async function extractSequelizeSQL(filePath: string): Promise<ExtractionResult> {
     const source = await readFile(filePath, 'utf8');
+    return extractSequelizeSQLFromSource(source, filePath);
+}
+
+export async function extractSequelizeSQLFromSource(
+    source: string,
+    filePath = '<memory>',
+): Promise<ExtractionResult> {
     const warnings: ExtractionWarning[] = [];
     const queries: string[] = [];
 

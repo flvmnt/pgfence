@@ -1,0 +1,1 @@
+ALTER TABLE appointments ALTER COLUMN status DROP NOT NULL;

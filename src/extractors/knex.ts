@@ -27,6 +27,13 @@ const SCHEMA_BUILDER_METHODS = new Set([
 
 export async function extractKnexSQL(filePath: string): Promise<ExtractionResult> {
   const source = await readFile(filePath, 'utf8');
+  return extractKnexSQLFromSource(source, filePath);
+}
+
+export async function extractKnexSQLFromSource(
+  source: string,
+  filePath = '<memory>',
+): Promise<ExtractionResult> {
   const warnings: ExtractionWarning[] = [];
   const queries: string[] = [];
 

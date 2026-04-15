@@ -96,6 +96,20 @@ ALTER TABLE fresh ADD COLUMN name text NOT NULL;`;
     expect(check).toBeUndefined();
   });
 
+  it('should stop suppressing after DML on a newly-created table', async () => {
+    const sql = `CREATE TABLE fresh (id serial PRIMARY KEY);
+INSERT INTO fresh (id) VALUES (1);
+ALTER TABLE fresh ADD COLUMN name text NOT NULL;`;
+    const result = await analyzeText({
+      content: sql,
+      filePath: 'migrations/001.sql',
+      config: defaultConfig,
+    });
+
+    const check = result.checks.find(c => c.ruleId === 'add-column-not-null-no-default');
+    expect(check).toBeDefined();
+  });
+
   it('should respect inline pgfence-ignore directives', async () => {
     const sql = `-- pgfence-ignore: create-index-not-concurrent
 CREATE INDEX idx ON users (email);`;
@@ -189,6 +203,18 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON users (email);`;
     expect(result.checks.length).toBeGreaterThan(0);
   });
 
+  it('should preserve auto-detect warnings when falling back to raw SQL', async () => {
+    const result = await analyzeText({
+      content: 'CREATE INDEX idx ON users (email);',
+      filePath: 'migrations/001.txt',
+      config: { ...defaultConfig, format: 'auto' },
+    });
+
+    const warning = result.extractionWarnings.find((w) => w.message.includes('Format auto-detection failed'));
+    expect(warning).toBeDefined();
+    expect(result.checks.length).toBeGreaterThan(0);
+  });
+
   it('should handle extraction errors gracefully', async () => {
     // Non-SQL, non-ORM file
     const result = await analyzeText({
@@ -198,6 +224,47 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON users (email);`;
     });
     // Should have extraction warning or parse error, not crash
     expect(result.parseError ?? result.extractionWarnings.length > 0).toBeTruthy();
+  });
+
+  it('should analyze TypeORM content from the in-memory buffer', async () => {
+    const result = await analyzeText({
+      content: `export class AddUserIndex {
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query('CREATE INDEX idx_users_email ON users (email)');
+  }
+}`,
+      filePath: 'migrations/001-typeorm.ts',
+      config: { ...defaultConfig, format: 'typeorm' },
+    });
+
+    expect(result.checks.find((c) => c.ruleId === 'create-index-not-concurrent')).toBeDefined();
+    expect(result.extractionWarnings).toHaveLength(0);
+  });
+
+  it('should analyze Knex content from the in-memory buffer', async () => {
+    const result = await analyzeText({
+      content: `export async function up(knex) {
+  await knex.raw('CREATE INDEX idx_users_email ON users (email)');
+}`,
+      filePath: 'migrations/002-knex.ts',
+      config: { ...defaultConfig, format: 'knex' },
+    });
+
+    expect(result.checks.find((c) => c.ruleId === 'create-index-not-concurrent')).toBeDefined();
+    expect(result.extractionWarnings).toHaveLength(0);
+  });
+
+  it('should analyze Sequelize content from the in-memory buffer', async () => {
+    const result = await analyzeText({
+      content: `export async function up(queryInterface) {
+  await queryInterface.sequelize.query('CREATE INDEX idx_users_email ON users (email)');
+}`,
+      filePath: 'migrations/003-sequelize.ts',
+      config: { ...defaultConfig, format: 'sequelize' },
+    });
+
+    expect(result.checks.find((c) => c.ruleId === 'create-index-not-concurrent')).toBeDefined();
+    expect(result.extractionWarnings).toHaveLength(0);
   });
 
   it('should count statements correctly', async () => {

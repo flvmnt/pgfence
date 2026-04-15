@@ -4,6 +4,12 @@
   "description": "Postgres migration safety CLI: lock mode analysis, risk scoring, and safe rewrite recipes",
   "type": "module",
   "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./lsp": "./dist/lsp/server.js",
+    "./analyzer": "./dist/analyzer.js",
+    "./types": "./dist/types.js"
+  },
   "bin": {
     "pgfence": "dist/index.js",
     "pgfence-lsp": "dist/lsp/server.js"

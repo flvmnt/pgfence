@@ -55,25 +55,37 @@ export interface SchemaLookup {
  * Build a lookup interface from a schema snapshot.
  */
 export function loadSnapshot(snapshot: SchemaSnapshot): SchemaLookup {
-  const tableMap = new Map<string, TableSnapshot>();
+  const exactTableMap = new Map<string, TableSnapshot>();
+  const bareTableMap = new Map<string, TableSnapshot | null>();
 
   for (const table of snapshot.tables) {
     const key = table.tableName.toLowerCase();
-    tableMap.set(key, table);
-    tableMap.set(`${table.schemaName.toLowerCase()}.${key}`, table);
+    const exactKey = `${table.schemaName.toLowerCase()}.${key}`;
+    exactTableMap.set(exactKey, table);
+
+    const existing = bareTableMap.get(key);
+    if (existing === undefined) {
+      bareTableMap.set(key, table);
+    } else if (existing !== table) {
+      bareTableMap.set(key, null);
+    }
   }
 
   return {
     getColumn(table: string, column: string): ColumnSnapshot | null {
-      const t = tableMap.get(table.toLowerCase());
+      const tableKey = table.toLowerCase();
+      const t = exactTableMap.get(tableKey) ?? bareTableMap.get(tableKey) ?? null;
       if (!t) return null;
       return t.columns.find((c) => c.columnName.toLowerCase() === column.toLowerCase()) ?? null;
     },
     getTable(table: string): TableSnapshot | null {
-      return tableMap.get(table.toLowerCase()) ?? null;
+      const tableKey = table.toLowerCase();
+      return exactTableMap.get(tableKey) ?? bareTableMap.get(tableKey) ?? null;
     },
     hasTable(table: string): boolean {
-      return tableMap.has(table.toLowerCase());
+      const tableKey = table.toLowerCase();
+      if (exactTableMap.has(tableKey)) return true;
+      return bareTableMap.get(tableKey) != null;
     },
   };
 }

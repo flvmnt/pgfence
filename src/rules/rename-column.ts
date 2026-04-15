@@ -86,5 +86,30 @@ export function checkRenameColumn(
     });
   }
 
+  if (node.renameType === 'OBJECT_SCHEMA') {
+    const oldName = node.subname ?? '<unknown>';
+    const newName = node.newname ?? '<unknown>';
+    results.push({
+      statement: stmt.sql,
+      statementPreview: makePreview(stmt.sql),
+      tableName: null,
+      lockMode: LockMode.ACCESS_EXCLUSIVE,
+      blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+      risk: RiskLevel.HIGH,
+      message: `RENAME SCHEMA "${oldName}" TO "${newName}": acquires ACCESS EXCLUSIVE lock and breaks all schema-qualified queries, views, functions, and ORM configs that reference "${oldName}"`,
+      ruleId: 'rename-schema',
+      safeRewrite: {
+        description: 'Schema renames have no non-blocking alternative. Prefer creating a new schema and migrating objects.',
+        steps: [
+          `CREATE SCHEMA IF NOT EXISTS ${newName};`,
+          `-- Migrate objects: ALTER TABLE ${oldName}.mytable SET SCHEMA ${newName};`,
+          `-- Update all application code and ORM configs to use "${newName}"`,
+          `-- Deploy and verify no references to "${oldName}" remain`,
+          `DROP SCHEMA IF EXISTS ${oldName};`,
+        ],
+      },
+    });
+  }
+
   return results;
 }

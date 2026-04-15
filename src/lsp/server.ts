@@ -19,6 +19,8 @@ import {
   type Connection,
 } from 'vscode-languageserver';
 import { TextDocument } from 'vscode-languageserver-textdocument';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { analyzeText } from './analyze-text.js';
 import type { AnalyzeTextResult } from './analyze-text.js';
 import {
@@ -29,6 +31,9 @@ import {
 } from './diagnostics.js';
 import { getCodeActions } from './code-actions.js';
 import { getHoverContent } from './hover.js';
+import { getDocumentSymbols } from './document-symbols.js';
+import { getFoldingRanges } from './folding-ranges.js';
+import { getInlayHints } from './inlay-hints.js';
 import { RiskLevel } from '../types.js';
 import type { PgfenceConfig } from '../types.js';
 
@@ -71,6 +76,9 @@ export function createServer(conn: Connection) {
           codeActionKinds: [CodeActionKind.QuickFix],
         },
         hoverProvider: true,
+        documentSymbolProvider: true,
+        foldingRangeProvider: true,
+        inlayHintProvider: { resolveProvider: false },
         workspace: {
           workspaceFolders: { supported: false },
         },
@@ -183,6 +191,30 @@ export function createServer(conn: Connection) {
     return getHoverContent(params, cached, doc);
   });
 
+  connection.onDocumentSymbol((params) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return [];
+    const cached = analysisCache.get(params.textDocument.uri);
+    if (!cached) return [];
+    return getDocumentSymbols(params, cached, doc);
+  });
+
+  connection.onFoldingRanges((params) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return [];
+    const cached = analysisCache.get(params.textDocument.uri);
+    if (!cached) return [];
+    return getFoldingRanges(params, cached, doc);
+  });
+
+  connection.onRequest('textDocument/inlayHint', (params: { textDocument: { uri: string }; range: { start: { line: number; character: number }; end: { line: number; character: number } } }) => {
+    const doc = documents.get(params.textDocument.uri);
+    if (!doc) return [];
+    const cached = analysisCache.get(params.textDocument.uri);
+    if (!cached) return [];
+    return getInlayHints(params, cached, doc);
+  });
+
   connection.onDidChangeConfiguration(async () => {
     try {
       // Pull updated config from the client
@@ -239,12 +271,22 @@ async function createStdioConnection(): Promise<Connection> {
   return createConn(proposed);
 }
 
-// Start the server when this module is loaded
-createStdioConnection().then((conn) => {
+export async function startStdioServer(): Promise<void> {
+  const conn = await createStdioConnection();
   const server = createServer(conn);
   server.connection.listen();
-}).catch((err) => {
-  process.stderr.write(`pgfence LSP server failed to start: ${err}\n`);
-  process.stderr.write('Use --stdio, --node-ipc, or --socket=<port> to specify transport.\n');
-  process.exit(1);
-});
+}
+
+function isMainModule(moduleUrl: string): boolean {
+  const entryPoint = process.argv[1];
+  if (!entryPoint) return false;
+  return path.resolve(entryPoint) === fileURLToPath(moduleUrl);
+}
+
+if (isMainModule(import.meta.url)) {
+  void startStdioServer().catch((err) => {
+    process.stderr.write(`pgfence LSP server failed to start: ${err}\n`);
+    process.stderr.write('Use --stdio, --node-ipc, or --socket=<port> to specify transport.\n');
+    process.exit(1);
+  });
+}

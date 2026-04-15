@@ -14,6 +14,7 @@ import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { CheckResult } from '../types.js';
 import type { AnalyzeTextResult } from './analyze-text.js';
 import { offsetToPosition } from './diagnostics.js';
+import { getStatementEntries } from './statement-groups.js';
 
 /**
  * Get hover content for the position under the cursor.
@@ -28,8 +29,7 @@ export function getHoverContent(
   const cursorChar = params.position.character;
 
   // Find which check result covers this position
-  for (let i = 0; i < analysis.checks.length; i++) {
-    const sourceRange = analysis.sourceRanges[i];
+  for (const { check, sourceRange } of getStatementEntries(analysis)) {
     const start = offsetToPosition(text, sourceRange.startOffset);
     const end = offsetToPosition(text, sourceRange.endOffset);
 
@@ -38,7 +38,6 @@ export function getHoverContent(
     if (cursorLine === start.line && cursorChar < start.character) continue;
     if (cursorLine === end.line && cursorChar > end.character) continue;
 
-    const check = analysis.checks[i];
     return {
       contents: {
         kind: MarkupKind.Markdown,

@@ -30,8 +30,11 @@ import { checkPartition } from './rules/partition.js';
 import { checkPolicies } from './rules/policy.js';
 import { fetchTableStats } from './db-stats.js';
 import { getCloudHooks } from './cloud-hooks.js';
+import { getStatementTableKey } from './table-ref.js';
+import { loadSnapshot, loadSnapshotFile } from './schema-snapshot.js';
 import { loadPlugins, runPluginRules, runPluginPolicies } from './plugins.js';
 import type { LoadedPlugins } from './plugins.js';
+import type { SchemaLookup } from './schema-snapshot.js';
 import type {
   AnalysisResult,
   CheckResult,
@@ -113,11 +116,17 @@ export async function analyze(
     }
   }
 
+  const schemaLookupPromise: Promise<SchemaLookup | undefined> = config.snapshotFile
+    ? loadSnapshotFile(config.snapshotFile).then((snapshot) => loadSnapshot(snapshot))
+    : Promise.resolve(undefined);
+  const schemaLookup = await schemaLookupPromise;
+
   const results: AnalysisResult[] = [];
 
   // Gap 8: Cross-file migration state - track tables created across files
   // so that operations on newly-created tables in later files are suppressed.
   const crossFileCreatedTables = new Set<string>();
+  const crossFileWrittenTables = new Set<string>();
 
   for (const filePath of filePaths) {
     const extraction = await extractSQL(filePath, config);
@@ -142,20 +151,21 @@ export async function analyze(
     // the table has no existing data or concurrent readers.
     // Gap 8: merge cross-file created tables from earlier files in the batch.
     const createdTables = new Set<string>(crossFileCreatedTables);
-    for (const stmt of stmts) {
-      if (stmt.nodeType === 'CreateStmt') {
-        const createNode = stmt.node as { relation?: { relname?: string } };
-        if (createNode.relation?.relname) {
-          const name = createNode.relation.relname.toLowerCase();
-          createdTables.add(name);
-          crossFileCreatedTables.add(name);
-        }
-      }
-    }
+    const writtenTables = new Set<string>(crossFileWrittenTables);
 
     // Apply statement-level rules (respecting inline ignore directives + visibility logic)
     const checks: CheckResult[] = [];
     for (const stmt of stmts) {
+      const stmtTableKey = getStatementTableKey(stmt);
+      if (stmt.nodeType === 'CreateStmt' && stmtTableKey) {
+        createdTables.add(stmtTableKey);
+        crossFileCreatedTables.add(stmtTableKey);
+      }
+      if (stmtTableKey && isDataModifyingStatement(stmt)) {
+        writtenTables.add(stmtTableKey);
+        crossFileWrittenTables.add(stmtTableKey);
+      }
+
       // Flag DO blocks, functions, and procedures as unanalyzable for coverage stats
       if (stmt.nodeType === 'DoStmt' || stmt.nodeType === 'CreateFunctionStmt' || stmt.nodeType === 'CreateProcedureStmt') {
         // Compute actual line from statement offset in extracted SQL
@@ -172,7 +182,7 @@ export async function analyze(
         });
       }
 
-      const builtInChecks = applyRules(stmt, config);
+      const builtInChecks = applyRules(stmt, config, schemaLookup);
       // Gap 14: Run plugin rules alongside built-in rules
       if (plugins.rules.length > 0) {
         builtInChecks.push(...runPluginRules(plugins.rules, stmt, config, extraction.warnings, filePath));
@@ -184,7 +194,7 @@ export async function analyze(
         if (stmt.ignoredRules?.includes('*') || stmt.ignoredRules?.includes(check.ruleId)) continue;
         // Filter: visibility logic - skip warnings for tables created in this migration
         // (but best-practice checks with appliesToNewTables still fire)
-        if (check.tableName && createdTables.has(check.tableName.toLowerCase()) && !check.appliesToNewTables) continue;
+        if (stmtTableKey && createdTables.has(stmtTableKey) && !writtenTables.has(stmtTableKey) && !check.appliesToNewTables) continue;
         checks.push(check);
       }
     }
@@ -260,11 +270,15 @@ export function filterByRulesConfig<T extends { ruleId: string }>(items: T[], ru
   return filtered;
 }
 
-export function applyRules(stmt: ParsedStatement, config: PgfenceConfig): CheckResult[] {
+export function applyRules(
+  stmt: ParsedStatement,
+  config: PgfenceConfig,
+  schemaLookup?: SchemaLookup,
+): CheckResult[] {
   const results: CheckResult[] = [];
   results.push(...checkAddColumn(stmt, config));
   results.push(...checkCreateIndex(stmt));
-  results.push(...checkAlterColumn(stmt, config));
+  results.push(...checkAlterColumn(stmt, config, schemaLookup));
   results.push(...checkAddConstraint(stmt));
   results.push(...checkDestructive(stmt));
   results.push(...checkRenameColumn(stmt, config));
@@ -277,6 +291,19 @@ export function applyRules(stmt: ParsedStatement, config: PgfenceConfig): CheckR
   results.push(...checkPartition(stmt, config));
   results.push(...checkDomainConstraint(stmt));
   return results;
+}
+
+function isDataModifyingStatement(stmt: ParsedStatement): boolean {
+  switch (stmt.nodeType) {
+    case 'CopyStmt':
+    case 'DeleteStmt':
+    case 'InsertStmt':
+    case 'MergeStmt':
+    case 'UpdateStmt':
+      return true;
+    default:
+      return false;
+  }
 }
 
 /**

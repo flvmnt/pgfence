@@ -87,6 +87,22 @@ describe('Hover Provider', () => {
     expect(value).toContain('create-index-not-concurrent');
   });
 
+  it('should prefer the most severe check when multiple checks share one statement', async () => {
+    const sql = `ALTER TABLE orders
+  ADD CONSTRAINT fk_orders_user_id
+  FOREIGN KEY (user_id)
+  REFERENCES users(id);`;
+    const uri = 'file:///test.sql';
+    const doc = makeDoc(uri, sql);
+    const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: defaultConfig });
+
+    const hover = getHoverContent(makeHoverParams(uri, 1, 10), analysis, doc);
+    expect(hover).not.toBeNull();
+    const value = (hover!.contents as { value: string }).value;
+    expect(value).toContain('HIGH');
+    expect(value).toContain('add-constraint-fk-no-not-valid');
+  });
+
   it('should return null when hovering past the end of a statement', async () => {
     const sql = 'SELECT 1;\n\n\n\n\n';
     const uri = 'file:///test.sql';
@@ -95,5 +111,19 @@ describe('Hover Provider', () => {
 
     const hover = getHoverContent(makeHoverParams(uri, 3, 0), analysis, doc);
     expect(hover).toBeNull();
+  });
+
+  it('should not render literal null for table-less operations (ALTER TYPE)', async () => {
+    const sql = "ALTER TYPE mood ADD VALUE 'ecstatic';";
+    const uri = 'file:///test.sql';
+    const doc = makeDoc(uri, sql);
+    const noTimeoutConfig: PgfenceConfig = { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false };
+    const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: noTimeoutConfig });
+
+    const hover = getHoverContent(makeHoverParams(uri, 0, 5), analysis, doc);
+    expect(hover).not.toBeNull();
+    const value = (hover!.contents as { value: string }).value;
+    expect(value).not.toContain('`null`');
+    expect(value).not.toContain('**Table**:');
   });
 });

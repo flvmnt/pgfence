@@ -55,6 +55,13 @@ const TYPEORM_BUILDER_METHODS = new Set([
 
 export async function extractTypeORMSQL(filePath: string): Promise<ExtractionResult> {
   const source = await readFile(filePath, 'utf8');
+  return extractTypeORMSQLFromSource(source, filePath);
+}
+
+export async function extractTypeORMSQLFromSource(
+  source: string,
+  filePath = '<memory>',
+): Promise<ExtractionResult> {
   const warnings: ExtractionWarning[] = [];
   const queries: string[] = [];
 
