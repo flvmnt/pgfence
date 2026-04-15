@@ -192,6 +192,7 @@ describe('Extractor: TypeORM builder API', () => {
         const filePath = path.join(fixturesDir, 'typeorm-builder-api.ts');
         const result = await extractTypeORMSQL(filePath);
         expect(result.warnings.length).toBeGreaterThan(0);
+        expect(result.warnings.every((w) => w.unanalyzable)).toBe(true);
         const builderWarnings = result.warnings.filter(w =>
             w.message.includes('TypeORM builder API detected')
         );

@@ -272,7 +272,7 @@ export function checkPolicies(
 
     // Operations that require autocommit must not run inside explicit transactions.
     if (txState.active) {
-      const autocommitOnlyOp = getAutocommitOnlyOperation(stmt);
+      const autocommitOnlyOp = getAutocommitOnlyOperation(stmt, config.minPostgresVersion);
       if (autocommitOnlyOp) {
         violations.push({
           ruleId: 'concurrent-in-transaction',
@@ -538,7 +538,7 @@ function getStatementLockMode(stmt: ParsedStatement): LockMode | null {
   }
 }
 
-function getAutocommitOnlyOperation(stmt: ParsedStatement): string | null {
+function getAutocommitOnlyOperation(stmt: ParsedStatement, minPostgresVersion: number): string | null {
   if (stmt.nodeType === 'IndexStmt') {
     const node = stmt.node as { concurrent?: boolean };
     return node.concurrent === true ? 'CREATE INDEX CONCURRENTLY' : null;
@@ -580,6 +580,10 @@ function getAutocommitOnlyOperation(stmt: ParsedStatement): string | null {
         return 'DETACH PARTITION CONCURRENTLY';
       }
     }
+  }
+
+  if (stmt.nodeType === 'AlterEnumStmt' && minPostgresVersion < 12) {
+    return 'ALTER TYPE ... ADD VALUE';
   }
 
   return null;
