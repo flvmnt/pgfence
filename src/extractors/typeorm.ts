@@ -111,6 +111,7 @@ export async function extractTypeORMSQLFromSource(
             line: loc.line,
             column: loc.column,
             message: `TypeORM builder API detected (${upInfo.paramName}.${methodName}) -- pgfence can only analyze ${upInfo.paramName}.query() raw SQL calls`,
+            unanalyzable: true,
           });
           return;
         }

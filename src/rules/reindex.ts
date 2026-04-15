@@ -12,6 +12,7 @@ import type { ParsedStatement } from '../parser.js';
 import type { CheckResult } from '../types.js';
 import { LockMode, RiskLevel, getBlockedOperations } from '../types.js';
 import { makePreview } from '../parser.js';
+import { getAnalysisMinPostgresVersion } from './alter-column.js';
 
 export function checkReindex(stmt: ParsedStatement): CheckResult[] {
   if (stmt.nodeType !== 'ReindexStmt') return [];
@@ -38,6 +39,8 @@ export function checkReindex(stmt: ParsedStatement): CheckResult[] {
   const kindLabel = kindMap[node.kind] ?? node.kind;
   const targetName = node.relation?.relname ?? node.name ?? '<unknown>';
   const tableName = node.relation?.relname ?? null;
+  const minPostgresVersion = getAnalysisMinPostgresVersion();
+  const supportsConcurrentReindex = minPostgresVersion >= 12;
 
   const isWide = node.kind === 'REINDEX_OBJECT_SCHEMA' || node.kind === 'REINDEX_OBJECT_DATABASE' || node.kind === 'REINDEX_OBJECT_SYSTEM';
 
@@ -60,10 +63,16 @@ export function checkReindex(stmt: ParsedStatement): CheckResult[] {
         : `REINDEX ${kindLabel} "${targetName}": acquires ACCESS EXCLUSIVE lock on the index, queries using this index will block`,
     ruleId: 'reindex-non-concurrent',
     safeRewrite: {
-      description: 'Use REINDEX CONCURRENTLY (PG12+) to avoid ACCESS EXCLUSIVE lock',
+      description: supportsConcurrentReindex
+        ? 'Use REINDEX CONCURRENTLY (PG12+) to avoid ACCESS EXCLUSIVE lock'
+        : 'Upgrade to PG12+ before using REINDEX CONCURRENTLY to avoid ACCESS EXCLUSIVE lock',
       steps: [
-        `REINDEX ${kindLabel} CONCURRENTLY ${targetName};`,
-        `-- Note: REINDEX CONCURRENTLY must run outside a transaction block`,
+        supportsConcurrentReindex
+          ? `REINDEX ${kindLabel} CONCURRENTLY ${targetName};`
+          : '-- REINDEX CONCURRENTLY requires Postgres 12+.',
+        supportsConcurrentReindex
+          ? '-- Note: REINDEX CONCURRENTLY must run outside a transaction block'
+          : `-- After upgrading to PG12+, run REINDEX ${kindLabel} CONCURRENTLY ${targetName} outside a transaction block.`,
       ],
     },
   }];

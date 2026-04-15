@@ -5,12 +5,13 @@
  * - ALTER COLUMN TYPE (table rewrite, ACCESS EXCLUSIVE)
  * - ALTER COLUMN SET NOT NULL (ACCESS EXCLUSIVE, full table scan)
  *
- * Safe type changes (metadata-only, no table rewrite):
- * - varchar(N) -> text (removing length constraint)
- * - varchar(N) -> varchar (removing length constraint)
- * - varchar/text-family -> text (text is unbounded, metadata-only for text-family sources)
- * - varchar(N) -> varchar(M) where M > N (widening, needs schema to verify)
- * - numeric(P,S) -> numeric(P2,S) where P2 > P (widening, needs schema to verify)
+ * Safe type changes require schema context:
+ * - varchar(N) -> text or varchar without length, only when the current column is already text-family
+ * - varchar(N) -> varchar(M) where M > N, only when the current length is known
+ * - numeric(P,S) -> numeric(P2,S) where P2 > P, only when the current precision is known
+ *
+ * When source schema is unavailable, we default to HIGH risk rather than
+ * understating the chance of a table rewrite.
  */
 
 import type { ParsedStatement } from '../parser.js';
@@ -94,15 +95,31 @@ interface TypeClassification {
 
 const TEXT_FAMILY_TYPES = new Set(['text', 'varchar', 'bpchar']);
 
+let currentMinPostgresVersion = 14;
+
+export function setAnalysisMinPostgresVersion(version: number): void {
+  currentMinPostgresVersion = version;
+}
+
+export function getAnalysisMinPostgresVersion(): number {
+  return currentMinPostgresVersion;
+}
+
 function classifyTypeChange(target: TargetType | null, sourceColumn?: SourceColumn | null): TypeClassification | null {
   if (!target) return null;
 
   const { name, modifier } = target;
   const sourceType = sourceColumn?.udtName.toLowerCase() ?? null;
   const sourceIsTextFamily = sourceType ? TEXT_FAMILY_TYPES.has(sourceType) : false;
-  const sourceTypeLabel = sourceColumn?.dataType ?? null;
+  const sourceTypeLabel = sourceColumn?.dataType ?? 'unknown';
 
   if (name === 'text') {
+    if (!sourceColumn) {
+      return {
+        risk: RiskLevel.HIGH,
+        message: 'TYPE text: source type is unknown, this can still require a table rewrite',
+      };
+    }
     if (sourceColumn && !sourceIsTextFamily) {
       return {
         risk: RiskLevel.HIGH,
@@ -116,6 +133,12 @@ function classifyTypeChange(target: TargetType | null, sourceColumn?: SourceColu
   }
 
   if (name === 'varchar' && modifier === null) {
+    if (!sourceColumn) {
+      return {
+        risk: RiskLevel.HIGH,
+        message: 'TYPE varchar: source type is unknown, this can still require a table rewrite',
+      };
+    }
     if (sourceColumn && !sourceIsTextFamily) {
       return {
         risk: RiskLevel.HIGH,
@@ -129,27 +152,37 @@ function classifyTypeChange(target: TargetType | null, sourceColumn?: SourceColu
   }
 
   if (name === 'varchar' && modifier !== null) {
-    if (sourceColumn) {
-      if (!sourceIsTextFamily) {
-        return {
-          risk: RiskLevel.HIGH,
-          message: `TYPE varchar(${modifier}): rewrites the table when the current type is ${sourceTypeLabel}`,
-        };
-      }
-      if (sourceColumn.characterMaximumLength !== null && sourceColumn.characterMaximumLength <= modifier) {
-        return {
-          risk: RiskLevel.MEDIUM,
-          message: `TYPE varchar(${modifier}), safe if widening from varchar(${sourceColumn.characterMaximumLength}), but requires schema to verify. Narrowing causes a table rewrite.`,
-        };
-      }
+    if (!sourceColumn) {
+      return {
+        risk: RiskLevel.HIGH,
+        message: `TYPE varchar(${modifier}): source type is unknown, this may require a table rewrite`,
+      };
+    }
+    if (!sourceIsTextFamily) {
+      return {
+        risk: RiskLevel.HIGH,
+        message: `TYPE varchar(${modifier}): rewrites the table when the current type is ${sourceTypeLabel}`,
+      };
+    }
+    if (sourceColumn.characterMaximumLength !== null && sourceColumn.characterMaximumLength <= modifier) {
+      return {
+        risk: RiskLevel.MEDIUM,
+        message: `TYPE varchar(${modifier}), safe if widening from varchar(${sourceColumn.characterMaximumLength}), but requires schema to verify. Narrowing causes a table rewrite.`,
+      };
     }
     return {
-      risk: RiskLevel.MEDIUM,
-      message: `TYPE varchar(${modifier}), safe if widening (increasing length), but requires schema to verify. Narrowing causes a table rewrite.`,
+      risk: RiskLevel.HIGH,
+      message: `TYPE varchar(${modifier}): narrowing from ${sourceTypeLabel} may require a table rewrite`,
     };
   }
 
   if (name === 'numeric' && modifier !== null) {
+    if (!sourceColumn) {
+      return {
+        risk: RiskLevel.HIGH,
+        message: 'TYPE numeric: source type is unknown, this may require a table rewrite',
+      };
+    }
     if (sourceColumn && sourceType !== 'numeric') {
       return {
         risk: RiskLevel.HIGH,
@@ -170,6 +203,8 @@ export function checkAlterColumn(
   _config: PgfenceConfig,
   schemaLookup?: SchemaLookup,
 ): CheckResult[] {
+  setAnalysisMinPostgresVersion(_config.minPostgresVersion);
+
   if (stmt.nodeType !== 'AlterTableStmt') return [];
 
   const node = stmt.node as {
