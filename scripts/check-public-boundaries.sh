@@ -55,6 +55,31 @@ if (missing.length > 0) {
   for (const file of missing) console.error(file);
   process.exit(1);
 }
+
+const { execSync } = require('node:child_process');
+const trackedSources = new Set(
+  execSync('git ls-files src', { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith('.ts')),
+);
+
+const distArtifacts = files.filter((file) => /^dist\/.+\.(?:js|js\.map|d\.ts|d\.ts\.map)$/.test(file));
+const orphanArtifacts = distArtifacts.filter((file) => {
+  const sourcePath = file
+    .replace(/^dist\//, 'src/')
+    .replace(/\.d\.ts\.map$/, '.ts')
+    .replace(/\.d\.ts$/, '.ts')
+    .replace(/\.js\.map$/, '.ts')
+    .replace(/\.js$/, '.ts');
+  return !trackedSources.has(sourcePath);
+});
+
+if (orphanArtifacts.length > 0) {
+  console.error('ERROR: npm package contains dist artifacts without tracked source files:');
+  for (const file of orphanArtifacts) console.error(file);
+  process.exit(1);
+}
 NODE
 
 echo "Public repo boundaries look good."
