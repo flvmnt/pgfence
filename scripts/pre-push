@@ -1,24 +1,41 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 echo "pgfence pre-push: running safety checks..."
 
 # Block cloud/agent files from ever being pushed
-CLOUD_FILES=$(git diff --cached --name-only HEAD 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/)' || true)
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  DIFF_BASE="HEAD"
+else
+  DIFF_BASE="$(git hash-object -t tree /dev/null)"
+fi
+
+CLOUD_FILES=$(git diff --cached --name-only "$DIFF_BASE" 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/)' || true)
 if [ -z "$CLOUD_FILES" ]; then
-  # Also check the commits being pushed
-  REMOTE="$1"
-  URL="$2"
+  # Also check the commits being pushed. On a first push for a branch, Git gives
+  # us a zero remote SHA, so inspect commits that are not yet on any remote.
   while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
     if [ "$LOCAL_SHA" != "0000000000000000000000000000000000000000" ]; then
       if [ "$REMOTE_SHA" = "0000000000000000000000000000000000000000" ]; then
-        RANGE="$LOCAL_SHA"
+        COMMITS=$(git rev-list "$LOCAL_SHA" --not --remotes 2>/dev/null || true)
       else
-        RANGE="$REMOTE_SHA..$LOCAL_SHA"
+        COMMITS=$(git rev-list "$REMOTE_SHA..$LOCAL_SHA" 2>/dev/null || true)
       fi
-      CLOUD_IN_COMMITS=$(git diff --name-only "$RANGE" 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/)' || true)
+
+      CLOUD_IN_COMMITS=""
+      while IFS= read -r COMMIT_SHA; do
+        if [ -z "$COMMIT_SHA" ]; then
+          continue
+        fi
+        MATCHES=$(git diff-tree --no-commit-id --name-only -r "$COMMIT_SHA" 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/)' || true)
+        if [ -n "$MATCHES" ]; then
+          CLOUD_IN_COMMITS+="$MATCHES"$'\n'
+        fi
+      done <<< "$COMMITS"
+
+      CLOUD_IN_COMMITS=$(printf '%s' "$CLOUD_IN_COMMITS" | sort -u)
       if [ -n "$CLOUD_IN_COMMITS" ]; then
-        echo "ERROR: Push blocked — cloud/agent files detected in commits:"
+        echo "ERROR: Push blocked, cloud or agent files detected in commits:"
         echo "$CLOUD_IN_COMMITS"
         echo "These files must never be pushed to the public repo."
         exit 1
@@ -28,14 +45,12 @@ if [ -z "$CLOUD_FILES" ]; then
 fi
 
 if [ -n "$CLOUD_FILES" ]; then
-  echo "ERROR: Push blocked — cloud/agent files staged:"
+  echo "ERROR: Push blocked, cloud or agent files staged:"
   echo "$CLOUD_FILES"
   echo "These files must never be pushed to the public repo."
   exit 1
 fi
 
 # Standard checks
-pnpm typecheck
-pnpm lint
-pnpm test
+pnpm prepush
 echo "pgfence pre-push: all checks passed"

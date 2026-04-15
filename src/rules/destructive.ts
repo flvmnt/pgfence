@@ -193,9 +193,12 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
         relation: { relname: string };
         whereClause?: unknown;
       };
+      const hasTautologicalWhere = node.whereClause
+        ? isAlwaysTrueWhereClause(node.whereClause)
+        : false;
       // Flag DELETE when the predicate is absent or provably tautological.
       // Unknown predicates are left alone rather than over-approximated.
-      if (node.whereClause && !isAlwaysTrueWhereClause(node.whereClause)) break;
+      if (node.whereClause && !hasTautologicalWhere) break;
 
       const tableName = node.relation?.relname ?? null;
       results.push({
@@ -205,7 +208,9 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
         lockMode: LockMode.ROW_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ROW_EXCLUSIVE),
         risk: RiskLevel.HIGH,
-        message: `DELETE FROM "${tableName}" without WHERE: deletes all rows`,
+        message: hasTautologicalWhere
+          ? `DELETE FROM "${tableName}" with a tautological WHERE clause: deletes all rows`
+          : `DELETE FROM "${tableName}" without WHERE: deletes all rows`,
         ruleId: 'delete-without-where',
         safeRewrite: {
           description: 'Add a WHERE clause or use batched deletion',
@@ -268,7 +273,7 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
   return results;
 }
 
-function isAlwaysTrueWhereClause(whereClause: unknown): boolean {
+export function isAlwaysTrueWhereClause(whereClause: unknown): boolean {
   const value = evaluateBooleanExpression(whereClause);
   return value === true;
 }

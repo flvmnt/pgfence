@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { getHoverContent } from '../../src/lsp/hover.js';
 import { analyzeText } from '../../src/lsp/analyze-text.js';
-import { RiskLevel } from '../../src/types.js';
+import { LockMode, RiskLevel } from '../../src/types.js';
 import type { PgfenceConfig } from '../../src/types.js';
 import type { HoverParams } from 'vscode-languageserver';
+import type { AnalyzeTextResult } from '../../src/lsp/analyze-text.js';
 
 const defaultConfig: PgfenceConfig = {
   format: 'auto',
@@ -125,5 +126,46 @@ describe('Hover Provider', () => {
     const value = (hover!.contents as { value: string }).value;
     expect(value).not.toContain('`null`');
     expect(value).not.toContain('**Table**:');
+  });
+
+  it('should escape markdown-sensitive hover content', () => {
+    const sql = 'CREATE INDEX idx ON users (email);';
+    const uri = 'file:///test.sql';
+    const doc = makeDoc(uri, sql);
+    const analysis: AnalyzeTextResult = {
+      checks: [
+        {
+          statement: sql,
+          statementPreview: 'CREATE INDEX idx ON users (email)',
+          tableName: 'users`|danger',
+          lockMode: LockMode.SHARE,
+          blocks: { reads: false, writes: true, otherDdl: true },
+          risk: RiskLevel.MEDIUM,
+          message: 'Avoid **bold** [links](https://example.com) and ```fences```.',
+          ruleId: 'create-index-`danger`',
+          safeRewrite: {
+            description: 'Use `CONCURRENTLY` and avoid ``` fence breaks',
+            steps: ['SELECT 1; -- ``` literal fence'],
+          },
+        },
+      ],
+      policyViolations: [],
+      maxRisk: RiskLevel.MEDIUM,
+      statementCount: 1,
+      extractionWarnings: [],
+      sourceRanges: [{ startOffset: 0, endOffset: sql.length }],
+    };
+
+    const hover = getHoverContent(makeHoverParams(uri, 0, 5), analysis, doc);
+    expect(hover).not.toBeNull();
+    const value = (hover!.contents as { value: string }).value;
+
+    expect(value).toContain('`` create-index-`danger` ``');
+    expect(value).toContain('``users`|danger``');
+    expect(value).toContain('Avoid \\*\\*bold\\*\\* \\[links\\]\\(https://example\\.com\\) and \\`\\`\\`fences\\`\\`\\`\\.');
+    expect(value).toContain('Use \\`CONCURRENTLY\\` and avoid \\`\\`\\` fence breaks');
+    expect(value).toContain('````sql');
+    expect(value).toContain('SELECT 1; -- ``` literal fence');
+    expect(value).toContain('\n````');
   });
 });

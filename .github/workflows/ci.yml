@@ -6,9 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       matrix:
         node-version: [20, 22]
@@ -33,5 +37,6 @@ jobs:
       - run: ./scripts/check-docs-coverage.sh
       - run: pnpm typecheck
       - run: pnpm build
+      - run: ./scripts/check-public-boundaries.sh
       - run: pnpm lint
       - run: pnpm test

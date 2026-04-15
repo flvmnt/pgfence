@@ -85,7 +85,7 @@ Analyzed: 2 statements  |  Unanalyzable: 0  |  Coverage: 100%
 
 ## Postgres Version Support
 
-pgfence is tested against **PostgreSQL 14 through 17**. The default assumption is PG 14+ (the oldest version still supported by the PostgreSQL project). Use `--min-pg-version` to override if needed:
+pgfence defaults to **PostgreSQL 14+** assumptions, and several rules are version-aware for older and newer releases where PostgreSQL behavior differs. Use `--min-pg-version` to override if needed:
 
 ```bash
 pgfence analyze --min-pg-version 12 migrations/*.sql
@@ -137,7 +137,7 @@ Get real-time migration safety analysis directly in your editor:
 
 **[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence)** or search "pgfence" in the Extensions panel. Requires `@flvmnt/pgfence` installed in your project or globally. See the [extension docs](https://pgfence.com/docs/editor) for configuration and commands.
 
-If you want to launch the standalone language server directly, use the `pgfence-lsp` binary. The package `./lsp` subpath resolves to the main CLI module and does not auto-start the server when imported.
+If you want to launch the standalone language server directly, use the `pgfence-lsp` binary. The package `./lsp` subpath resolves safely without auto-starting the server when imported.
 
 ## Installation
 
@@ -489,7 +489,7 @@ pgfence Cloud is currently being shaped with design partners around team-grade m
 - **Audit history** around analyses, approvals, and bypasses
 - **Schema drift and migration history views**
 
-The current direction does not require production database credentials. DB-size-aware scoring already works through a stats snapshot: your CI can query a read replica, output a JSON file, and pgfence consumes it locally.
+The planned governance layer is intended to avoid requiring production database credentials. Today, DB-size-aware scoring already works through a stats snapshot: your CI can query a read replica, output a JSON file, and pgfence consumes it locally.
 
 Learn more at **[pgfence.com](https://pgfence.com)**.
 
@@ -510,10 +510,14 @@ Plugin rule IDs are namespaced with `plugin:` to avoid collisions with built-in 
 For rules that need to know your actual column types (e.g., distinguishing safe varchar widenings from cross-type rewrites), pgfence can load a schema snapshot:
 
 ```bash
-pgfence analyze --schema-file pgfence-schema.json migrations/*.sql
+pgfence analyze --snapshot pgfence-snapshot.json migrations/*.sql
 ```
 
-This replaces heuristic guesses with definitive type classification from your database. Generate the snapshot with `pgfence extract-schema` against a read replica.
+This replaces heuristic guesses with definitive type classification from your database. Generate the snapshot with:
+
+```bash
+pgfence snapshot --db-url postgres://readonly@replica:5432/mydb --output pgfence-snapshot.json
+```
 
 ## Contributing
 

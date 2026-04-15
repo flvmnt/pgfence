@@ -87,17 +87,22 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
         style: { head: [], border: [] },
       });
 
-      // Group checks by statement string to avoid duplicate rows
-      const grouped = new Map<string, CheckResult[]>();
+      // Group only consecutive checks so repeated statements later in the file
+      // stay visible as distinct rows even when their SQL text matches.
+      const grouped: CheckResult[][] = [];
       for (const check of result.checks) {
-        if (!grouped.has(check.statement)) grouped.set(check.statement, []);
-        grouped.get(check.statement)!.push(check);
+        const lastGroup = grouped[grouped.length - 1];
+        if (!lastGroup || lastGroup[0].statement !== check.statement) {
+          grouped.push([check]);
+          continue;
+        }
+        lastGroup.push(check);
       }
 
       let i = 0;
       const notes: string[] = [];
 
-      for (const checkGroup of grouped.values()) {
+      for (const checkGroup of grouped) {
         const preview = checkGroup[0].statementPreview;
 
         let lockMode = checkGroup[0].lockMode;

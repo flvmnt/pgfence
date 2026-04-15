@@ -5,7 +5,7 @@
  * Plugin rule IDs must be namespaced with `plugin:` to avoid conflicts.
  */
 
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ParsedStatement } from './parser.js';
@@ -39,6 +39,10 @@ export interface LoadedPlugins {
   policies: PgfencePluginPolicy[];
 }
 
+function describePluginEntry(type: 'rule' | 'policy', pluginName: string, index: number): string {
+  return `Plugin "${pluginName}" ${type} at index ${index}`;
+}
+
 /**
  * Load plugins from file paths.
  * Validates shape and enforces `plugin:` namespace on rule IDs.
@@ -59,6 +63,11 @@ export async function loadPlugins(paths: string[]): Promise<LoadedPlugins> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(`Plugin "${pluginPath}" could not be resolved: ${message}`);
+    }
+
+    const pluginStats = await stat(realPluginPath);
+    if (!pluginStats.isFile()) {
+      throw new Error(`Plugin "${pluginPath}" must resolve to a file`);
     }
 
     // Prevent loading plugins from outside the project directory, including
@@ -84,7 +93,17 @@ export async function loadPlugins(paths: string[]): Promise<LoadedPlugins> {
       throw new Error(`Plugin at ${pluginPath} must export a "name" string`);
     }
 
-    for (const rule of plugin.rules ?? []) {
+    if (plugin.rules != null && !Array.isArray(plugin.rules)) {
+      throw new Error(`Plugin "${plugin.name}" rules must be an array`);
+    }
+    if (plugin.policies != null && !Array.isArray(plugin.policies)) {
+      throw new Error(`Plugin "${plugin.name}" policies must be an array`);
+    }
+
+    for (const [index, rule] of (plugin.rules ?? []).entries()) {
+      if (!rule || typeof rule.ruleId !== 'string' || typeof rule.check !== 'function') {
+        throw new Error(`${describePluginEntry('rule', plugin.name, index)} must export { ruleId, check }`);
+      }
       if (!rule.ruleId.startsWith('plugin:')) {
         throw new Error(
           `Plugin "${plugin.name}" rule "${rule.ruleId}" must be namespaced with "plugin:" prefix`,
@@ -99,7 +118,10 @@ export async function loadPlugins(paths: string[]): Promise<LoadedPlugins> {
       rules.push(rule);
     }
 
-    for (const policy of plugin.policies ?? []) {
+    for (const [index, policy] of (plugin.policies ?? []).entries()) {
+      if (!policy || typeof policy.ruleId !== 'string' || typeof policy.check !== 'function') {
+        throw new Error(`${describePluginEntry('policy', plugin.name, index)} must export { ruleId, check }`);
+      }
       if (!policy.ruleId.startsWith('plugin:')) {
         throw new Error(
           `Plugin "${plugin.name}" policy "${policy.ruleId}" must be namespaced with "plugin:" prefix`,

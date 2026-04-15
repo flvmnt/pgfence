@@ -238,6 +238,32 @@ describe('Reporter: CLI', () => {
         expect(noAnsi).toContain('LOW)');
         expect(noAnsi).toContain('HIGH');
     });
+
+    it('should keep later repeated statements visible as separate rows', () => {
+        const repeatedResults: AnalysisResult[] = [{
+            ...mockResults[0],
+            policyViolations: [],
+            checks: [
+                mockCheck,
+                {
+                    ...mockCheck,
+                    statement: 'CREATE INDEX idx_users_email ON users (email);',
+                    statementPreview: 'CREATE INDEX idx_users_email ON users',
+                    tableName: 'users',
+                    lockMode: LockMode.SHARE,
+                    blocks: { reads: false, writes: true, otherDdl: true },
+                    risk: RiskLevel.MEDIUM,
+                    message: 'Index build blocks writes without CONCURRENTLY',
+                    ruleId: 'create-index-not-concurrent',
+                },
+                { ...mockCheck },
+            ],
+        }];
+
+        const output = stripAnsi(reportCLI(repeatedResults, mockConfig));
+        const matches = output.match(/ALTER TABLE users ADD COLUMN foo/g) ?? [];
+        expect(matches).toHaveLength(2);
+    });
 });
 
 describe('Reporter: GitHub PR', () => {
@@ -352,6 +378,23 @@ describe('Reporter: GitHub PR', () => {
         expect(output).toContain('Notes / Why this is safe');
         expect(output).not.toContain('Safe Rewrite Recipes');
         expect(output).toContain('Low risk note');
+    });
+
+    it('should not claim safety for files with unanalyzable statements', () => {
+        const unanalyzableResults: AnalysisResult[] = [{
+            ...mockResults[0],
+            checks: [],
+            policyViolations: [],
+            maxRisk: RiskLevel.SAFE,
+            extractionWarnings: [
+                { filePath: 'test.sql', line: 7, column: 1, message: 'Dynamic SQL', unanalyzable: true },
+            ],
+        }];
+
+        const output = reportGitHub(unanalyzableResults);
+        expect(output).toContain('UNANALYZABLE');
+        expect(output).toContain('manual review');
+        expect(output).not.toContain('No dangerous statements detected.');
     });
 });
 
@@ -471,6 +514,29 @@ describe('Reporter: SARIF', () => {
         const sarif = JSON.parse(output);
         const result = sarif.runs[0].results[0];
         expect(result.message.text).toContain('Safe rewrite: Use NOT VALID then VALIDATE');
+    });
+
+    it('should surface extraction warnings as SARIF results with source regions', () => {
+        const resultsWithWarnings: AnalysisResult[] = [{
+            ...mockResults[0],
+            checks: [],
+            policyViolations: [],
+            extractionWarnings: [
+                { filePath: 'test.sql', line: 7, column: 3, message: 'Dynamic SQL', unanalyzable: true },
+            ],
+        }];
+
+        const output = reportSARIF(resultsWithWarnings);
+        const sarif = JSON.parse(output);
+        const warning = sarif.runs[0].results.find(
+            (r: { ruleId: string }) => r.ruleId === 'pgfence-extraction-warning',
+        );
+
+        expect(warning).toBeDefined();
+        expect(warning.level).toBe('warning');
+        expect(warning.message.text).toContain('Dynamic SQL');
+        expect(warning.locations[0].physicalLocation.region.startLine).toBe(7);
+        expect(warning.locations[0].physicalLocation.region.startColumn).toBe(4);
     });
 });
 

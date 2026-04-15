@@ -52,8 +52,10 @@ export function reportGitHub(results: AnalysisResult[]): string {
   lines.push('');
 
   for (const result of results) {
-    const emoji = riskEmoji(result.maxRisk);
-    lines.push(`### ${renderInline(result.filePath)} ${emoji} ${result.maxRisk}`);
+    const hasUnanalyzable = result.extractionWarnings?.some((warning) => warning.unanalyzable) ?? false;
+    const displayRisk = result.maxRisk === RiskLevel.SAFE && hasUnanalyzable ? 'UNANALYZABLE' : result.maxRisk;
+    const emoji = displayRisk === 'UNANALYZABLE' ? ':warning:' : riskEmoji(result.maxRisk);
+    lines.push(`### ${renderInline(result.filePath)} ${emoji} ${displayRisk}`);
     lines.push('');
 
     // Extraction warnings
@@ -115,6 +117,9 @@ export function reportGitHub(results: AnalysisResult[]): string {
         lines.push('</details>');
         lines.push('');
       }
+    } else if (hasUnanalyzable) {
+      lines.push(':warning: File contains unanalyzable statements requiring manual review.');
+      lines.push('');
     } else {
       lines.push(':white_check_mark: No dangerous statements detected.');
       lines.push('');

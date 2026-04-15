@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadConfigFile } from '../src/config.js';
@@ -8,6 +8,28 @@ import { RiskLevel } from '../src/types.js';
 
 async function makeRepoLocalTempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(process.cwd(), prefix));
+}
+
+async function collectTypeScriptFiles(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'cloud' || entry.name === 'agent') {
+        continue;
+      }
+      files.push(...await collectTypeScriptFiles(fullPath));
+      continue;
+    }
+
+    if (entry.isFile() && fullPath.endsWith('.ts')) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
 }
 
 describe('security boundaries', () => {
@@ -45,6 +67,50 @@ describe('security boundaries', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects config files with unsupported enum values', async () => {
+    const root = await makeRepoLocalTempDir('.pgfence-config-invalid-output-');
+    await writeFile(path.join(root, '.pgfence.json'), JSON.stringify({ output: 'xml' }), 'utf8');
+
+    try {
+      await expect(loadConfigFile(root)).rejects.toThrow('"output" must be one of');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects config files with malformed plugin lists', async () => {
+    const root = await makeRepoLocalTempDir('.pgfence-config-invalid-plugins-');
+    await writeFile(path.join(root, '.pgfence.json'), JSON.stringify({ plugins: ['ok.mjs', ''] }), 'utf8');
+
+    try {
+      await expect(loadConfigFile(root)).rejects.toThrow('"plugins" must be an array of non-empty strings');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid config values instead of silently falling back to defaults', async () => {
+    const root = await makeRepoLocalTempDir('.pgfence-config-invalid-');
+    await writeFile(path.join(root, '.pgfence.json'), JSON.stringify({ 'max-risk': 'severe' }), 'utf8');
+
+    try {
+      await expect(loadConfigFile(root)).rejects.toThrow('"max-risk" must be one of');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects non-array plugin config entries', async () => {
+    const root = await makeRepoLocalTempDir('.pgfence-config-plugins-');
+    await writeFile(path.join(root, '.pgfence.json'), JSON.stringify({ plugins: './plugin.mjs' }), 'utf8');
+
+    try {
+      await expect(loadConfigFile(root)).rejects.toThrow('"plugins" must be an array of non-empty strings');
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 
@@ -115,6 +181,56 @@ describe('security boundaries', () => {
     }
   });
 
+  it('rejects malformed plugin rule entries', async () => {
+    const projectRoot = await makeRepoLocalTempDir('.pgfence-plugin-malformed-');
+    const pluginFile = path.join(projectRoot, 'bad.mjs');
+    await writeFile(
+      pluginFile,
+      `export default {
+        name: 'bad-plugin',
+        rules: [
+          {
+            ruleId: 'plugin:bad',
+          },
+        ],
+      };`,
+      'utf8',
+    );
+
+    const previousCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+      const { loadPlugins } = await import('../src/plugins.js');
+      await expect(loadPlugins(['bad.mjs'])).rejects.toThrow('must export { ruleId, check }');
+    } finally {
+      process.chdir(previousCwd);
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed plugin entries with a descriptive error', async () => {
+    const projectRoot = await makeRepoLocalTempDir('.pgfence-plugin-bad-shape-');
+    const pluginFile = path.join(projectRoot, 'bad.mjs');
+    await writeFile(
+      pluginFile,
+      `export default {
+        name: 'bad-plugin',
+        rules: [{}],
+      };`,
+      'utf8',
+    );
+
+    const previousCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+      const { loadPlugins } = await import('../src/plugins.js');
+      await expect(loadPlugins(['bad.mjs'])).rejects.toThrow('must export { ruleId, check }');
+    } finally {
+      process.chdir(previousCwd);
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('keeps cloud hooks explicit and opt-in', async () => {
     const hooks = await getCloudHooks();
     expect(hooks.onAnalysisStart).toBeUndefined();
@@ -138,5 +254,17 @@ describe('security boundaries', () => {
     });
 
     expect(started).toEqual(['fixture.sql']);
+  });
+
+  it('keeps public source files free of local-only cloud or agent imports', async () => {
+    const sourceFiles = await collectTypeScriptFiles(path.join(process.cwd(), 'src'));
+    const forbiddenReference = /from ['"]\.\.?\/(?:cloud|agent)\//;
+    const forbiddenDynamicImport = /import\(['"]\.\.?\/(?:cloud|agent)\//;
+
+    for (const sourceFile of sourceFiles) {
+      const content = await readFile(sourceFile, 'utf8');
+      expect(content).not.toMatch(forbiddenReference);
+      expect(content).not.toMatch(forbiddenDynamicImport);
+    }
   });
 });

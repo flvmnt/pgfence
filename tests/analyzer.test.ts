@@ -176,6 +176,16 @@ ALTER TABLE users ADD COLUMN x int;`;
     expect(concurrentInTx!.statementIndex).toBeGreaterThanOrEqual(0);
   });
 
+  it('should detect other CONCURRENTLY operations inside explicit transactions', async () => {
+    const results = await analyze([fixture('concurrent-special-ops-in-tx.sql')], defaultConfig);
+    const violations = results[0].policyViolations.filter((v) => v.ruleId === 'concurrent-in-transaction');
+
+    expect(violations).toHaveLength(3);
+    expect(violations.some((v) => v.message.includes('DROP INDEX CONCURRENTLY'))).toBe(true);
+    expect(violations.some((v) => v.message.includes('REINDEX CONCURRENTLY'))).toBe(true);
+    expect(violations.some((v) => v.message.includes('DETACH PARTITION CONCURRENTLY'))).toBe(true);
+  });
+
   it('should extract SQL from TypeORM queryRunner.query() calls', async () => {
     const results = await analyze(
       [fixture('dangerous-typeorm.ts')],
@@ -340,6 +350,7 @@ ALTER TABLE users ADD COLUMN x int;`;
 
     expect(checks).toHaveLength(4);
     expect(checks.every((c) => c.tableName === 'audit_log')).toBe(true);
+    expect(checks.some((c) => c.message.includes('tautological WHERE clause'))).toBe(true);
   });
 
   it('should detect VACUUM FULL as HIGH risk', async () => {
@@ -406,6 +417,16 @@ ALTER TABLE users ADD COLUMN x int;`;
 
     const updateCheck = violations.find((v) => v.ruleId === 'update-in-migration');
     expect(updateCheck).toBeUndefined();
+  });
+
+  it('should warn on UPDATE with tautological WHERE in migration', async () => {
+    const results = await analyze([fixture('update-tautological-where.sql')], defaultConfig);
+    const violations = results[0].policyViolations;
+
+    const updateCheck = violations.find((v) => v.ruleId === 'update-in-migration');
+    expect(updateCheck).toBeDefined();
+    expect(updateCheck!.severity).toBe('warning');
+    expect(updateCheck!.message).toContain('tautological WHERE');
   });
 
   it('should auto-detect Prisma migrations safely', () => {

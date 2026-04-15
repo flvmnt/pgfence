@@ -19,6 +19,7 @@ import { makePreview } from '../parser.js';
 import type { PgfenceConfig, PolicyViolation } from '../types.js';
 import type { LockMode } from '../types.js';
 import { createTransactionState, processTransactionStmt, recordLock } from '../transaction-state.js';
+import { isAlwaysTrueWhereClause } from './destructive.js';
 
 /**
  * Parse a Postgres timeout string to milliseconds.
@@ -269,29 +270,33 @@ export function checkPolicies(
       }
     }
 
-    // CONCURRENTLY inside transaction → error
-    if (stmt.nodeType === 'IndexStmt') {
-      const node = stmt.node as { concurrent?: boolean };
-      if (node.concurrent === true && txState.active) {
+    // Operations that require autocommit must not run inside explicit transactions.
+    if (txState.active) {
+      const autocommitOnlyOp = getAutocommitOnlyOperation(stmt);
+      if (autocommitOnlyOp) {
         violations.push({
           ruleId: 'concurrent-in-transaction',
-          message: 'CREATE INDEX CONCURRENTLY inside a transaction: this will fail at runtime',
+          message: `${autocommitOnlyOp} inside a transaction: this will fail at runtime`,
           suggestion: 'Run CONCURRENTLY operations outside of BEGIN/COMMIT blocks',
           severity: 'error',
           statementIndex: i,
         });
       }
-
     }
 
-    // UPDATE inside migration → warning (only flag bulk updates without WHERE)
+    // UPDATE inside migration → warning (flag bulk updates without an effective WHERE clause)
     if (stmt.nodeType === 'UpdateStmt') {
       const updateNode = stmt.node as { whereClause?: unknown };
       const hasWhere = updateNode.whereClause && typeof updateNode.whereClause === 'object' && Object.keys(updateNode.whereClause as Record<string, unknown>).length > 0;
-      if (!hasWhere) {
+      const hasTautologicalWhere = updateNode.whereClause
+        ? isAlwaysTrueWhereClause(updateNode.whereClause)
+        : false;
+      if (!hasWhere || hasTautologicalWhere) {
         violations.push({
           ruleId: 'update-in-migration',
-          message: 'UPDATE without WHERE in migration: bulk backfills should run out-of-band in batches',
+          message: hasTautologicalWhere
+            ? 'UPDATE with a tautological WHERE clause in migration: this still updates every row and should run out-of-band in batches'
+            : 'UPDATE without WHERE in migration: bulk backfills should run out-of-band in batches',
           suggestion: 'Move data backfill to an out-of-band job using batched UPDATE with FOR UPDATE SKIP LOCKED',
           severity: 'warning',
           statementIndex: i,
@@ -531,4 +536,51 @@ function getStatementLockMode(stmt: ParsedStatement): LockMode | null {
     default:
       return null;
   }
+}
+
+function getAutocommitOnlyOperation(stmt: ParsedStatement): string | null {
+  if (stmt.nodeType === 'IndexStmt') {
+    const node = stmt.node as { concurrent?: boolean };
+    return node.concurrent === true ? 'CREATE INDEX CONCURRENTLY' : null;
+  }
+
+  if (stmt.nodeType === 'DropStmt') {
+    const node = stmt.node as { removeType?: string; concurrent?: boolean };
+    if (node.removeType === 'OBJECT_INDEX' && node.concurrent === true) {
+      return 'DROP INDEX CONCURRENTLY';
+    }
+    return null;
+  }
+
+  if (stmt.nodeType === 'ReindexStmt') {
+    const node = stmt.node as { params?: Array<{ DefElem?: { defname?: string } }> };
+    const isConcurrent = (node.params ?? []).some(
+      (p) => p.DefElem?.defname === 'concurrently',
+    );
+    return isConcurrent ? 'REINDEX CONCURRENTLY' : null;
+  }
+
+  if (stmt.nodeType === 'AlterTableStmt') {
+    const node = stmt.node as {
+      cmds?: Array<{
+        AlterTableCmd?: {
+          subtype?: string;
+          def?: {
+            PartitionCmd?: { concurrent?: boolean };
+          };
+        };
+      }>;
+    };
+    for (const cmd of node.cmds ?? []) {
+      const alterCmd = cmd.AlterTableCmd;
+      if (
+        alterCmd?.subtype === 'AT_DetachPartition' &&
+        alterCmd.def?.PartitionCmd?.concurrent === true
+      ) {
+        return 'DETACH PARTITION CONCURRENTLY';
+      }
+    }
+  }
+
+  return null;
 }

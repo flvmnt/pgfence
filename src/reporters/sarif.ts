@@ -13,6 +13,10 @@ import { RiskLevel } from '../types.js';
 interface SarifLocation {
   physicalLocation: {
     artifactLocation: { uri: string; uriBaseId?: string };
+    region?: {
+      startLine: number;
+      startColumn?: number;
+    };
   };
 }
 
@@ -100,6 +104,42 @@ function toSarifResults(
       level: v.severity === 'error' ? 'error' : 'warning',
       message: { text: `${v.message} Fix: ${v.suggestion}` },
       locations: [{ physicalLocation: { artifactLocation: { uri, uriBaseId: '%SRCROOT%' } } }],
+    });
+  }
+
+  for (const warning of result.extractionWarnings ?? []) {
+    const warningRuleId = 'pgfence-extraction-warning';
+    if (!rules.has(warningRuleId)) {
+      rules.set(warningRuleId, {
+        id: warningRuleId,
+        name: 'PgfenceExtractionWarning',
+        shortDescription: { text: 'SQL extraction warning' },
+        helpUri: 'https://pgfence.com/docs/checks/unknowns',
+        properties: { tags: ['postgres', 'migration', 'coverage'] },
+      });
+    }
+
+    const messageText = warning.unanalyzable
+      ? `${warning.message} Statement could not be statically analyzed.`
+      : warning.message;
+    const location: SarifLocation = {
+      physicalLocation: {
+        artifactLocation: { uri, uriBaseId: '%SRCROOT%' },
+      },
+    };
+
+    if (warning.line != null) {
+      location.physicalLocation.region = {
+        startLine: warning.line,
+        startColumn: warning.column != null ? warning.column + 1 : undefined,
+      };
+    }
+
+    sarifResults.push({
+      ruleId: warningRuleId,
+      level: warning.unanalyzable ? 'warning' : 'note',
+      message: { text: messageText },
+      locations: [location],
     });
   }
 

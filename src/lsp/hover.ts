@@ -54,9 +54,9 @@ function buildHoverMarkdown(check: CheckResult): string {
   const effectiveRisk = check.adjustedRisk ?? check.risk;
   const lines: string[] = [];
 
-  lines.push(`**pgfence** | \`${check.ruleId}\` | ${effectiveRisk} risk`);
+  lines.push(`**pgfence** | ${inlineCode(check.ruleId)} | ${escapeMarkdownText(effectiveRisk)} risk`);
   lines.push('');
-  lines.push(`**Lock**: \`${check.lockMode}\``);
+  lines.push(`**Lock**: ${inlineCode(check.lockMode)}`);
 
   const blockParts: string[] = [];
   if (check.blocks.reads) blockParts.push('reads');
@@ -68,29 +68,53 @@ function buildHoverMarkdown(check: CheckResult): string {
   if (!check.blocks.writes) allowParts.push('writes');
   if (!check.blocks.otherDdl) allowParts.push('DDL');
 
-  lines.push(`**Blocks**: ${blockParts.join(', ') || 'nothing'} | **Allows**: ${allowParts.join(', ') || 'nothing'}`);
+  lines.push(
+    `**Blocks**: ${escapeMarkdownText(blockParts.join(', ') || 'nothing')} | ` +
+    `**Allows**: ${escapeMarkdownText(allowParts.join(', ') || 'nothing')}`,
+  );
 
   if (check.tableName) {
-    lines.push(`**Table**: \`${check.tableName}\``);
+    lines.push(`**Table**: ${inlineCode(check.tableName)}`);
   }
 
   if (check.adjustedRisk && check.adjustedRisk !== check.risk) {
-    lines.push(`**Base risk**: ${check.risk} (adjusted by table size)`);
+    lines.push(`**Base risk**: ${escapeMarkdownText(check.risk)} (adjusted by table size)`);
   }
 
   lines.push('');
-  lines.push(check.message);
+  lines.push(escapeMarkdownText(check.message));
 
   if (check.safeRewrite) {
     lines.push('');
-    lines.push(`**Safe alternative**: ${check.safeRewrite.description}`);
+    lines.push(`**Safe alternative**: ${escapeMarkdownText(check.safeRewrite.description)}`);
     lines.push('');
-    lines.push('```sql');
-    for (const step of check.safeRewrite.steps) {
-      lines.push(step);
-    }
-    lines.push('```');
+    lines.push(...renderSqlBlock(check.safeRewrite.steps));
   }
 
   return lines.join('\n');
+}
+
+function escapeMarkdownText(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/([`*_{}()#+\-.!|>])/g, '\\$1')
+    .replace(/\[/g, '\\[')
+    .replace(/]/g, '\\]');
+}
+
+function inlineCode(text: string): string {
+  const backtickRuns = text.match(/`+/g) ?? [];
+  const longestRun = Math.max(0, ...backtickRuns.map((run) => run.length));
+  const fence = '`'.repeat(Math.max(1, longestRun + 1));
+  const paddedText = /(^`)|(`$)/.test(text) ? ` ${text} ` : text;
+  return `${fence}${paddedText}${fence}`;
+}
+
+function renderSqlBlock(steps: string[]): string[] {
+  const longestRun = Math.max(
+    0,
+    ...steps.flatMap((step) => (step.match(/`+/g) ?? []).map((run) => run.length)),
+  );
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  return [(`${fence}sql`), ...steps, fence];
 }
