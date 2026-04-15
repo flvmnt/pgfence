@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url';
 import type { ParsedStatement } from './parser.js';
 import type { CheckResult, ExtractionWarning, PgfenceConfig, PolicyViolation } from './types.js';
 
-const ALLOWED_PLUGIN_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts']);
+const ALLOWED_PLUGIN_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
 
 function isWithinRoot(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);

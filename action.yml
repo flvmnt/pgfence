@@ -38,7 +38,14 @@ runs:
         INPUT_DB_URL: ${{ inputs.db-url }}
         INPUT_STATS_FILE: ${{ inputs.stats-file }}
       run: |
-        ARGS=("$INPUT_PATH" "--ci" "--max-risk" "$INPUT_MAX_RISK")
+        shopt -s nullglob
+        FILES=($INPUT_PATH)
+        if [ "${#FILES[@]}" -eq 0 ]; then
+          echo "No files matched path: $INPUT_PATH"
+          exit 1
+        fi
+
+        ARGS=("${FILES[@]}" "--ci" "--max-risk" "$INPUT_MAX_RISK")
         if [ "$INPUT_FORMAT" != "auto" ]; then
           ARGS+=("--format" "$INPUT_FORMAT")
         fi

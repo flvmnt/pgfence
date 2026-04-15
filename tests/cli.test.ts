@@ -1,17 +1,26 @@
-import { describe, it, expect } from 'vitest';
-import { exec } from 'child_process';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { exec, execFile } from 'child_process';
 import util from 'util';
 import path from 'path';
 import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { analyze, RISK_ORDER } from '../src/analyzer.js';
 import type { PgfenceConfig } from '../src/types.js';
 import { RiskLevel } from '../src/types.js';
+import { installHooks } from '../src/init.js';
 
 const execPromise = util.promisify(exec);
+const execFilePromise = util.promisify(execFile);
 const cliPath = path.join(process.cwd(), 'src', 'index.ts');
 const distCliPath = path.join(process.cwd(), 'dist', 'index.js');
 const fixturesDir = path.join(process.cwd(), 'tests', 'fixtures');
 const hasBuiltCli = () => existsSync(distCliPath);
+
+async function git(cwd: string, args: string[]): Promise<string> {
+    const { stdout } = await execFilePromise('git', args, { cwd });
+    return stdout.trim();
+}
 
 /** Run CLI: use built binary if available, otherwise tsx (can fail in restricted envs). */
 function cliCommand(args: string): string {
@@ -71,6 +80,12 @@ describe('CI exit code logic', () => {
 });
 
 describe.skipIf(!hasBuiltCli())('CLI e2e (built binary)', () => {
+    beforeEach(async () => {
+        if (!existsSync(distCliPath)) {
+            await execPromise('pnpm build');
+        }
+    });
+
     it('exits 0 and prints coverage when analyzing safe migration', async () => {
         const fixture = path.join(fixturesDir, 'safe-migration.sql');
         const { stdout, stderr } = await execPromise(`node "${distCliPath}" analyze "${fixture}"`);
@@ -87,13 +102,72 @@ describe.skipIf(!hasBuiltCli())('CLI e2e (built binary)', () => {
     });
 
     it('exits 2 on system error (snapshot with bad db url)', async () => {
-        await expect(
-            execPromise(`node "${distCliPath}" snapshot --db-url postgres://bad:bad@localhost:0/noexist`),
-        ).rejects.toMatchObject({ code: 2 });
+        try {
+            await execPromise(cliCommand('snapshot --db-url postgres://bad:bad@localhost:0/noexist'));
+            throw new Error('expected snapshot to fail');
+        } catch (err: unknown) {
+            const error = err as { code?: number; stderr?: string };
+            expect(error.code).toBe(2);
+            expect(error.stderr).toContain('pgfence snapshot error');
+        }
     });
 });
 
 describe('CLI tests', () => {
+    it('expands action-style glob inputs before invoking pgfence', async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'pgfence-action-glob-'));
+        const migrationsDir = path.join(root, 'migrations');
+        await mkdir(migrationsDir, { recursive: true });
+        await writeFile(path.join(migrationsDir, '001.sql'), 'SELECT 1;\n');
+        await writeFile(path.join(migrationsDir, '002.sql'), 'SELECT 2;\n');
+
+        try {
+            const script = `
+shopt -s nullglob
+INPUT_PATH='migrations/*.sql'
+FILES=($INPUT_PATH)
+printf '%s\\n' "\${FILES[@]}"
+`;
+            const { stdout } = await execFilePromise('bash', ['-lc', script], { cwd: root });
+            expect(stdout.trim().split('\n').sort()).toEqual(['migrations/001.sql', 'migrations/002.sql']);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('installs hooks in worktrees and keeps existing hook behavior intact', async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'pgfence-init-worktree-'));
+        const repoDir = path.join(root, 'repo');
+        const worktreeDir = path.join(root, 'worktree');
+        await mkdir(repoDir, { recursive: true });
+
+        const previousCwd = process.cwd();
+        try {
+            await git(repoDir, ['init']);
+            await git(repoDir, ['config', 'user.email', 'flavius.mnt11@gmail.com']);
+            await git(repoDir, ['config', 'user.name', 'Munteanu Flavius-Ioan']);
+            await writeFile(path.join(repoDir, 'README.md'), 'init\n', 'utf8');
+            await git(repoDir, ['add', 'README.md']);
+            await git(repoDir, ['commit', '-m', 'init']);
+            await git(repoDir, ['worktree', 'add', '--detach', worktreeDir, 'HEAD']);
+
+            const hooksPath = await git(worktreeDir, ['rev-parse', '--git-path', 'hooks']);
+            const resolvedHooksDir = path.isAbsolute(hooksPath) ? hooksPath : path.resolve(worktreeDir, hooksPath);
+            await mkdir(resolvedHooksDir, { recursive: true });
+            await writeFile(path.join(resolvedHooksDir, 'pre-commit'), '#!/bin/sh\nexit 0\n', 'utf8');
+
+            process.chdir(worktreeDir);
+            await installHooks();
+
+            const installed = await readFile(path.join(resolvedHooksDir, 'pre-commit'), 'utf8');
+            expect(installed).toContain('pgfence analyze');
+            expect(installed.indexOf('pgfence analyze')).toBeLessThan(installed.indexOf('exit 0'));
+        } finally {
+            process.chdir(previousCwd);
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('runs default cli analysis', async () => {
         const fixture = path.join(fixturesDir, 'safe-migration.sql');
         const { stdout } = await execPromise(cliCommand(`analyze "${fixture}"`));

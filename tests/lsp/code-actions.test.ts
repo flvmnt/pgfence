@@ -4,7 +4,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { getCodeActions } from '../../src/lsp/code-actions.js';
 import { analyzeText } from '../../src/lsp/analyze-text.js';
 import type { AnalyzeTextResult } from '../../src/lsp/analyze-text.js';
-import { checkResultToDiagnostic } from '../../src/lsp/diagnostics.js';
+import { checkResultToDiagnostic, policyViolationToDiagnostic } from '../../src/lsp/diagnostics.js';
 import { RiskLevel } from '../../src/types.js';
 import type { PgfenceConfig } from '../../src/types.js';
 import type { CodeActionParams } from 'vscode-languageserver';
@@ -77,6 +77,30 @@ describe('Code Actions', () => {
 
     const edit = ignore!.edit!.changes![uri];
     expect(edit[0].newText).toContain('-- pgfence-ignore:');
+  });
+
+  it('should insert policy ignore actions at the violating statement', async () => {
+    const sql = `CREATE INDEX idx ON users (email);
+SET lock_timeout = 0;
+SET statement_timeout = '5min';
+SET application_name = 'migrate:test-zero';
+SET idle_in_transaction_session_timeout = '30s';`;
+    const uri = 'file:///test.sql';
+    const doc = makeDoc(uri, sql);
+    const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: defaultConfig });
+    const lockTimeout = analysis.policyViolations.find(v => v.ruleId === 'lock-timeout-zero');
+    expect(lockTimeout).toBeDefined();
+    const lockTimeoutIndex = analysis.policyViolations.findIndex(v => v.ruleId === 'lock-timeout-zero');
+    const diagnostic = policyViolationToDiagnostic(lockTimeout!, analysis.policySourceRanges[lockTimeoutIndex], sql);
+
+    const params = makeParams(uri, diagnostic.range, [diagnostic]);
+    const actions = getCodeActions(params, analysis, doc);
+
+    const ignore = actions.find(a => a.title.startsWith('pgfence-ignore:'));
+    expect(ignore).toBeDefined();
+    const edit = ignore!.edit!.changes![uri];
+    expect(edit[0].range.start.line).toBe(1);
+    expect(edit[0].newText).toContain('lock-timeout-zero');
   });
 
   it('should not offer a quick fix for placeholder-heavy ADD COLUMN rewrites', async () => {
