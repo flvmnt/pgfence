@@ -6,6 +6,31 @@
 
 Lead with a short, specific note about the public stack signal, then offer a design-partner conversation for the planned pgfence Cloud layer. Keep the analyzer free, and position the design-partner program around approvals, policy, and audit history for risky Postgres migrations.
 
+## Proof You Can Use
+
+Do not front-load these in the first email. Use them in replies, follow-ups, or live calls.
+
+- Prisma has a public pgfence integration guide: [Prisma integration guide](https://www.prisma.io/docs/guides/integrations/pgfence)
+- pglt lists pgfence in its migration-safety related work: [pglt related work](https://raw.githubusercontent.com/supabase-community/postgres-language-server/main/docs/reference/related_work.md)
+- Repo-backed proof for ORM support and shipped surfaces lives here: [proof-points.md](../proof-points.md)
+
+## Best Current Signals
+
+The highest-signal outbound targets right now are the companies in [target-accounts.md](./target-accounts.md), especially those with public TypeORM or Prisma plus Postgres evidence.
+
+Current best first wave:
+
+- Grid
+- Solace
+- Toma
+- Jolly
+- Ketryx
+- WPP Media
+- SewerAI
+- Cal.com
+- Trigger.dev
+- Peec AI
+
 ## Cold Email 1
 
 **Subject:** Quick question about Postgres migration safety at {{company}}
