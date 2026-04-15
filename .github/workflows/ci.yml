@@ -31,7 +31,7 @@ jobs:
           fi
       - uses: pnpm/action-setup@v6
         with:
-          version: 9
+          version: 10.33.0
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
