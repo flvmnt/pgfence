@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { describe, expect, it } from 'vitest';
 
 function listTrackedSourceFiles(): Set<string> {
   const stdout = execFileSync('git', ['ls-files', 'src'], {
@@ -34,7 +35,10 @@ function parsePackJson(rawPackJson: string): Array<{ files?: Array<{ path: strin
 
 describe('package surface', () => {
   it('only ships dist artifacts backed by tracked public source files', () => {
-    const packJson = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+    expect(existsSync('dist/index.js')).toBe(true);
+    expect(existsSync('dist/lsp/server.js')).toBe(true);
+
+    const packJson = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
       cwd: process.cwd(),
       encoding: 'utf8',
     });

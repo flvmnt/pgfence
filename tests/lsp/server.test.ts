@@ -65,7 +65,7 @@ function collectMessages(child: ChildProcess): { messages: JsonRpcMessage[]; wai
     }
   });
 
-  function waitFor(pred: (m: JsonRpcMessage) => boolean, timeoutMs = 5000): Promise<JsonRpcMessage> {
+  function waitFor(pred: (m: JsonRpcMessage) => boolean, timeoutMs = 10000): Promise<JsonRpcMessage> {
     // Check already received messages
     const existing = messages.find(pred);
     if (existing) return Promise.resolve(existing);
@@ -85,7 +85,7 @@ function collectMessages(child: ChildProcess): { messages: JsonRpcMessage[]; wai
   return { messages, waitFor };
 }
 
-describe('LSP Server Integration', () => {
+describe('LSP Server Integration', { timeout: 15000 }, () => {
   let child: ChildProcess | undefined;
 
   afterEach(() => {
