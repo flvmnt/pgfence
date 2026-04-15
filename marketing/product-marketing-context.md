@@ -18,6 +18,9 @@ Open-source developer tool plus a planned paid B2B governance layer.
 **Business model:**  
 Free analyzer forever. Planned paid cloud or governance layer, currently being validated with design partners, for approvals, policy management, audit log, and enterprise controls. Best-fit pricing metric is per protected production database or per protected production application.
 
+**Current paid offer:**  
+A hands-on paid design-partner pilot for one production Postgres workflow. The buyer is paying for migration governance, rollout help, policy design, and direct support while approvals, exemptions, and auditability are being hardened, not for access to the free analyzer itself.
+
 ## Target Audience
 **Target companies:**  
 Software companies using Postgres in production, typically with 10 to 100 engineers, shipping frequently, and running without a dedicated DBA review process.
@@ -41,6 +44,7 @@ Catch risky Postgres migrations before merge, and validate whether governance fo
 - CI checks for migration safety
 - Editor diagnostics while writing migrations
 - Potential paid use case being validated: approval workflows for HIGH and CRITICAL changes
+- Current paid pilot use case: give engineering leaders a more accountable migration review process around one production database or application workflow
 
 ## Personas
 | Persona | Cares about | Challenge | Value we aim to deliver |
