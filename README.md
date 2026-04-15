@@ -402,11 +402,13 @@ ALTER TABLE users DROP CONSTRAINT chk_email_verified;
 
 ### GitHub Actions
 
+Use a concrete migration path here. The Action does not shell-expand globs, so `migrations/*.sql` belongs in a `run:` step instead.
+
 ```yaml
 - name: Check migration safety
   uses: flvmnt/pgfence@v1
   with:
-    path: migrations/*.sql
+    path: migrations/add-users.sql
     max-risk: medium
 ```
 
@@ -415,7 +417,7 @@ ALTER TABLE users DROP CONSTRAINT chk_email_verified;
 ```yaml
 - name: Analyze migrations
   run: |
-    npx pgfence analyze --output github migrations/*.sql > pgfence-report.md
+    npx @flvmnt/pgfence analyze --output github migrations/*.sql > pgfence-report.md
 - name: Comment on PR
   uses: marocchino/sticky-pull-request-comment@v2
   with:
