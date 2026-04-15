@@ -6,6 +6,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { realpath } from 'node:fs/promises';
 import type { PgfenceConfig } from './types.js';
 import { RiskLevel } from './types.js';
 
@@ -45,18 +46,31 @@ async function loadJson(configPath: string): Promise<PgfenceConfigFile> {
   return parsed as PgfenceConfigFile;
 }
 
+function isWithinRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 /**
  * Load config from .pgfence.toml or .pgfence.json in cwd only.
  * Returns null if no file found.
  */
 export async function loadConfigFile(cwd: string): Promise<PgfenceConfigFile | null> {
-  const configDir = path.resolve(cwd);
+  const configDir = await realpath(path.resolve(cwd));
   const tomlPath = path.join(configDir, '.pgfence.toml');
   const jsonPath = path.join(configDir, '.pgfence.json');
   if (existsSync(tomlPath)) {
+    const realTomlPath = await realpath(tomlPath);
+    if (!isWithinRoot(configDir, realTomlPath)) {
+      throw new Error(`Config file "${tomlPath}" resolves outside the current directory`);
+    }
     return loadToml(tomlPath);
   }
   if (existsSync(jsonPath)) {
+    const realJsonPath = await realpath(jsonPath);
+    if (!isWithinRoot(configDir, realJsonPath)) {
+      throw new Error(`Config file "${jsonPath}" resolves outside the current directory`);
+    }
     return loadJson(jsonPath);
   }
   return null;

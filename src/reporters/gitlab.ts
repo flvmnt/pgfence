@@ -52,16 +52,26 @@ export function reportGitLab(results: AnalysisResult[]): string {
 
   for (const result of results) {
     const path = normalizePath(result.filePath);
-    let occurrence = 0;
+    const fingerprintsBySeed = new Map<string, number>();
 
-    const pushViolation = (violation: Omit<GitLabViolation, 'fingerprint'>, seed: string): void => {
-      occurrence += 1;
+    const pushViolation = (
+      violation: Omit<GitLabViolation, 'fingerprint'>,
+      seed: string,
+      beginLine: number,
+    ): void => {
+      const nextOccurrence = (fingerprintsBySeed.get(seed) ?? 0) + 1;
+      fingerprintsBySeed.set(seed, nextOccurrence);
       violations.push({
         ...violation,
-        fingerprint: fingerprint(seed, path, occurrence),
+        location: {
+          ...violation.location,
+          lines: { begin: beginLine },
+        },
+        fingerprint: fingerprint(seed, path, nextOccurrence),
       });
     };
 
+    let syntheticLine = 1;
     for (const check of result.checks) {
       const effectiveRisk = check.adjustedRisk ?? check.risk;
       pushViolation({
@@ -69,7 +79,7 @@ export function reportGitLab(results: AnalysisResult[]): string {
         check_name: check.ruleId,
         severity: riskToSeverity(effectiveRisk),
         location: { path, lines: { begin: 1 } },
-      }, check.ruleId);
+      }, check.ruleId, syntheticLine++);
     }
 
     for (const warning of result.extractionWarnings ?? []) {
@@ -78,7 +88,7 @@ export function reportGitLab(results: AnalysisResult[]): string {
         check_name: 'pgfence-extraction-warning',
         severity: warning.unanalyzable ? 'minor' : 'info',
         location: { path, lines: { begin: warning.line ?? 1 } },
-      }, `${warning.filePath}:${warning.line}:${warning.column}:${warning.message}`);
+      }, `${warning.filePath}:${warning.line}:${warning.column}:${warning.message}`, warning.line ?? syntheticLine++);
     }
 
     for (const v of result.policyViolations) {
@@ -89,7 +99,7 @@ export function reportGitLab(results: AnalysisResult[]): string {
         check_name: checkName,
         severity,
         location: { path, lines: { begin: 1 } },
-      }, checkName);
+      }, checkName, syntheticLine++);
     }
 
     const dynamicWarnings = (result.extractionWarnings ?? []).filter((warning) => warning.unanalyzable).length;
@@ -101,7 +111,7 @@ export function reportGitLab(results: AnalysisResult[]): string {
       check_name: 'pgfence-coverage-summary',
       severity: 'info',
       location: { path, lines: { begin: 1 } },
-    }, 'pgfence-coverage-summary');
+    }, 'pgfence-coverage-summary', syntheticLine++);
   }
 
   return JSON.stringify(violations, null, 2);

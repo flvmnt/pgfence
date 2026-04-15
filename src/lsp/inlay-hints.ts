@@ -18,6 +18,17 @@ import { RiskLevel } from '../types.js';
 import { offsetToPosition } from './diagnostics.js';
 import { getStatementEntries } from './statement-groups.js';
 
+function positionInRange(
+  position: { line: number; character: number },
+  start: { line: number; character: number },
+  end: { line: number; character: number },
+): boolean {
+  if (position.line < start.line || position.line > end.line) return false;
+  if (position.line === start.line && position.character < start.character) return false;
+  if (position.line === end.line && position.character > end.character) return false;
+  return true;
+}
+
 function riskIcon(risk: RiskLevel): string {
   switch (risk) {
     case RiskLevel.CRITICAL: return '🔴';
@@ -45,7 +56,7 @@ export function getInlayHints(
   for (const { check, sourceRange } of getStatementEntries(analysis)) {
     const endPos = offsetToPosition(text, sourceRange.endOffset);
 
-    if (endPos.line < rangeStart.line || endPos.line > rangeEnd.line) continue;
+    if (!positionInRange(endPos, rangeStart, rangeEnd)) continue;
 
     hints.push({
       position: endPos,

@@ -5,3 +5,5 @@ SET statement_timeout = '5min';
 DELETE FROM audit_log WHERE 1=1;
 DELETE FROM audit_log WHERE TRUE;
 DELETE FROM audit_log WHERE NOT FALSE;
+DELETE FROM audit_log WHERE NULL IS NULL;
+DELETE FROM audit_log WHERE NULL IS NOT NULL;

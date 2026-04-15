@@ -269,6 +269,17 @@ ALTER TABLE users ADD COLUMN x int;`;
     expect(renameCheck!.tableName).toBe('appointments');
   });
 
+  it('should keep pre-PG14 rename-column safeRewrite as guidance only', async () => {
+    const results = await analyze(
+      [fixture('dangerous-rename-column.sql')],
+      { ...defaultConfig, minPostgresVersion: 13 },
+    );
+    const renameCheck = results[0].checks.find((c) => c.ruleId === 'rename-column');
+    expect(renameCheck).toBeDefined();
+    expect(renameCheck!.safeRewrite).toBeDefined();
+    expect(renameCheck!.safeRewrite!.steps.every((step) => step.trim().startsWith('--'))).toBe(true);
+  });
+
   it('should detect DROP INDEX without CONCURRENTLY as MEDIUM risk', async () => {
     const results = await analyze([fixture('dangerous-index.sql')], defaultConfig);
     const checks = results[0].checks;
@@ -327,7 +338,7 @@ ALTER TABLE users ADD COLUMN x int;`;
     const results = await analyze([fixture('delete-tautologies.sql')], defaultConfig);
     const checks = results[0].checks.filter((c) => c.ruleId === 'delete-without-where');
 
-    expect(checks).toHaveLength(3);
+    expect(checks).toHaveLength(4);
     expect(checks.every((c) => c.tableName === 'audit_log')).toBe(true);
   });
 
@@ -691,6 +702,7 @@ DROP TABLE old_data;`;
     expect(varcharWithLen).toHaveLength(2);
     expect(varcharWithLen[0].message).toContain('safe if widening');
     expect(varcharWithLen[0].safeRewrite).toBeDefined();
+    expect(varcharWithLen[0].safeRewrite!.steps.every((step) => step.trim().startsWith('--'))).toBe(true);
   });
 
   it('should detect ALTER COLUMN TYPE cross-family change as HIGH risk', async () => {
@@ -701,6 +713,7 @@ DROP TABLE old_data;`;
     expect(highRisk).toHaveLength(1);
     expect(highRisk[0].message).toContain('rewrites the entire table');
     expect(highRisk[0].safeRewrite).toBeDefined();
+    expect(highRisk[0].safeRewrite!.steps.every((step) => step.trim().startsWith('--'))).toBe(true);
   });
 
   it('should use schema snapshot data for ALTER COLUMN TYPE classification', async () => {
@@ -1607,6 +1620,7 @@ describe('Plugin system', () => {
     expect(check!.message).toContain('myschema');
     expect(check!.message).toContain('newschema');
     expect(check!.safeRewrite).toBeDefined();
+    expect(check!.safeRewrite!.steps.every((step) => step.trim().startsWith('--'))).toBe(true);
   });
 
   it('should NOT fire rename-schema on RENAME COLUMN', async () => {
@@ -1723,6 +1737,7 @@ describe('Plugin system', () => {
     expect(check!.message).toContain('permanent');
     expect(check!.safeRewrite).toBeDefined();
     expect(check!.safeRewrite!.description).toContain('BEFORE or AFTER');
+    expect(check!.safeRewrite!.steps.every((step) => step.trim().startsWith('--'))).toBe(true);
   });
 
   it('should also emit alter-enum-add-value alongside alter-enum-no-ordering', async () => {

@@ -1,5 +1,5 @@
 /**
- * Test plugin — requires every CREATE TABLE to have a primary key.
+ * Test plugin, requires every CREATE TABLE to have a primary key.
  */
 module.exports = {
   name: 'test-require-pk',

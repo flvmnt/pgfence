@@ -213,15 +213,10 @@ export function checkAlterColumn(
           safeRewrite = {
             description: 'Use expand/contract pattern: add new column, backfill, swap',
             steps: [
-              `-- 1. Add new column with target type`,
-              `ALTER TABLE ${tableName} ADD COLUMN ${colName}_new <new_type>;`,
-              `-- 2. Backfill out-of-band in batches (repeat until 0 rows updated):`,
-              `-- WITH batch AS (`,
-              `--   SELECT ctid FROM ${tableName} WHERE ${colName}_new IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED`,
-              `-- )`,
-              `-- UPDATE ${tableName} t SET ${colName}_new = ${colName}::<new_type> FROM batch WHERE t.ctid = batch.ctid;`,
-              `-- 3. Swap columns (application-level)`,
-              `-- 4. Drop old column after verification`,
+              `-- 1. Add a new column with the target type.`,
+              `-- 2. Backfill it out-of-band in batches until no rows remain.`,
+              `-- 3. Switch application reads and writes to the new column.`,
+              `-- 4. Drop the old column after verification.`,
             ],
           };
         }
@@ -250,15 +245,10 @@ export function checkAlterColumn(
           safeRewrite: {
             description: 'Use expand/contract pattern: add new column, backfill, swap',
             steps: [
-              `-- 1. Add new column with target type`,
-              `ALTER TABLE ${tableName} ADD COLUMN ${colName}_new <new_type>;`,
-              `-- 2. Backfill out-of-band in batches (repeat until 0 rows updated):`,
-              `-- WITH batch AS (`,
-              `--   SELECT ctid FROM ${tableName} WHERE ${colName}_new IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED`,
-              `-- )`,
-              `-- UPDATE ${tableName} t SET ${colName}_new = ${colName}::<new_type> FROM batch WHERE t.ctid = batch.ctid;`,
-              `-- 3. Swap columns (application-level)`,
-              `-- 4. Drop old column after verification`,
+              `-- 1. Add a new column with the target type.`,
+              `-- 2. Backfill it out-of-band in batches until no rows remain.`,
+              `-- 3. Switch application reads and writes to the new column.`,
+              `-- 4. Drop the old column after verification.`,
             ],
           },
         });

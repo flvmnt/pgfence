@@ -34,6 +34,7 @@ describe('Document Symbols Provider', () => {
     const doc = makeDoc(sql);
     const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: defaultConfig });
 
+    expect(analysis.checks.length).toBeGreaterThan(1);
     const symbols = getDocumentSymbols(makeParams(), analysis, doc);
 
     expect(symbols).toHaveLength(1);

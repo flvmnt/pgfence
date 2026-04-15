@@ -8,7 +8,7 @@ BEGIN;
 -- ACCESS EXCLUSIVE on users
 ALTER TABLE users ALTER COLUMN email TYPE TEXT;
 
--- ACCESS EXCLUSIVE on orders — different table, wide lock window!
+-- ACCESS EXCLUSIVE on orders, different table, wide lock window!
 ALTER TABLE orders ALTER COLUMN status TYPE TEXT;
 
 COMMIT;

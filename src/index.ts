@@ -37,6 +37,7 @@ const program = new Command();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const isMainModule = process.argv[1] != null && path.resolve(process.argv[1]) === __filename;
 const pkgPath = path.resolve(__dirname, '../package.json');
 let pkg: { version: string };
 try {
@@ -486,4 +487,6 @@ program
     }
   });
 
-program.parse();
+if (isMainModule) {
+  program.parse();
+}

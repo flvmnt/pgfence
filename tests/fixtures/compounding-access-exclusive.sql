@@ -1,5 +1,5 @@
 -- Fixture: Multiple ACCESS EXCLUSIVE statements in same transaction
--- Expected: policy warning — compounding danger
+-- Expected: policy warning, compounding danger
 
 SET lock_timeout = '2s';
 SET statement_timeout = '5min';

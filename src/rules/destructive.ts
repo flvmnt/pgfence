@@ -281,6 +281,52 @@ function evaluateBooleanExpression(expr: unknown): boolean | null {
     return readBooleanConst(node.A_Const) ?? null;
   }
 
+  if (node.NullTest) {
+    const nullTest = node.NullTest as {
+      nulltesttype?: string;
+      arg?: unknown;
+    };
+    const isNull = readNullConst(nullTest.arg);
+    if (isNull === null) return null;
+    if (nullTest.nulltesttype === 'IS_NULL') return isNull;
+    if (nullTest.nulltesttype === 'IS_NOT_NULL') return !isNull;
+    return null;
+  }
+
+  if (node.BooleanTest) {
+    const booleanTest = node.BooleanTest as {
+      booltesttype?: string;
+      arg?: unknown;
+    };
+    const isNull = readNullConst(booleanTest.arg);
+    if (isNull === true) {
+      switch (booleanTest.booltesttype) {
+        case 'IS_TRUE':
+        case 'IS_FALSE':
+          return false;
+        case 'IS_NOT_TRUE':
+        case 'IS_NOT_FALSE':
+          return true;
+        default:
+          return null;
+      }
+    }
+    const value = evaluateBooleanExpression(booleanTest.arg);
+    if (value === null) return null;
+    switch (booleanTest.booltesttype) {
+      case 'IS_TRUE':
+        return value === true;
+      case 'IS_NOT_TRUE':
+        return value === false;
+      case 'IS_FALSE':
+        return value === false;
+      case 'IS_NOT_FALSE':
+        return value === true;
+      default:
+        return null;
+    }
+  }
+
   if (node.BoolExpr) {
     const boolExpr = node.BoolExpr as { boolop?: string; args?: unknown[] };
     const args = boolExpr.args ?? [];
@@ -334,6 +380,23 @@ function readBooleanConst(node: unknown): boolean | null {
   const constNode = node as { boolval?: { boolval?: boolean } };
   if (constNode.boolval === undefined) return null;
   return constNode.boolval.boolval === true;
+}
+
+function readNullConst(node: unknown): boolean | null {
+  if (!node || typeof node !== 'object') return null;
+  const constNode = node as {
+    A_Const?: {
+      boolval?: { boolval?: boolean };
+      ival?: { ival?: number };
+      sval?: { sval?: string };
+      isnull?: boolean;
+    };
+  };
+  if (!constNode.A_Const) return null;
+  const value = constNode.A_Const;
+  if (value.isnull === true) return true;
+  if (value.boolval !== undefined || value.ival !== undefined || value.sval !== undefined) return false;
+  return null;
 }
 
 function readLiteralValue(node: unknown): string | number | boolean | null {

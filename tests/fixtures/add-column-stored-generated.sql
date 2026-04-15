@@ -1,5 +1,5 @@
 -- Fixture: ADD COLUMN with GENERATED ALWAYS AS ... STORED
--- Expected: HIGH risk — causes full table rewrite
+-- Expected: HIGH risk, causes full table rewrite
 
 SET lock_timeout = '2s';
 SET statement_timeout = '5min';

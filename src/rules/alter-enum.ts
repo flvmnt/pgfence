@@ -82,12 +82,11 @@ export function checkAlterEnum(
       message: `ALTER TYPE "${typeName}" ADD VALUE '${newVal}': no BEFORE/AFTER position specified, value will be appended at the END of the enum ordering. Enum value positions are permanent - cannot be reordered without recreating the type.`,
       ruleId: 'alter-enum-no-ordering',
       safeRewrite: {
-        description: 'Specify BEFORE or AFTER to control enum value position',
+        description: 'Choose an enum anchor value before adding the new label, then run ALTER TYPE with BEFORE or AFTER.',
         steps: [
-          `ALTER TYPE "${typeName}" ADD VALUE '${newVal}' BEFORE '<next_value>';`,
-          `-- or`,
-          `ALTER TYPE "${typeName}" ADD VALUE '${newVal}' AFTER '<prev_value>';`,
-          `-- Note: enum value positions are permanent. Choose carefully.`,
+          `-- Identify the existing enum label that should come before or after the new value.`,
+          `-- Re-run ALTER TYPE "${typeName}" ADD VALUE '${newVal}' with BEFORE or AFTER once the anchor label is known.`,
+          `-- Enum value positions are permanent, choose carefully before deploying.`,
         ],
       },
     });

@@ -19,6 +19,18 @@ import type { AnalyzeTextResult } from './analyze-text.js';
 import { offsetToPosition } from './diagnostics.js';
 import type { SafeRewrite } from '../types.js';
 
+function rangeOverlaps(
+  startA: { line: number; character: number },
+  endA: { line: number; character: number },
+  startB: { line: number; character: number },
+  endB: { line: number; character: number },
+): boolean {
+  if (endA.line < startB.line || endB.line < startA.line) return false;
+  if (endA.line === startB.line && endA.character <= startB.character) return false;
+  if (endB.line === startA.line && endB.character <= startA.character) return false;
+  return true;
+}
+
 function isExecutableSafeRewrite(safeRewrite: SafeRewrite): boolean {
   let hasExecutableStep = false;
 
@@ -73,7 +85,7 @@ export function getCodeActions(
       const endPos = offsetToPosition(text, range.endOffset);
 
       // Check if this check overlaps the request range
-      if (endPos.line < requestRange.start.line || startPos.line > requestRange.end.line) continue;
+      if (!rangeOverlaps(startPos, endPos, requestRange.start, requestRange.end)) continue;
 
       // 1. Safe rewrite quick fix
       if (check.safeRewrite && isExecutableSafeRewrite(check.safeRewrite)) {

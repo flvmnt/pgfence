@@ -1,5 +1,5 @@
 -- Fixture: Operations on a newly-created table should not trigger warnings
--- Expected: no checks flagged — the table was just created, no data or readers exist
+-- Expected: no checks flagged, the table was just created, no data or readers exist
 
 SET lock_timeout = '2s';
 SET statement_timeout = '5min';

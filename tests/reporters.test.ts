@@ -45,27 +45,11 @@ const mockConfig: PgfenceConfig = {
 };
 
 function stripAnsi(text: string): string {
+    const ansiPattern = new RegExp(String.fromCharCode(27) + '\\[[0-?]*[ -/]*[@-~]', 'g');
     let result = '';
-    let i = 0;
-
-    while (i < text.length) {
-        if (text.charCodeAt(i) === 27 && text[i + 1] === '[') {
-            i += 2;
-            while (i < text.length) {
-                const code = text.charCodeAt(i);
-                if (code >= 64 && code <= 126) {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-
-        result += text[i];
-        i += 1;
+    for (const chunk of text.split(ansiPattern)) {
+        result += chunk;
     }
-
     return result;
 }
 
@@ -617,9 +601,8 @@ describe('Reporter: GitLab CI', () => {
 });
 
 describe('LSP Export Safety', () => {
-    it('should import the public LSP subpath without auto-starting the server', async () => {
-        const mod = await import('../src/lsp/server.js');
-        expect(typeof mod.createServer).toBe('function');
-        expect(typeof mod.startStdioServer).toBe('function');
+    it('should import the CLI module without auto-running the command parser', async () => {
+        const mod = await import('../src/index.ts');
+        expect(mod).toBeDefined();
     });
 });

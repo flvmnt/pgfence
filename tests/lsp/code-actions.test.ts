@@ -156,4 +156,17 @@ describe('Code Actions', () => {
     const safeRewrite = actions.find(a => a.title.startsWith('Safe rewrite:'));
     expect(safeRewrite).toBeUndefined();
   });
+
+  it('should match code actions only when the request range overlaps the statement', async () => {
+    const sql = 'CREATE INDEX idx ON users (email); SELECT 1;';
+    const uri = 'file:///test.sql';
+    const doc = makeDoc(uri, sql);
+    const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: defaultConfig });
+    const diagnostics = makeDiagnosticsFromAnalysis(analysis, sql);
+
+    const params = makeParams(uri, Range.create(0, 35, 0, 43), diagnostics);
+    const actions = getCodeActions(params, analysis, doc);
+
+    expect(actions).toHaveLength(0);
+  });
 });

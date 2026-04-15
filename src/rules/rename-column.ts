@@ -34,12 +34,10 @@ export function checkRenameColumn(
     const newName = node.newname ?? '<unknown>';
     const safeRewrite = config.minPostgresVersion < 14
       ? {
-          description: 'Pre-PG14: use expand/contract pattern since RENAME takes a full ACCESS EXCLUSIVE lock',
+          description: 'Pre-PG14: RENAME COLUMN still takes ACCESS EXCLUSIVE lock, so plan a maintenance window or use expand/contract.',
           steps: [
-            `ALTER TABLE ${tableName} ADD COLUMN ${newName} <type>;`,
-            `-- Backfill ${newName} from ${oldName} in batches`,
-            `-- Update application to read from ${newName}`,
-            `-- Drop old column after verification`,
+            `-- Pre-PG14, there is no non-blocking alternative for RENAME COLUMN.`,
+            `-- Use expand/contract if you need a zero-downtime migration: add the new column, backfill, switch reads, then drop the old column.`,
           ],
         }
       : undefined;
@@ -101,11 +99,10 @@ export function checkRenameColumn(
       safeRewrite: {
         description: 'Schema renames have no non-blocking alternative. Prefer creating a new schema and migrating objects.',
         steps: [
-          `CREATE SCHEMA IF NOT EXISTS ${newName};`,
-          `-- Migrate objects: ALTER TABLE ${oldName}.mytable SET SCHEMA ${newName};`,
-          `-- Update all application code and ORM configs to use "${newName}"`,
-          `-- Deploy and verify no references to "${oldName}" remain`,
-          `DROP SCHEMA IF EXISTS ${oldName};`,
+          `-- Create the target schema first, then migrate objects one by one.`,
+          `-- Move tables, views, and functions with ALTER ... SET SCHEMA.`,
+          `-- Update application code, ORM configs, and connection strings to use "${newName}".`,
+          `-- Drop the old schema only after all references to "${oldName}" are gone.`,
         ],
       },
     });

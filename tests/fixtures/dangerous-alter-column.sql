@@ -1,7 +1,7 @@
 -- Fixture: Dangerous ALTER COLUMN patterns
 -- Expected: HIGH/MEDIUM risk, ACCESS EXCLUSIVE lock
 
--- 1) Change column type (table rewrite — cross-family change)
+-- 1) Change column type (table rewrite, cross-family change)
 ALTER TABLE appointments ALTER COLUMN status TYPE integer USING status::integer;
 
 -- 2) SET NOT NULL (table scan + ACCESS EXCLUSIVE)

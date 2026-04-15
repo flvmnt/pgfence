@@ -8,7 +8,8 @@
   <td>
     <h1>pgfence</h1>
     <p>Postgres migration safety CLI. Know your lock modes, risk levels, and safe rewrite recipes before you merge.</p>
-    <p><strong>The only migration linter that understands your ORM: TypeORM, Prisma, Knex, Drizzle, Sequelize.</strong></p>
+    <p><strong>ORM-aware migration safety for TypeORM, Prisma, Knex, Drizzle, and Sequelize.</strong></p>
+    <p><a href="proof-points.md">Proof points and related work</a></p>
     <p>
       <a href="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml"><img src="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
       <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/v/@flvmnt/pgfence" alt="npm" /></a>
@@ -40,6 +41,14 @@ pgfence analyzes your SQL migration files **before they hit production** and tel
 3. **Safe rewrite recipes**, the exact expand/contract sequence to run instead
 
 Works with **raw SQL**, **TypeORM**, **Prisma**, **Knex**, **Drizzle**, and **Sequelize** migrations. No Ruby, no Rust, no Go. Just TypeScript.
+
+## Proof Points
+
+- Prisma support is real, not aspirational, with a dedicated extractor and tests in the repo.
+- Prisma also documents pgfence publicly in its [integration guide](https://www.prisma.io/docs/guides/integrations/pgfence).
+- pgfence is listed in the public [pglt Related Work](https://github.com/supabase-community/postgres-language-server/blob/main/docs/reference/related_work.md) page alongside Eugene, Squawk, Strong Migrations, and pgroll.
+- The public changelog records the major shipped surfaces: Prisma and the other ORM extractors, GitHub PR comments, SARIF, LSP, trace mode, and GitLab Code Quality.
+- The evidence trail lives in [proof-points.md](proof-points.md) for readers who want the receipts before adopting.
 
 ## Quick Demo
 
@@ -114,11 +123,11 @@ Other tools in this space worth knowing about:
 | [pgroll](https://github.com/xataio/pgroll) | Go | - | Migration **executor** (runs migrations with rollback). Complementary to pgfence. |
 | **pgfence** | **TypeScript** | **42** | **Multi-ORM, DB-size-aware, safe rewrites** |
 
-pgfence is the only linter that analyzes ORM migration files (TypeORM, Prisma, Knex, Drizzle, Sequelize), with full AST-walking transpilers that convert builder patterns into analyzable SQL. It also provides DB-size-aware risk scoring and complete expand/contract rewrite recipes.
+pgfence analyzes ORM migration files (TypeORM, Prisma, Knex, Drizzle, Sequelize) directly, which is the wedge over SQL-only linters. It also provides DB-size-aware risk scoring and complete expand/contract rewrite recipes.
 
 pgroll is not a competitor: it is a runtime executor (runs migrations with automatic rollback). pgfence analyzes before you run; pgroll handles how you run. They are complementary.
 
-pgfence is featured in the [pglt Related Work](https://github.com/supabase-community/postgres-language-server/blob/main/docs/reference/related_work.md) page (postgres-language-server, Supabase community).
+pgfence is listed in the public [pglt Related Work](https://github.com/supabase-community/postgres-language-server/blob/main/docs/reference/related_work.md) page (postgres-language-server, Supabase community), alongside Eugene, Squawk, Strong Migrations, and pgroll.
 
 ## VS Code Extension
 
@@ -129,6 +138,8 @@ Get real-time migration safety analysis directly in your editor:
 - **Hover info**: lock mode, blocked operations, and safe alternatives
 
 **[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence)** or search "pgfence" in the Extensions panel. Requires `@flvmnt/pgfence` installed in your project or globally. See the [extension docs](https://pgfence.com/docs/editor) for configuration and commands.
+
+If you want to launch the standalone language server directly, use the `pgfence-lsp` binary. The package `./lsp` subpath stays import-safe for tooling and bundlers.
 
 ## Installation
 

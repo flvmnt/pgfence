@@ -48,6 +48,22 @@ interface AlterTableCmd {
   };
 }
 
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function sanitizeIdentifierFragment(fragment: string): string {
+  const cleaned = fragment.trim().replace(/[^a-zA-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  return cleaned || 'fk';
+}
+
+function buildIndexColumnsSql(columns: string): string {
+  return columns
+    .split(',')
+    .map((column) => quoteIdentifier(column.trim()))
+    .join(', ');
+}
+
 export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
   if (stmt.nodeType !== 'AlterTableStmt') return [];
 
@@ -87,6 +103,9 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
       case 'CONSTR_FOREIGN': {
         const refTable = constraint.pktable?.relname ?? '<unknown>';
         const fkCols = (constraint.fk_attrs ?? []).map((a: { String: { sval: string } }) => a.String?.sval ?? '?').join(', ');
+        const safeTableName = tableName ? quoteIdentifier(tableName) : null;
+        const safeFkCols = fkCols ? buildIndexColumnsSql(fkCols) : null;
+        const safeIndexName = `idx_${sanitizeIdentifierFragment(tableName ?? 'tbl')}_${sanitizeIdentifierFragment(fkCols || 'fk_col')}`;
 
         // Always fire: missing index advisory regardless of NOT VALID.
         // Without an index on the FK columns, deletes/updates on the referenced table
@@ -100,13 +119,23 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
           risk: RiskLevel.LOW,
           message: `ADD FOREIGN KEY "${conName}" on (${fkCols || '<columns>'}): consider adding an index on the referencing columns to avoid sequential scans during CASCADE and DELETE operations on "${refTable}"`,
           ruleId: 'fk-missing-index',
-          safeRewrite: {
-            description: 'Create a covering index on the FK columns before adding the constraint',
-            steps: [
-              `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_${(tableName ?? 'tbl').toLowerCase()}_${(fkCols || 'fk_col').replace(/,\s*/g, '_').toLowerCase()} ON ${tableName}(${fkCols || '<columns>'});`,
-              `-- Run CONCURRENTLY outside a transaction (cannot be used inside BEGIN/COMMIT).`,
-            ],
-          },
+          ...(safeTableName && safeFkCols ? {
+            safeRewrite: {
+              description: 'Create a covering index on the FK columns before adding the constraint',
+              steps: [
+                `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${quoteIdentifier(safeIndexName)} ON ${safeTableName} (${safeFkCols});`,
+                `-- Run CONCURRENTLY outside a transaction (cannot be used inside BEGIN/COMMIT).`,
+              ],
+            },
+          } : {
+            safeRewrite: {
+              description: 'Create a covering index on the FK columns before adding the constraint',
+              steps: [
+                `-- Create an index on the FK columns before adding the constraint.`,
+                `-- Run CREATE INDEX CONCURRENTLY outside a transaction.`,
+              ],
+            },
+          }),
         });
 
         if (constraint.skip_validation === true) break; // NOT VALID: only index advisory fires

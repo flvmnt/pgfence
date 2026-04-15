@@ -31,6 +31,23 @@ describe('security boundaries', () => {
     }
   });
 
+  it('rejects symlinked config files that resolve outside the workspace', async () => {
+    const root = await makeRepoLocalTempDir('.pgfence-config-link-');
+    const outsideRoot = await makeRepoLocalTempDir('.pgfence-config-outside-');
+    const outsideConfig = path.join(outsideRoot, '.pgfence.json');
+    const linkedConfig = path.join(root, '.pgfence.json');
+
+    await writeFile(outsideConfig, JSON.stringify({ output: 'json' }), 'utf8');
+    await symlink(outsideConfig, linkedConfig);
+
+    try {
+      await expect(loadConfigFile(root)).rejects.toThrow('resolves outside the current directory');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects symlinked plugins that resolve outside the project root', async () => {
     const projectRoot = await makeRepoLocalTempDir('.pgfence-plugin-');
     const outsideRoot = await mkdtemp(path.join(tmpdir(), 'pgfence-plugin-outside-'));

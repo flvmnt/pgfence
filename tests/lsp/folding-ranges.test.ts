@@ -33,6 +33,7 @@ describe('Folding Ranges Provider', () => {
     const doc = makeDoc(sql);
     const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: defaultConfig });
 
+    expect(analysis.checks.length).toBeGreaterThan(1);
     const ranges = getFoldingRanges(makeParams(), analysis, doc);
 
     expect(ranges).toHaveLength(1);

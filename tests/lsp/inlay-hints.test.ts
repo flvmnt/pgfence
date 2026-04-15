@@ -39,6 +39,7 @@ describe('Inlay Hints Provider', () => {
     const doc = makeDoc(sql);
     const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: defaultConfig });
 
+    expect(analysis.checks.length).toBeGreaterThan(1);
     const hints = getInlayHints(makeParams(), analysis, doc);
 
     expect(hints).toHaveLength(1);
@@ -92,6 +93,22 @@ describe('Inlay Hints Provider', () => {
 
     // Request only line 5+ (beyond the statement)
     const hints = getInlayHints(makeParams(5, 100), analysis, doc);
+
+    expect(hints).toHaveLength(0);
+  });
+
+  it('should not leak hints outside the exact requested character range', async () => {
+    const sql = 'CREATE INDEX idx ON users (email); SELECT 1;';
+    const doc = makeDoc(sql);
+    const analysis = await analyzeText({ content: sql, filePath: '/test.sql', config: defaultConfig });
+
+    const hints = getInlayHints({
+      textDocument: { uri },
+      range: {
+        start: { line: 0, character: 35 },
+        end: { line: 0, character: 43 },
+      },
+    }, analysis, doc);
 
     expect(hints).toHaveLength(0);
   });
