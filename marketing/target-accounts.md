@@ -2,7 +2,7 @@
 
 *Last updated: April 15, 2026*
 
-This list is for founder-led outbound, not broad marketing. Every account below has a public signal that maps well to pgfence's first paid promise: safer Postgres migrations plus governance for risky schema changes.
+This list is for founder-led outbound, not broad marketing. Every account below has a public signal that maps well to pgfence's design-partner thesis: safer Postgres migrations today, plus a potential governance layer for risky schema changes.
 
 ## Best First Segment
 
@@ -19,7 +19,7 @@ Why this segment first:
 
 - The pain is real and technical
 - The buyer can understand the product in one email
-- Prisma and TypeORM create a clean wedge because pgfence already supports both deeply
+- Prisma and TypeORM create a clean wedge because pgfence already supports both today
 - Teams this size often have reliability pain but still lack formal migration governance
 
 ## Priority Accounts

@@ -4,7 +4,7 @@
 
 ## Goal
 
-Get the first 3 to 5 paid design partners for pgfence Cloud without relying on broad brand awareness.
+Get the first 3 to 5 paid design partners for the planned pgfence Cloud layer without relying on broad brand awareness.
 
 The goal is not mass demand. The goal is:
 
@@ -21,11 +21,11 @@ Do not sell “a migration linter.”
 
 Sell this:
 
-> pgfence helps engineering teams prevent Postgres migration incidents and adds governance for risky schema changes.
+> pgfence helps engineering teams prevent Postgres migration incidents today, and the design-partner program is about whether governance for risky schema changes is valuable enough to standardize.
 
-### Paid promise
+### Design-partner promise
 
-> The analyzer stays free. pgfence Cloud gives engineering leaders approvals, policy enforcement, and audit history for risky Postgres migrations.
+> The analyzer stays free. The pgfence Cloud design-partner program is for teams that want to shape approvals, policy enforcement, and audit history for risky Postgres migrations.
 
 ### Best-fit ICP
 
@@ -210,7 +210,8 @@ Call it:
 
 What they get:
 
-- early access to approvals, policy management, audit trail, and exemption workflows
+- direct input into planned approvals, policy management, audit trail, and exemption workflows
+- early visibility into prototypes, workflow drafts, and roadmap direction
 - direct founder support
 - faster feature feedback loop
 - discounted pricing in exchange for feedback and references if successful
@@ -225,7 +226,7 @@ Suggested range:
 - pilot: `$1,500 to $4,000` total
 - annual design partner: `$6,000 to $15,000 ARR`
 
-Choose based on company size and urgency.
+Choose based on company size and urgency. Treat these as discovery ranges, not public list pricing.
 
 ## Outbound Prospecting
 
@@ -256,7 +257,7 @@ Hi {{first_name}},
 
 Saw that your team is shipping on Postgres with {{stack_or_signal}}.
 
-I’m working on pgfence, a migration safety tool that shows what a schema change actually locks before it hits prod, then adds approvals and audit history for risky changes.
+I’m working on pgfence, a migration safety tool that shows what a schema change actually locks before it hits prod. I’m also talking with a small number of teams about a design-partner program for approvals and audit history around risky changes.
 
 Reaching out because teams usually look at this after one painful migration blocks reads or writes in production.
 
@@ -272,7 +273,7 @@ Hi {{first_name}},
 
 Quick one: are migrations reviewed for lock impact on your team, or mostly for SQL correctness?
 
-I’m building pgfence for teams using Postgres with ORMs like Prisma, TypeORM, and Knex. It catches lock-heavy changes before merge and is moving toward a cloud layer for approvals and audit history.
+I’m building pgfence for teams using Postgres with ORMs like Prisma, TypeORM, and Knex. It catches lock-heavy changes before merge, and I’m exploring a governance layer for approvals and audit history with a few design partners.
 
 If migration safety is on your radar, I’d love to compare notes.
 
@@ -356,7 +357,7 @@ Learn:
 ## What To Avoid
 
 - waiting for a large audience before selling
-- polishing self-serve billing before closing manual pilots
+- pretending there is a self-serve motion before manual pilots validate the offer
 - trying every social platform at once
 - making generic “AI/devtools/startup” content
 - spending weeks on brand ads

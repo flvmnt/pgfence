@@ -45,10 +45,10 @@ Works with **raw SQL**, **TypeORM**, **Prisma**, **Knex**, **Drizzle**, and **Se
 ## Proof Points
 
 - Prisma support is real, not aspirational, with a dedicated extractor and tests in the repo.
-- Prisma also documents pgfence publicly in its [integration guide](https://www.prisma.io/docs/guides/integrations/pgfence).
-- pgfence is listed in the public [pglt Related Work](https://github.com/supabase-community/postgres-language-server/blob/main/docs/reference/related_work.md) page alongside Eugene, Squawk, Strong Migrations, and pgroll.
-- The public changelog records the major shipped surfaces: Prisma and the other ORM extractors, GitHub PR comments, SARIF, LSP, trace mode, and GitLab Code Quality.
-- The evidence trail lives in [proof-points.md](proof-points.md) for readers who want the receipts before adopting.
+- TypeORM, Knex, Drizzle, and Sequelize support are also shipped with dedicated extractors and extractor coverage in the repo.
+- GitLab Code Quality output is shipped in the repo, with reporter tests covering repeated findings, extraction warnings, and coverage visibility.
+- The public changelog records major shipped surfaces such as GitHub PR comments, SARIF, LSP, and trace mode.
+- The evidence trail lives in [proof-points.md](proof-points.md), which separates repo-backed proof from external references.
 
 ## Quick Demo
 
@@ -115,31 +115,29 @@ To explicitly acknowledge a statement pgfence cannot analyze, add `-- pgfence-ig
 
 Other tools in this space worth knowing about:
 
-| Tool | Language | Rules | Focus |
-|------|----------|-------|-------|
-| [Squawk](https://github.com/sbdchd/squawk) | Rust | 32 | SQL linter with GitHub Action |
-| [Eugene](https://github.com/kaaveland/eugene) | Rust | 12 | DDL lint + trace modes |
-| [strong_migrations](https://github.com/ankane/strong_migrations) | Ruby | 21 | Rails/ActiveRecord migration checks |
-| [pgroll](https://github.com/xataio/pgroll) | Go | - | Migration **executor** (runs migrations with rollback). Complementary to pgfence. |
-| **pgfence** | **TypeScript** | **42** | **Multi-ORM, DB-size-aware, safe rewrites** |
+| Tool | Language | Best fit | Focus |
+|------|----------|----------|-------|
+| [Squawk](https://github.com/sbdchd/squawk) | Rust | Raw SQL teams | SQL linting and SQL authoring tooling |
+| [Eugene](https://github.com/kaaveland/eugene) | Rust | Raw SQL teams that want trace-style verification | DDL linting and trace-based verification |
+| [strong_migrations](https://github.com/ankane/strong_migrations) | Ruby | Rails / ActiveRecord teams | Runtime migration safety checks |
+| [pgroll](https://github.com/xataio/pgroll) | Go | Teams that need a migration executor | Migration **execution** with rollback support |
+| **pgfence** | **TypeScript** | **Node.js and TypeScript teams using SQL or ORMs** | **Multi-ORM migration safety, risk scoring, and safe rewrite guidance** |
 
-pgfence analyzes ORM migration files (TypeORM, Prisma, Knex, Drizzle, Sequelize) directly, which is the wedge over SQL-only linters. It also provides DB-size-aware risk scoring and complete expand/contract rewrite recipes.
+pgfence analyzes ORM migration files (TypeORM, Prisma, Knex, Drizzle, Sequelize) directly, which is the wedge over SQL-only linters. It also provides DB-size-aware risk scoring and safe rewrite guidance for common migration patterns.
 
 pgroll is not a competitor: it is a runtime executor (runs migrations with automatic rollback). pgfence analyzes before you run; pgroll handles how you run. They are complementary.
-
-pgfence is listed in the public [pglt Related Work](https://github.com/supabase-community/postgres-language-server/blob/main/docs/reference/related_work.md) page (postgres-language-server, Supabase community), alongside Eugene, Squawk, Strong Migrations, and pgroll.
 
 ## VS Code Extension
 
 Get real-time migration safety analysis directly in your editor:
 
 - **Inline diagnostics**: lock modes, risk levels, and policy violations as you type
-- **Quick fixes**: one-click safe rewrite replacements
+- **Quick fixes**: one-click fixes for supported safe rewrites
 - **Hover info**: lock mode, blocked operations, and safe alternatives
 
 **[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence)** or search "pgfence" in the Extensions panel. Requires `@flvmnt/pgfence` installed in your project or globally. See the [extension docs](https://pgfence.com/docs/editor) for configuration and commands.
 
-If you want to launch the standalone language server directly, use the `pgfence-lsp` binary. The package `./lsp` subpath stays import-safe for tooling and bundlers.
+If you want to launch the standalone language server directly, use the `pgfence-lsp` binary. The package `./lsp` subpath resolves to the main CLI module and does not auto-start the server when imported.
 
 ## Installation
 
@@ -279,7 +277,7 @@ Use `--output json` to see `ruleId` values for any check you want to suppress.
 
 ## What It Catches
 
-pgfence checks 42 DDL patterns against Postgres's lock mode semantics:
+pgfence checks a broad set of DDL patterns against Postgres's lock mode semantics:
 
 ### Lock & Safety Checks
 
@@ -440,6 +438,8 @@ Upload pgfence findings to GitHub Code Scanning for inline PR annotations:
 
 Upload pgfence findings to GitLab's Code Quality widget:
 
+The GitLab reporter emits finding entries, extraction warnings, and a coverage summary entry so unanalyzable SQL still stays visible in CI.
+
 ```yaml
 # .gitlab-ci.yml
 pgfence:
@@ -479,22 +479,21 @@ Each statement gets a verification status:
 
 Requires Docker. Use `pgfence analyze` for static-only analysis without Docker.
 
-## pgfence Cloud (Coming Soon)
+## pgfence Cloud (Design Partner Direction)
 
-Upgrade to **pgfence Cloud** for team-grade migration safety:
+pgfence Cloud is currently being shaped with design partners around team-grade migration governance:
 
-- **Approval workflows**: require sign-off on HIGH+ risk migrations before merge
-- **Exemptions with justification + expiry**: bypass a warning with a recorded reason and expiration date
-- **Centralized policies**: enforce org-wide rules (e.g., "block all CRITICAL risk") that individual developers cannot override
-- **SOC2 audit logging**: immutable log of every analysis, approval, and bypass
-- **Schema drift detection**: compare your migrations against production schema
-- **Migration history**: track every analyzed migration across your org
+- **Approval workflows** for higher-risk migrations before merge
+- **Exemptions with justification and expiry**
+- **Centralized policies** for shared safety rules
+- **Audit history** around analyses, approvals, and bypasses
+- **Schema drift and migration history views**
 
-pgfence Cloud never asks for database credentials. DB-size-aware scoring uses a stats snapshot: your CI runs a provided script against your read replica, outputs a JSON file, and pgfence consumes it locally.
+The current direction does not require production database credentials. DB-size-aware scoring already works through a stats snapshot: your CI can query a read replica, output a JSON file, and pgfence consumes it locally.
 
 Learn more at **[pgfence.com](https://pgfence.com)**.
 
-All cloud features are additive. The source-available CLI works exactly the same without an API key.
+The open-source CLI works on its own today, with no account, login, or API key required. Any future cloud features are additive rather than required for local analysis.
 
 ## Plugins
 

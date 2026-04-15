@@ -6,7 +6,7 @@ Use these for direct founder-led outreach to teams with public Postgres + ORM si
 
 ## Positioning line
 
-pgfence helps engineering teams prevent Postgres migration incidents by showing what a change locks before merge, then adds approvals, policy, and audit history for risky migrations.
+pgfence helps engineering teams prevent Postgres migration incidents by showing what a change locks before merge. I’m also exploring a design-partner governance layer for approvals, policy, and audit history around risky migrations.
 
 ## Short call to action
 
@@ -24,7 +24,7 @@ Hi {{first_name}},
 
 Saw that your team is using Prisma with Postgres.
 
-I’m working on pgfence, a migration safety tool that shows what a schema change actually locks before it hits prod, then adds approvals and audit history for risky changes.
+I’m working on pgfence, a migration safety tool that shows what a schema change actually locks before it hits prod. I’m also talking with a few teams about a design-partner governance layer for approvals and audit history around risky changes.
 
 Reaching out because teams usually only formalize this after one migration blocks reads or writes in production.
 
@@ -42,7 +42,7 @@ Noticed the team is shipping on TypeORM and Postgres.
 
 That stack moves fast, but migration review usually still relies on someone remembering which DDL takes an ugly lock and which one is actually safe.
 
-I’m building pgfence to make that explicit before merge, then layer approvals and audit history on top for the risky cases.
+I’m building pgfence to make that explicit before merge, and I’m exploring whether approvals and audit history would be valuable enough for the risky cases.
 
 Worth a short compare-notes call if this has been painful on your side?
 
@@ -58,7 +58,7 @@ Quick question:
 
 How does your team review Postgres migrations today, for rollout safety, not just SQL correctness?
 
-I’m building pgfence around that exact problem. The analyzer stays free, and the paid layer is for approvals, policy, and audit history when teams need more accountable migration review.
+I’m building pgfence around that exact problem. The analyzer stays free, and the design-partner program is about whether approvals, policy, and audit history would be valuable when teams need more accountable migration review.
 
 Happy to send a short example if useful.
 
@@ -84,7 +84,7 @@ Subject: re: Prisma migration review
 
 Leaving one concrete proof point in case helpful:
 
-- Prisma documents pgfence publicly in its integration guide
+- pgfence supports Prisma migration files today
 - pgfence is also listed in the public pglt related-work page
 
 I’m mostly looking for a few teams who already feel migration-review pain and want to shape the approvals and policy layer with me.
@@ -97,7 +97,7 @@ Flavius
 
 Saw the team is using {{stack_signal}} with Postgres.
 
-I’m working on pgfence, which shows what a migration locks before merge and is growing into a governance layer for risky migrations. Thought it might be relevant if schema review is painful today.
+I’m working on pgfence, which shows what a migration locks before merge. I’m also exploring a design-partner governance layer for risky migrations. Thought it might be relevant if schema review is painful today.
 
 Open to a quick chat?
 

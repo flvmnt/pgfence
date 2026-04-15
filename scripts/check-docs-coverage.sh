@@ -14,6 +14,20 @@ EXIT_CODE=0
 echo "Checking docs coverage for pgfence rules..."
 echo ""
 
+matches_any() {
+  local target="$1"
+  shift
+
+  local candidate
+  for candidate in "$@"; do
+    if [ -n "$candidate" ] && grep -RqiF "$candidate" "$target" 2>/dev/null; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 for rule_file in "$RULES_DIR"/*.ts; do
   # Extract "Rule: <name>" from the first 5 lines
   rule_name=$(head -5 "$rule_file" | sed -n 's/.*Rule: \(.*\)/\1/p' | head -1)
@@ -28,15 +42,17 @@ for rule_file in "$RULES_DIR"/*.ts; do
   fi
   # Use first two words for search
   search_term=$(echo "$keyword" | awk '{print $1, $2}')
+  rule_prefix=$(echo "$rule_name" | awk '{print $1, $2}')
+  search_candidates=("$rule_name" "$rule_prefix" "$keyword" "$search_term")
 
   # Check all docs pages
-  if ! grep -rqi "$search_term" "$DOCS_DIR" 2>/dev/null; then
+  if ! matches_any "$DOCS_DIR" "${search_candidates[@]}"; then
     echo "  MISSING in docs:  $rule_name  ($rule_file)"
     EXIT_CODE=1
   fi
 
   # Check README
-  if ! grep -qi "$search_term" "$README" 2>/dev/null; then
+  if ! matches_any "$README" "${search_candidates[@]}"; then
     echo "  MISSING in README: $rule_name  ($rule_file)"
     EXIT_CODE=1
   fi

@@ -4,19 +4,19 @@
 
 ## Product Overview
 **One-liner:**  
-pgfence is a Postgres migration safety CLI and governance layer that shows teams what their migrations lock, what they block, and how to ship safer rewrites before production incidents happen.
+pgfence is a Postgres migration safety CLI, with a planned governance layer, that shows teams what their migrations lock, what they block, and how to ship safer rewrites before production incidents happen.
 
 **What it does:**  
-pgfence statically analyzes Postgres migration files and ORM-generated migrations, maps statements to lock modes and risk levels, flags policy problems, and suggests safe expand/contract rewrites. The open-source analyzer is paired with a paid cloud control plane for approvals, auditability, and org-wide policy enforcement.
+Today, pgfence statically analyzes Postgres migration files and ORM-generated migrations, maps statements to lock modes and risk levels, flags policy problems, and suggests safe expand/contract rewrites. In parallel, the design-partner program is validating a paid governance layer focused on approvals, auditability, and org-wide policy enforcement.
 
 **Product category:**  
 Postgres migration safety, migration governance, database change review, developer tooling, DevSecOps for schema changes.
 
 **Product type:**  
-Open-source developer tool plus paid B2B SaaS control plane.
+Open-source developer tool plus a planned paid B2B governance layer.
 
 **Business model:**  
-Free analyzer forever. Paid cloud for governance, approvals, policy management, audit log, and enterprise controls. Best-fit pricing metric is per protected production database or per protected production application.
+Free analyzer forever. Planned paid cloud or governance layer, currently being validated with design partners, for approvals, policy management, audit log, and enterprise controls. Best-fit pricing metric is per protected production database or per protected production application.
 
 ## Target Audience
 **Target companies:**  
@@ -29,21 +29,21 @@ TypeScript or Node-first product teams with Postgres in production and visible m
 Engineering managers, heads of engineering, platform leads, staff engineers, CTOs at smaller teams, and security/compliance stakeholders at more mature companies.
 
 **Primary use case:**  
-Catch risky Postgres migrations before merge and add governance for higher-risk schema changes.
+Catch risky Postgres migrations before merge, and validate whether governance for higher-risk schema changes is valuable enough to buy.
 
 **Jobs to be done:**  
 - Prevent migration-induced outages caused by lock-heavy DDL
 - Review database changes without needing a deep Postgres expert on every PR
-- Enforce migration safety standards across teams with auditability
+- Validate whether migration safety standards should become a more auditable, policy-driven process across teams
 
 **Use cases:**  
 - TypeORM, Prisma, Knex, Sequelize, Drizzle, and raw SQL migration review
 - CI checks for migration safety
 - Editor diagnostics while writing migrations
-- Approval workflows for HIGH and CRITICAL changes
+- Potential paid use case being validated: approval workflows for HIGH and CRITICAL changes
 
 ## Personas
-| Persona | Cares about | Challenge | Value we promise |
+| Persona | Cares about | Challenge | Value we aim to deliver |
 |---------|-------------|-----------|------------------|
 | Staff / Platform Engineer | Safe rollout, tooling quality, signal over noise | ORMs and reviewers hide real Postgres lock behavior | Exact lock visibility and safe rewrites before merge |
 | Engineering Manager | Reliability, delivery speed, fewer incidents | Schema risk is hard to review consistently across teams | Standardized migration review with enforceable guardrails |
@@ -92,16 +92,16 @@ Most alternatives either miss ORM workflows, live in the wrong language ecosyste
 We start from developer truth, what this statement locks and what it blocks, then layer governance for teams that need organizational control.
 
 **Why that's better:**  
-Developers can adopt the analyzer quickly with low friction, while engineering leaders get a clear path to paid controls once migration risk becomes a management problem.
+Developers can adopt the analyzer quickly with low friction, while engineering leaders get a clear path to paid controls if the governance layer proves valuable in design-partner conversations.
 
-**Why customers choose us:**  
+**Why prospects may choose us:**
 Because they want fewer migration incidents without buying a giant database platform or forcing every team to become a Postgres expert.
 
 ## Objections
 | Objection | Response |
 |-----------|----------|
 | “We already review migrations manually.” | pgfence gives consistent lock-level analysis and catches details manual review often misses under time pressure. |
-| “We do not want another agent touching production.” | The analyzer runs locally and the standard cloud workflow does not require production database credentials. |
+| “We do not want another agent touching production.” | The analyzer runs locally today, and the planned governance workflow is designed to avoid asking for production database credentials. |
 | “This feels niche.” | One blocked production table can cost more than the tool. It is niche in scope, not in impact. |
 | “We already use Atlas / Bytebase / Liquibase.” | pgfence can complement broader platforms by focusing on pre-merge lock visibility and migration safety education. |
 
@@ -144,7 +144,7 @@ AI hype, autonomous database agent, revolutionary, seamless, magic, optimize eve
 | Term | Meaning |
 |------|---------|
 | Analyzer | The free CLI and editor tooling that inspects migrations |
-| Control plane | The paid cloud governance layer |
+| Control plane | The planned paid governance layer being validated with design partners |
 | Protected production database | The unit a paid plan is best aligned to |
 | Safe rewrite | A safer sequence for shipping the intended schema change |
 
@@ -160,7 +160,7 @@ Trustworthy, opinionated, careful, practical, technically literate.
 
 ## Proof Points
 **Metrics:**  
-- 468 passing tests in current core suite
+- Hundreds of tests in the current core suite
 - Multi-ORM support across TypeORM, Prisma, Knex, Drizzle, Sequelize, and raw SQL
 - Lock-mode analysis based on PostgreSQL parser behavior
 
@@ -174,13 +174,13 @@ None documented yet.
 | Theme | Proof |
 |-------|-------|
 | Prevent incidents | Flags dangerous lock-heavy migrations before merge |
-| Fit developer workflow | CLI, CI, GitHub, GitLab, and editor support |
-| Low-trust-boundary adoption | No production DB credentials required for standard cloud workflow |
-| Governance for scale | Paid layer focuses on approvals, policy, and auditability |
+| Fit developer workflow | CLI, CI, GitHub, GitLab, and editor support in the open-source analyzer |
+| Low-trust-boundary adoption | The analyzer runs locally, and the planned governance workflow is designed around stats snapshots rather than production DB credentials |
+| Governance for scale | The design-partner offer is centered on approvals, policy, and auditability rather than gating the core analyzer |
 
 ## Goals
 **Business goal:**  
-Land 3 to 5 design partners for pgfence Cloud and validate packaging around migration governance.
+Land 3 to 5 design partners for the planned pgfence Cloud layer and validate packaging around migration governance.
 
 **Conversion action:**  
 Book a call or reply to a founder-led outreach email about the design partner program.

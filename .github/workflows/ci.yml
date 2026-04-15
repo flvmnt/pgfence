@@ -30,6 +30,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: ./scripts/check-docs-coverage.sh
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm lint
