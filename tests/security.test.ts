@@ -181,6 +181,36 @@ describe('security boundaries', () => {
     }
   });
 
+  it.each(['.ts', '.mts'])('rejects %s plugin files in the shipped binary', async (extension) => {
+    const projectRoot = await makeRepoLocalTempDir('.pgfence-plugin-ts-');
+    const pluginFile = path.join(projectRoot, `plugin${extension}`);
+    await writeFile(
+      pluginFile,
+      `export default {
+        name: 'ts-plugin',
+        rules: [
+          {
+            ruleId: 'plugin:ts',
+            check() {
+              return [];
+            },
+          },
+        ],
+      };`,
+      'utf8',
+    );
+
+    const previousCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+      const { loadPlugins } = await import('../src/plugins.js');
+      await expect(loadPlugins([`plugin${extension}`])).rejects.toThrow(`unsupported extension "${extension}"`);
+    } finally {
+      process.chdir(previousCwd);
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects malformed plugin rule entries', async () => {
     const projectRoot = await makeRepoLocalTempDir('.pgfence-plugin-malformed-');
     const pluginFile = path.join(projectRoot, 'bad.mjs');

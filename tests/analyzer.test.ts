@@ -505,6 +505,18 @@ ALTER TABLE users ADD COLUMN x int;`;
     expect(missingLockTimeout).toBeUndefined();
   });
 
+  it('should mark TypeORM builder API files as unanalyzable for coverage reporting', async () => {
+    const results = await analyze(
+      [fixture('typeorm-builder-api.ts')],
+      { ...defaultConfig, format: 'typeorm' },
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0].statementCount).toBe(0);
+    expect(results[0].extractionWarnings).toBeDefined();
+    expect(results[0].extractionWarnings?.every((w) => w.unanalyzable)).toBe(true);
+  });
+
   // --- P0: Inline ignore ---
 
   it('should respect -- pgfence: ignore inline directives (legacy syntax)', async () => {
@@ -691,50 +703,66 @@ DROP TABLE old_data;`;
     expect(tsCheck).toBeDefined();
   });
 
-  // --- FP #1: ALTER COLUMN TYPE,safe type changes ---
+  // --- FP #1: ALTER COLUMN TYPE, conservative defaults without schema ---
 
-  it('should detect ALTER COLUMN TYPE to text as LOW risk (metadata-only)', async () => {
+  it('should detect ALTER COLUMN TYPE to text as HIGH risk when source schema is unknown', async () => {
     const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
     const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
 
-    const textChange = checks.find((c) => c.message.includes('target is text'));
+    const textChange = checks.find((c) => c.message.startsWith('ALTER COLUMN "bio" TYPE text'));
+    expect(textChange).toBeDefined();
+    expect(textChange!.risk).toBe(RiskLevel.HIGH);
+    expect(textChange!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(textChange!.safeRewrite).toBeDefined();
+    expect(textChange!.message).toContain('source type is unknown');
+  });
+
+  it('should detect ALTER COLUMN TYPE to varchar (no length) as HIGH risk when source schema is unknown', async () => {
+    const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
+    const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
+
+    const varcharNoLen = checks.find((c) => c.message.startsWith('ALTER COLUMN "name" TYPE varchar'));
+    expect(varcharNoLen).toBeDefined();
+    expect(varcharNoLen!.risk).toBe(RiskLevel.HIGH);
+    expect(varcharNoLen!.safeRewrite).toBeDefined();
+    expect(varcharNoLen!.message).toContain('source type is unknown');
+  });
+
+  it('should detect ALTER COLUMN TYPE to varchar(N) as HIGH risk when source schema is unknown', async () => {
+    const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
+    const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
+
+    const varcharWithLen = checks.filter((c) => c.message.includes('TYPE varchar('));
+    expect(varcharWithLen).toHaveLength(2);
+    expect(varcharWithLen.every((c) => c.risk === RiskLevel.HIGH)).toBe(true);
+    expect(varcharWithLen.every((c) => c.safeRewrite !== undefined)).toBe(true);
+  });
+
+  it('should detect ALTER COLUMN TYPE to text as LOW risk when schema proves the source type is text-family', async () => {
+    const tmpFile = `/tmp/pgfence-text-family-${process.pid}-${Date.now()}.sql`;
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(tmpFile, 'ALTER TABLE public.users ALTER COLUMN name TYPE text;\n', 'utf8');
+
+    const results = await analyze([tmpFile], {
+      ...defaultConfig,
+      snapshotFile: fixture('pgfence-snapshot-sample.json'),
+    });
+    const textChange = results[0].checks.find((c) => c.ruleId === 'alter-column-type');
     expect(textChange).toBeDefined();
     expect(textChange!.risk).toBe(RiskLevel.LOW);
-    expect(textChange!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(textChange!.safeRewrite).toBeUndefined();
-  });
-
-  it('should detect ALTER COLUMN TYPE to varchar (no length) as LOW risk', async () => {
-    const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
-    const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
-
-    const varcharNoLen = checks.find((c) => c.message.includes('removing varchar length constraint'));
-    expect(varcharNoLen).toBeDefined();
-    expect(varcharNoLen!.risk).toBe(RiskLevel.LOW);
-    expect(varcharNoLen!.safeRewrite).toBeUndefined();
-  });
-
-  it('should detect ALTER COLUMN TYPE to varchar(N) as MEDIUM risk (needs schema to verify)', async () => {
-    const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
-    const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
-
-    const varcharWithLen = checks.filter((c) => c.risk === RiskLevel.MEDIUM);
-    // Two varchar(N) statements: varchar(64) and varchar(255)
-    expect(varcharWithLen).toHaveLength(2);
-    expect(varcharWithLen[0].message).toContain('safe if widening');
-    expect(varcharWithLen[0].safeRewrite).toBeDefined();
-    expect(varcharWithLen[0].safeRewrite!.steps.every((step) => step.trim().startsWith('--'))).toBe(true);
   });
 
   it('should detect ALTER COLUMN TYPE cross-family change as HIGH risk', async () => {
     const results = await analyze([fixture('alter-column-varchar-widening.sql')], defaultConfig);
     const checks = results[0].checks.filter((c) => c.ruleId === 'alter-column-type');
 
-    const highRisk = checks.filter((c) => c.risk === RiskLevel.HIGH);
-    expect(highRisk).toHaveLength(1);
-    expect(highRisk[0].message).toContain('rewrites the entire table');
-    expect(highRisk[0].safeRewrite).toBeDefined();
-    expect(highRisk[0].safeRewrite!.steps.every((step) => step.trim().startsWith('--'))).toBe(true);
+    const highRisk = checks.find((c) => c.statement.includes('status TYPE integer'));
+    expect(highRisk).toBeDefined();
+    expect(highRisk!.risk).toBe(RiskLevel.HIGH);
+    expect(highRisk!.message).toContain('rewrites the entire table');
+    expect(highRisk!.safeRewrite).toBeDefined();
+    expect(highRisk!.safeRewrite!.steps.every((step) => step.trim().startsWith('--'))).toBe(true);
   });
 
   it('should use schema snapshot data for ALTER COLUMN TYPE classification', async () => {
@@ -812,6 +840,30 @@ DROP TABLE old_data;`;
     expect(checks[0].safeRewrite).toBeDefined();
   });
 
+  it('should reject ALTER TYPE ADD VALUE inside a transaction on PG11', async () => {
+    const tmpFile = `/tmp/pgfence-alter-enum-tx-${process.pid}-${Date.now()}.sql`;
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(
+      tmpFile,
+      `SET lock_timeout = '2s';
+SET statement_timeout = '5min';
+SET application_name = 'migrate:alter-enum-tx';
+SET idle_in_transaction_session_timeout = '30s';
+BEGIN;
+ALTER TYPE status ADD VALUE 'pending';
+COMMIT;
+`,
+      'utf8',
+    );
+
+    const results = await analyze([tmpFile], { ...defaultConfig, minPostgresVersion: 11 });
+    const violations = results[0].policyViolations;
+    const concurrentInTx = violations.find((v) => v.ruleId === 'concurrent-in-transaction');
+    expect(concurrentInTx).toBeDefined();
+    expect(concurrentInTx!.message).toContain('ALTER TYPE ... ADD VALUE');
+    expect(concurrentInTx!.severity).toBe('error');
+  });
+
   // --- Gap 3: REINDEX ---
 
   it('should detect REINDEX TABLE without CONCURRENTLY as HIGH risk with SHARE lock', async () => {
@@ -831,6 +883,17 @@ DROP TABLE old_data;`;
     expect(indexReindex).toBeDefined();
     expect(indexReindex!.risk).toBe(RiskLevel.HIGH);
     expect(indexReindex!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+  });
+
+  it('should upgrade REINDEX rewrite guidance on PG11 instead of suggesting unsupported syntax directly', async () => {
+    const results = await analyze([fixture('reindex.sql')], { ...defaultConfig, minPostgresVersion: 11 });
+    const checks = results[0].checks.filter((c) => c.ruleId === 'reindex-non-concurrent');
+    const tableReindex = checks.find((c) => c.message.includes('TABLE'));
+    expect(tableReindex).toBeDefined();
+    expect(tableReindex!.safeRewrite).toBeDefined();
+    expect(tableReindex!.safeRewrite!.description).toContain('Upgrade to PG12+');
+    expect(tableReindex!.safeRewrite!.steps[0]).toContain('requires Postgres 12+');
+    expect(tableReindex!.safeRewrite!.steps.join('\n')).not.toContain('REINDEX TABLE CONCURRENTLY appointments;');
   });
 
   it('should NOT flag REINDEX CONCURRENTLY', async () => {

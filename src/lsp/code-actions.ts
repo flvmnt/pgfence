@@ -55,6 +55,51 @@ function isExecutableSafeRewrite(safeRewrite: SafeRewrite): boolean {
   return hasExecutableStep;
 }
 
+function statementStartInsertPos(text: string, startOffset: number): Position {
+  const startPos = offsetToPosition(text, startOffset);
+  const startChar = text.charCodeAt(startOffset);
+  if (startChar === 10 || startChar === 13) {
+    return Position.create(startPos.line + 1, 0);
+  }
+  return Position.create(startPos.line, 0);
+}
+
+function rangesEqual(
+  left: { start: { line: number; character: number }; end: { line: number; character: number } },
+  right: { start: { line: number; character: number }; end: { line: number; character: number } },
+): boolean {
+  return (
+    left.start.line === right.start.line &&
+    left.start.character === right.start.character &&
+    left.end.line === right.end.line &&
+    left.end.character === right.end.character
+  );
+}
+
+function getPolicyIgnoreInsertPos(
+  analysis: AnalyzeTextResult,
+  diagnostic: CodeActionParams['context']['diagnostics'][number],
+  text: string,
+): Position {
+  for (let i = 0; i < analysis.policyViolations.length; i++) {
+    const violation = analysis.policyViolations[i];
+    if (violation.ruleId !== diagnostic.code) continue;
+
+    const sourceRange = analysis.policySourceRanges[i];
+    if (!sourceRange) {
+      return Position.create(0, 0);
+    }
+
+    const startPos = offsetToPosition(text, sourceRange.startOffset);
+    const endPos = offsetToPosition(text, sourceRange.endOffset);
+    if (!rangesEqual({ start: startPos, end: endPos }, diagnostic.range)) continue;
+
+    return statementStartInsertPos(text, sourceRange.startOffset);
+  }
+
+  return Position.create(0, 0);
+}
+
 /**
  * Generate code actions for diagnostics in the requested range.
  */
@@ -108,8 +153,7 @@ export function getCodeActions(
       }
 
       // 2. Ignore this rule for this statement
-      const ignoreLine = startPos.line;
-      const ignoreInsertPos = Position.create(ignoreLine, 0);
+      const ignoreInsertPos = statementStartInsertPos(text, range.startOffset);
       actions.push({
         title: `pgfence-ignore: ${check.ruleId}`,
         kind: CodeActionKind.QuickFix,
@@ -131,6 +175,7 @@ export function getCodeActions(
     if (!matchedCheck) {
       for (const violation of analysis.policyViolations) {
         if (violation.ruleId !== ruleId) continue;
+        const ignoreInsertPos = getPolicyIgnoreInsertPos(analysis, diagnostic, text);
 
         actions.push({
           title: `pgfence-ignore: ${violation.ruleId}`,
@@ -139,7 +184,7 @@ export function getCodeActions(
           edit: {
             changes: {
               [params.textDocument.uri]: [
-                TextEdit.insert(Position.create(0, 0), `-- pgfence-ignore: ${violation.ruleId}\n`),
+                TextEdit.insert(ignoreInsertPos, `-- pgfence-ignore: ${violation.ruleId}\n`),
               ],
             },
           },

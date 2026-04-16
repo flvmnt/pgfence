@@ -17,7 +17,9 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "pnpm clean && tsc",
+    "prepack": "pnpm build",
     "test": "vitest run tests/",
     "test:watch": "vitest tests/",
     "lint": "eslint src/ tests/",

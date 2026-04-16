@@ -1,6 +1,10 @@
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile, chmod } from 'node:fs/promises';
-import { join } from 'node:path';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { join, resolve } from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 const PRE_COMMIT_HOOK_CONTENT = `#!/bin/sh
 # pgfence pre-commit hook
@@ -25,50 +29,54 @@ fi
 `;
 
 export async function installHooks(): Promise<void> {
-    const cwd = process.cwd();
-    const huskyPath = join(cwd, '.husky');
-    const gitHooksPath = join(cwd, '.git', 'hooks');
+  const cwd = process.cwd();
+  const huskyPath = join(cwd, '.husky');
 
-    let targetDir: string;
-    let usingHusky = false;
+  let targetDir: string;
+  let usingHusky = false;
 
-    if (existsSync(huskyPath)) {
-        targetDir = huskyPath;
-        usingHusky = true;
-    } else if (existsSync(join(cwd, '.git'))) {
-        if (!existsSync(gitHooksPath)) {
-            await mkdir(gitHooksPath, { recursive: true });
-        }
-        targetDir = gitHooksPath;
-    } else {
-        throw new Error('Neither .husky nor .git directory found. Are you in a git repository?');
-    }
-
-    const hookFile = join(targetDir, 'pre-commit');
-
-    let existingContent = '';
+  if (existsSync(huskyPath)) {
+    targetDir = huskyPath;
+    usingHusky = true;
+  } else {
     try {
-        const { readFile } = await import('node:fs/promises');
-        existingContent = await readFile(hookFile, 'utf8');
-    } catch (err: unknown) {
-        const error = err as { code?: string };
-        if (error.code !== 'ENOENT') throw err;
+      const { stdout } = await execFileAsync('git', ['rev-parse', '--git-path', 'hooks'], { cwd });
+      targetDir = resolve(cwd, stdout.trim());
+      if (!targetDir) {
+        throw new Error('git did not return a hooks directory');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Neither .husky nor a git hooks directory could be resolved. Are you in a git repository? ${message}`);
     }
+  }
 
-    if (existingContent.includes('pgfence analyze')) {
-        console.log(`✅ pgfence pre-commit hook is already installed in ${targetDir}`);
-        return;
-    }
+  const hookFile = join(targetDir, 'pre-commit');
 
-    const newContent = existingContent
-        ? existingContent + '\n' + PRE_COMMIT_HOOK_CONTENT.replace('#!/bin/sh\n', '')
-        : PRE_COMMIT_HOOK_CONTENT;
+  let existingContent = '';
+  try {
+    existingContent = await readFile(hookFile, 'utf8');
+  } catch (err: unknown) {
+    const error = err as { code?: string };
+    if (error.code !== 'ENOENT') throw err;
+  }
 
-    await writeFile(hookFile, newContent);
-    await chmod(hookFile, '755');
+  if (existingContent.includes('pgfence analyze')) {
+    console.log(`✅ pgfence pre-commit hook is already installed in ${targetDir}`);
+    return;
+  }
 
-    console.log(`✅ pgfence pre-commit hook installed successfully in ${targetDir}`);
-    if (usingHusky) {
-        console.log('💡 Note: You are using husky. Ensure husky is installed and enabled.');
-    }
+  const existingBody = existingContent.replace(/^#![^\n]*\n?/, '');
+  const newContent = existingBody
+    ? `${PRE_COMMIT_HOOK_CONTENT}\n# Existing pre-commit hook preserved below\n${existingBody}`
+    : PRE_COMMIT_HOOK_CONTENT;
+
+  await mkdir(targetDir, { recursive: true });
+  await writeFile(hookFile, newContent);
+  await chmod(hookFile, '755');
+
+  console.log(`✅ pgfence pre-commit hook installed successfully in ${targetDir}`);
+  if (usingHusky) {
+    console.log('💡 Note: You are using husky. Ensure husky is installed and enabled.');
+  }
 }

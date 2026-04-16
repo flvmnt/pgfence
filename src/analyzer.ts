@@ -285,7 +285,7 @@ export function applyRules(
   results.push(...checkBestPractices(stmt));
   results.push(...checkPreferRobustStmts(stmt));
   results.push(...checkAlterEnum(stmt, config));
-  results.push(...checkReindex(stmt));
+  results.push(...checkReindex(stmt, config.minPostgresVersion));
   results.push(...checkRefreshMatView(stmt));
   results.push(...checkTrigger(stmt));
   results.push(...checkPartition(stmt, config));

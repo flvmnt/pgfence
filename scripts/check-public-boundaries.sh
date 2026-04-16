@@ -39,7 +39,15 @@ fi
 PACK_JSON=$(npm pack --dry-run --json)
 
 PACK_JSON="$PACK_JSON" node <<'NODE'
-const pack = JSON.parse(process.env.PACK_JSON ?? '[]');
+function parsePackJson(raw) {
+  const jsonStart = raw.search(/\[\s*{/s);
+  if (jsonStart === -1) {
+    throw new Error('npm pack --json did not emit a JSON payload');
+  }
+  return JSON.parse(raw.slice(jsonStart));
+}
+
+const pack = parsePackJson(process.env.PACK_JSON ?? '[]');
 const files = pack.flatMap((entry) => entry.files ?? []).map((file) => file.path);
 const forbidden = files.filter((file) => /^(src\/cloud\/|src\/agent\/|dist\/cloud\/|dist\/agent\/|tests\/cloud\/)/.test(file));
 if (forbidden.length > 0) {
@@ -53,6 +61,31 @@ const missing = required.filter((file) => !files.includes(file));
 if (missing.length > 0) {
   console.error('ERROR: npm package is missing required release files:');
   for (const file of missing) console.error(file);
+  process.exit(1);
+}
+
+const { execSync } = require('node:child_process');
+const trackedSources = new Set(
+  execSync('git ls-files src', { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith('.ts')),
+);
+
+const distArtifacts = files.filter((file) => /^dist\/.+\.(?:js|js\.map|d\.ts|d\.ts\.map)$/.test(file));
+const orphanArtifacts = distArtifacts.filter((file) => {
+  const sourcePath = file
+    .replace(/^dist\//, 'src/')
+    .replace(/\.d\.ts\.map$/, '.ts')
+    .replace(/\.d\.ts$/, '.ts')
+    .replace(/\.js\.map$/, '.ts')
+    .replace(/\.js$/, '.ts');
+  return !trackedSources.has(sourcePath);
+});
+
+if (orphanArtifacts.length > 0) {
+  console.error('ERROR: npm package contains dist artifacts without tracked source files:');
+  for (const file of orphanArtifacts) console.error(file);
   process.exit(1);
 }
 NODE
