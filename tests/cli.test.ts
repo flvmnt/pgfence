@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { exec, execFile } from 'child_process';
 import util from 'util';
 import path from 'path';
@@ -80,12 +80,6 @@ describe('CI exit code logic', () => {
 });
 
 describe.skipIf(!hasBuiltCli())('CLI e2e (built binary)', () => {
-    beforeEach(async () => {
-        if (!existsSync(distCliPath)) {
-            await execPromise('pnpm build');
-        }
-    });
-
     it('exits 0 and prints coverage when analyzing safe migration', async () => {
         const fixture = path.join(fixturesDir, 'safe-migration.sql');
         const { stdout, stderr } = await execPromise(`node "${distCliPath}" analyze "${fixture}"`);

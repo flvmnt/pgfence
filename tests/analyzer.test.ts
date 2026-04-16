@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { analyze, adjustRisk, detectFormat } from '../src/analyzer.js';
 import { parseTimeoutString } from '../src/rules/policy.js';
@@ -12,6 +14,17 @@ const FIXTURES = path.join(process.cwd(), 'tests', 'fixtures');
 
 function fixture(name: string): string {
   return path.join(FIXTURES, name);
+}
+
+async function withTempSqlFile(prefix: string, sql: string, run: (file: string) => Promise<void>): Promise<void> {
+  const tmpFile = `/tmp/${prefix}-${randomUUID()}.sql`;
+  await writeFile(tmpFile, sql, 'utf8');
+
+  try {
+    await run(tmpFile);
+  } finally {
+    await rm(tmpFile, { force: true });
+  }
 }
 
 const defaultConfig: PgfenceConfig = {
@@ -144,16 +157,15 @@ RESET application_name;
 SET idle_in_transaction_session_timeout = '30s';
 SET idle_in_transaction_session_timeout = DEFAULT;
 ALTER TABLE users ADD COLUMN x int;`;
-    const tmpFile = '/tmp/pgfence-policy-reset-default.sql';
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(tmpFile, sql, 'utf8');
-    const results = await analyze([tmpFile], defaultConfig);
-    const violations = results[0].policyViolations;
+    await withTempSqlFile('pgfence-policy-reset-default', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], defaultConfig);
+      const violations = results[0].policyViolations;
 
-    expect(violations.find((v) => v.ruleId === 'missing-lock-timeout')).toBeDefined();
-    expect(violations.find((v) => v.ruleId === 'missing-statement-timeout')).toBeDefined();
-    expect(violations.find((v) => v.ruleId === 'missing-application-name')).toBeDefined();
-    expect(violations.find((v) => v.ruleId === 'missing-idle-timeout')).toBeDefined();
+      expect(violations.find((v) => v.ruleId === 'missing-lock-timeout')).toBeDefined();
+      expect(violations.find((v) => v.ruleId === 'missing-statement-timeout')).toBeDefined();
+      expect(violations.find((v) => v.ruleId === 'missing-application-name')).toBeDefined();
+      expect(violations.find((v) => v.ruleId === 'missing-idle-timeout')).toBeDefined();
+    });
   });
 
   it('should detect CREATE INDEX CONCURRENTLY inside transaction', async () => {
@@ -563,14 +575,13 @@ ALTER TABLE users ADD COLUMN x int;`;
 SET statement_timeout = '5min';
 -- pgfence-ignore: drop-table, prefer-robust-drop-table
 DROP TABLE old_data;`;
-    const tmpFile = '/tmp/pgfence-multi-ignore-test.sql';
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(tmpFile, sql, 'utf8');
-    const results = await analyze([tmpFile], defaultConfig);
-    const checks = results[0].checks;
-    // Both named rules suppressed
-    expect(checks.find((c) => c.ruleId === 'drop-table')).toBeUndefined();
-    expect(checks.find((c) => c.ruleId === 'prefer-robust-drop-table')).toBeUndefined();
+    await withTempSqlFile('pgfence-multi-ignore-test', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], defaultConfig);
+      const checks = results[0].checks;
+      // Both named rules suppressed
+      expect(checks.find((c) => c.ruleId === 'drop-table')).toBeUndefined();
+      expect(checks.find((c) => c.ruleId === 'prefer-robust-drop-table')).toBeUndefined();
+    });
   });
 
   // --- P0: Visibility logic (new tables) ---
@@ -739,18 +750,16 @@ DROP TABLE old_data;`;
   });
 
   it('should detect ALTER COLUMN TYPE to text as LOW risk when schema proves the source type is text-family', async () => {
-    const tmpFile = `/tmp/pgfence-text-family-${process.pid}-${Date.now()}.sql`;
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(tmpFile, 'ALTER TABLE public.users ALTER COLUMN name TYPE text;\n', 'utf8');
-
-    const results = await analyze([tmpFile], {
-      ...defaultConfig,
-      snapshotFile: fixture('pgfence-snapshot-sample.json'),
+    await withTempSqlFile('pgfence-text-family', 'ALTER TABLE public.users ALTER COLUMN name TYPE text;\n', async (tmpFile) => {
+      const results = await analyze([tmpFile], {
+        ...defaultConfig,
+        snapshotFile: fixture('pgfence-snapshot-sample.json'),
+      });
+      const textChange = results[0].checks.find((c) => c.ruleId === 'alter-column-type');
+      expect(textChange).toBeDefined();
+      expect(textChange!.risk).toBe(RiskLevel.LOW);
+      expect(textChange!.safeRewrite).toBeUndefined();
     });
-    const textChange = results[0].checks.find((c) => c.ruleId === 'alter-column-type');
-    expect(textChange).toBeDefined();
-    expect(textChange!.risk).toBe(RiskLevel.LOW);
-    expect(textChange!.safeRewrite).toBeUndefined();
   });
 
   it('should detect ALTER COLUMN TYPE cross-family change as HIGH risk', async () => {
@@ -841,10 +850,8 @@ DROP TABLE old_data;`;
   });
 
   it('should reject ALTER TYPE ADD VALUE inside a transaction on PG11', async () => {
-    const tmpFile = `/tmp/pgfence-alter-enum-tx-${process.pid}-${Date.now()}.sql`;
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(
-      tmpFile,
+    await withTempSqlFile(
+      'pgfence-alter-enum-tx',
       `SET lock_timeout = '2s';
 SET statement_timeout = '5min';
 SET application_name = 'migrate:alter-enum-tx';
@@ -853,15 +860,15 @@ BEGIN;
 ALTER TYPE status ADD VALUE 'pending';
 COMMIT;
 `,
-      'utf8',
+      async (tmpFile) => {
+        const results = await analyze([tmpFile], { ...defaultConfig, minPostgresVersion: 11 });
+        const violations = results[0].policyViolations;
+        const concurrentInTx = violations.find((v) => v.ruleId === 'concurrent-in-transaction');
+        expect(concurrentInTx).toBeDefined();
+        expect(concurrentInTx!.message).toContain('ALTER TYPE ... ADD VALUE');
+        expect(concurrentInTx!.severity).toBe('error');
+      },
     );
-
-    const results = await analyze([tmpFile], { ...defaultConfig, minPostgresVersion: 11 });
-    const violations = results[0].policyViolations;
-    const concurrentInTx = violations.find((v) => v.ruleId === 'concurrent-in-transaction');
-    expect(concurrentInTx).toBeDefined();
-    expect(concurrentInTx!.message).toContain('ALTER TYPE ... ADD VALUE');
-    expect(concurrentInTx!.severity).toBe('error');
   });
 
   // --- Gap 3: REINDEX ---

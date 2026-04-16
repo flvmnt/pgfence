@@ -402,7 +402,7 @@ ALTER TABLE users DROP CONSTRAINT chk_email_verified;
 
 ### GitHub Actions
 
-Use a concrete migration path here. The Action does not shell-expand globs, so `migrations/*.sql` belongs in a `run:` step instead.
+Use a concrete migration path or a glob here. The Action expands `path` itself, so both `migrations/add-users.sql` and `migrations/*.sql` work.
 
 ```yaml
 - name: Check migration safety
