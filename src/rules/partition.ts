@@ -46,8 +46,8 @@ export function checkPartition(
         ? LockMode.SHARE_UPDATE_EXCLUSIVE
         : LockMode.ACCESS_EXCLUSIVE;
       const lockNote = config.minPostgresVersion >= 12
-        ? `SHARE UPDATE EXCLUSIVE lock on parent "${parentTable}" (ACCESS EXCLUSIVE on partition "${partName}")`
-        : `ACCESS EXCLUSIVE lock on parent "${parentTable}"`;
+        ? `SHARE UPDATE EXCLUSIVE lock on parent "${parentTable}" and ACCESS EXCLUSIVE lock on partition "${partName}"`
+        : `ACCESS EXCLUSIVE lock on parent "${parentTable}" and ACCESS EXCLUSIVE lock on partition "${partName}"`;
       results.push({
         statement: stmt.sql,
         statementPreview: makePreview(stmt.sql),

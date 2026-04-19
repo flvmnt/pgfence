@@ -108,7 +108,7 @@ pgfence performs static analysis. The following are not supported:
 - **DDL inside functions**: `CREATE FUNCTION` bodies are not parsed for migration safety
 - **Non-migration SQL**: arbitrary application queries, not just DDL
 
-When dynamic SQL is detected (TypeORM/Knex extractors), pgfence emits a warning rather than silently skipping it. Every report includes a coverage line showing how many statements were analyzed vs. skipped.
+When dynamic SQL is detected, pgfence surfaces warnings on the supported extractor paths. Some ORM builder chains can still only be partially reconstructed, so treat the coverage line as a lower bound on what was analyzed.
 
 To explicitly acknowledge a statement pgfence cannot analyze, add `-- pgfence-ignore` before it, see [Suppressing warnings](#suppressing-warnings).
 
@@ -138,7 +138,7 @@ Get real-time migration safety analysis directly in your editor:
 
 **[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence)** or search "pgfence" in the Extensions panel. Requires `@flvmnt/pgfence` installed in your project or globally. See the [extension docs](https://pgfence.com/docs/editor) for configuration and commands.
 
-If you want to launch the standalone language server directly, use the `pgfence-lsp` binary. The package `./lsp` subpath resolves safely without auto-starting the server when imported.
+If you want to launch the standalone language server directly, use the `pgfence-lsp` binary.
 
 ## Installation
 
@@ -246,7 +246,7 @@ pgfence analyze --output github migrations/*.sql
 ### CI mode
 
 ```bash
-# Exit 1 if any check exceeds MEDIUM risk
+# Exit 1 if any check exceeds the MEDIUM threshold
 pgfence analyze --ci --max-risk medium migrations/*.sql
 ```
 
@@ -309,7 +309,7 @@ pgfence checks a broad set of DDL patterns against Postgres's lock mode semantic
 | 20 | `ALTER TYPE ... ADD VALUE` (PG < 12) | ACCESS EXCLUSIVE | MEDIUM | Upgrade to PG12+ for instant enum adds |
 | | `ALTER TYPE ... ADD VALUE` (PG12+) | EXCLUSIVE (instant) | LOW | Safe; cannot run inside transaction |
 | 21 | `ATTACH PARTITION` (PG < 12) | ACCESS EXCLUSIVE | HIGH | Create matching CHECK constraint first |
-| | `ATTACH PARTITION` (PG12+) | SHARE UPDATE EXCLUSIVE | MEDIUM | Briefly locks parent; CHECK constraint helps |
+| | `ATTACH PARTITION` (PG12+) | SHARE UPDATE EXCLUSIVE on parent, ACCESS EXCLUSIVE on partition | HIGH | CHECK constraint helps skip validation scan |
 | 22 | `DETACH PARTITION` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `DETACH PARTITION CONCURRENTLY` (PG14+) |
 | 23 | `REFRESH MATERIALIZED VIEW` | ACCESS EXCLUSIVE | HIGH | `REFRESH MATERIALIZED VIEW CONCURRENTLY` |
 | | `REFRESH MATERIALIZED VIEW CONCURRENTLY` | EXCLUSIVE | MEDIUM | Blocks writes; requires unique index |
@@ -402,7 +402,7 @@ ALTER TABLE users DROP CONSTRAINT chk_email_verified;
 
 ### GitHub Actions
 
-Use a concrete migration path or a glob here. The Action expands `path` itself, so both `migrations/add-users.sql` and `migrations/*.sql` work.
+Use a concrete migration path or a glob here. The composite action expands `path` itself, so both `migrations/add-users.sql` and `migrations/*.sql` work.
 
 ```yaml
 - name: Check migration safety

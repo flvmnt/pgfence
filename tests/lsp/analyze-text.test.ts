@@ -254,6 +254,19 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON users (email);`;
     expect(result.extractionWarnings).toHaveLength(0);
   });
 
+  it('should respect Knex transaction = false when analyzing in memory', async () => {
+    const result = await analyzeText({
+      content: `export const config = { transaction: false };
+export async function up(knex) {
+  await knex.raw('CREATE INDEX CONCURRENTLY idx_users_email ON users (email)');
+}`,
+      filePath: 'migrations/004-knex.ts',
+      config: { ...defaultConfig, format: 'knex' },
+    });
+
+    expect(result.policyViolations.find((v) => v.ruleId === 'concurrent-in-transaction')).toBeUndefined();
+  });
+
   it('should analyze Sequelize content from the in-memory buffer', async () => {
     const result = await analyzeText({
       content: `export async function up(queryInterface) {

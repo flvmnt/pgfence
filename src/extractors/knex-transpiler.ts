@@ -162,6 +162,9 @@ function transpileCreateTable(
   }
 
   const columns = extractColumnDefs(callback, paramName, filePath, warnings);
+  if (warnings.some((warning) => warning.unanalyzable)) {
+    return { sql, warnings };
+  }
   const ifNE = ifNotExists ? ' IF NOT EXISTS' : '';
   const colDefs = columns.map((c) => `"${c.name}" ${c.type}${c.modifiers}`).join(', ');
   sql.push(`CREATE TABLE${ifNE} "${tableName}" (${colDefs})`);
@@ -222,6 +225,9 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
 
   // Walk the callback body for column definitions and alterations
   const columns = extractColumnDefs(callback, paramName, filePath, warnings);
+  if (warnings.some((warning) => warning.unanalyzable)) {
+    return { sql, warnings };
+  }
   for (const col of columns) {
     if (col.modifiers.includes('__PGFENCE_ALTER__')) {
       // .alter() means modify existing column, not add new one
@@ -509,7 +515,12 @@ function parseColumnChain(
 
   // Parse modifiers from chain
   let modifiers = '';
-  let pendingRef: string | null = null;
+  let fkTable: string | null = null;
+  let fkColumn: string | null = null;
+  let sawReferences = false;
+  let sawInTable = false;
+  let fkUnresolved = false;
+  const fkActions: string[] = [];
   for (let i = 1; i < chain.length; i++) {
     const call = chain[i];
     switch (call.method) {
@@ -534,18 +545,35 @@ function parseColumnChain(
         // Postgres doesn't have unsigned - skip
         break;
       case 'references':
+        sawReferences = true;
         if (call.args.length > 0) {
           const ref = getStringArg(call.args[0]);
-          if (ref) pendingRef = ref;
+          if (ref) {
+            const inlineReference = parseInlineReference(ref);
+            if (inlineReference) {
+              fkTable = inlineReference.table;
+              fkColumn = inlineReference.column;
+            } else {
+              fkColumn = ref;
+            }
+          } else {
+            fkUnresolved = true;
+          }
+        } else {
+          fkUnresolved = true;
         }
         break;
       case 'inTable':
-        if (call.args.length > 0 && pendingRef) {
+        sawInTable = true;
+        if (call.args.length > 0) {
           const tbl = getStringArg(call.args[0]);
           if (tbl) {
-            modifiers += ` REFERENCES "${tbl}"("${pendingRef}")`;
-            pendingRef = null;
+            fkTable = tbl;
+          } else {
+            fkUnresolved = true;
           }
+        } else {
+          fkUnresolved = true;
         }
         break;
       case 'onDelete':
@@ -554,7 +582,7 @@ function parseColumnChain(
           const action = getStringArg(call.args[0]);
           if (action && FK_ACTIONS.has(action.toUpperCase())) {
             const prefix = call.method === 'onDelete' ? 'ON DELETE' : 'ON UPDATE';
-            modifiers += ` ${prefix} ${action.toUpperCase()}`;
+            fkActions.push(` ${prefix} ${action.toUpperCase()}`);
           }
         }
         break;
@@ -570,12 +598,32 @@ function parseColumnChain(
     }
   }
 
-  // If references() was called without inTable(), emit as-is
-  if (pendingRef) {
-    modifiers += ` REFERENCES "${pendingRef}"`;
+  if (sawReferences || sawInTable) {
+    if (!fkTable || !fkColumn || fkUnresolved) {
+      warnings.push({
+        filePath,
+        line: node.loc?.start?.line ?? 0,
+        column: node.loc?.start?.column ?? 0,
+        message: `Knex column builder REFERENCES chain for "${colName}" could not be fully resolved: cannot transpile safely`,
+        unanalyzable: true,
+      });
+      return null;
+    }
+    modifiers += ` REFERENCES "${fkTable}"("${fkColumn}")`;
+    modifiers += fkActions.join('');
   }
 
   return { name: colName, type, modifiers };
+}
+
+function parseInlineReference(reference: string): { table: string; column: string } | null {
+  const parts = reference.split('.').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+
+  return {
+    table: parts.slice(0, -1).join('.'),
+    column: parts[parts.length - 1],
+  };
 }
 
 function extractDefaultValue(node: TSNode): string {

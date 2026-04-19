@@ -502,6 +502,17 @@ ALTER TABLE users ADD COLUMN x int;`;
     expect(compounding).toBeUndefined();
   });
 
+  it('should NOT warn on concurrent-in-transaction when Knex transaction = false', async () => {
+    const results = await analyze(
+      [fixture('knex-transaction-false.ts')],
+      { ...defaultConfig, format: 'knex' },
+    );
+    const violations = results[0].policyViolations;
+
+    const concurrent = violations.find((v) => v.ruleId === 'concurrent-in-transaction');
+    expect(concurrent).toBeUndefined();
+  });
+
   it('should extract SQL from TypeORM migrations with non-standard parameter names', async () => {
     const results = await analyze(
       [fixture('typeorm-qr-parameter.ts')],
@@ -650,6 +661,41 @@ DROP TABLE old_data;`;
     expect(genCheck!.risk).toBe(RiskLevel.HIGH);
     expect(genCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(genCheck!.safeRewrite).toBeDefined();
+  });
+
+  it('should detect inline ADD COLUMN REFERENCES as a foreign key lock risk', async () => {
+    const results = await analyze(
+      [fixture('knex-add-column-references.ts')],
+      { ...defaultConfig, format: 'knex' },
+    );
+    const checks = results[0].checks;
+
+    const fkCheck = checks.find((c) => c.ruleId === 'add-column-inline-foreign-key');
+    expect(fkCheck).toBeDefined();
+    expect(fkCheck!.risk).toBe(RiskLevel.HIGH);
+    expect(fkCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(fkCheck!.message).toContain('REFERENCES "users"');
+    expect(fkCheck!.message).toContain('SHARE ROW EXCLUSIVE');
+  });
+
+  it('should preserve schema-qualified referenced tables for inline ADD COLUMN REFERENCES', async () => {
+    await withTempSqlFile(
+      'inline-fk-schema',
+      'ALTER TABLE orders ADD COLUMN user_id integer REFERENCES auth.users(id);',
+      async (filePath) => {
+        const results = await analyze([filePath], defaultConfig);
+        const fkCheck = results[0].checks.find((c) => c.ruleId === 'add-column-inline-foreign-key');
+
+        expect(fkCheck).toBeDefined();
+        expect(fkCheck!.message).toContain('REFERENCES "auth"."users"(id)');
+        expect(fkCheck!.safeRewrite?.steps[2]).toContain('REFERENCES "auth"."users"("id")');
+      },
+    );
+  });
+
+  it('should fail hard when a migration file cannot be read during extraction', async () => {
+    const missingFile = `/tmp/pgfence-missing-${randomUUID()}.sql`;
+    await expect(analyze([missingFile], defaultConfig)).rejects.toThrow(/ENOENT|no such file/i);
   });
 
   // --- P1: RENAME TABLE ---
@@ -1034,7 +1080,7 @@ COMMIT;
     expect(attachCheck).toBeDefined();
     expect(attachCheck!.risk).toBe(RiskLevel.HIGH);
     expect(attachCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
-    expect(attachCheck!.message).toContain('ACCESS EXCLUSIVE on partition');
+    expect(attachCheck!.message).toContain('ACCESS EXCLUSIVE lock on partition');
   });
 
   // --- Gap 2: lock_timeout ordering validation ---

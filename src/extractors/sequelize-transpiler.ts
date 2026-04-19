@@ -209,6 +209,10 @@ function transpileCreateTable(args: TSNode[], filePath: string): TranspileResult
     }
   }
 
+  if (warnings.some((warning) => warning.unanalyzable)) {
+    return { sql, warnings };
+  }
+
   if (columns.length > 0) {
     sql.push(`CREATE TABLE "${tableName}" (${columns.join(', ')})`);
   }
@@ -230,6 +234,7 @@ function parseSequelizeColumnDef(
     const props = node.properties as TSNode[];
     let type = '';
     let modifiers = '';
+    let unresolvedForeignKey = false;
 
     for (const prop of props) {
       if (prop.type !== 'Property') continue;
@@ -282,20 +287,33 @@ function parseSequelizeColumnDef(
           if (value.type === 'ObjectExpression') {
             let refTable = '';
             let refCol = '';
+            let sawTable = false;
+            let sawKey = false;
             for (const refProp of value.properties as TSNode[]) {
               if (refProp.type !== 'Property') continue;
               const rk = refProp.key as TSNode;
               const rv = refProp.value as TSNode;
               if (rk.type === 'Identifier' && (rk.name as string) === 'model') {
-                refTable = getStringArg(rv) ?? '';
+                sawTable = true;
+                const resolved = getStringArg(rv);
+                if (resolved) refTable = resolved;
+                else unresolvedForeignKey = true;
               }
               if (rk.type === 'Identifier' && (rk.name as string) === 'key') {
-                refCol = getStringArg(rv) ?? '';
+                sawKey = true;
+                const resolved = getStringArg(rv);
+                if (resolved) refCol = resolved;
+                else unresolvedForeignKey = true;
               }
             }
             if (refTable && refCol) {
               modifiers += ` REFERENCES "${refTable}"("${refCol}")`;
+            } else {
+              unresolvedForeignKey = true;
             }
+            if (!sawTable || !sawKey) unresolvedForeignKey = true;
+          } else {
+            unresolvedForeignKey = true;
           }
           break;
         case 'onDelete': {
@@ -311,7 +329,18 @@ function parseSequelizeColumnDef(
       }
     }
 
-    if (type) return type + modifiers;
+    if (type && !unresolvedForeignKey) return type + modifiers;
+
+    if (unresolvedForeignKey) {
+      warnings.push({
+        filePath,
+        line: node.loc?.start?.line ?? 0,
+        column: node.loc?.start?.column ?? 0,
+        message: 'Sequelize column REFERENCES metadata could not be fully resolved: cannot transpile safely',
+        unanalyzable: true,
+      });
+      return null;
+    }
 
     warnings.push({
       filePath,
@@ -354,6 +383,8 @@ function transpileAddColumn(args: TSNode[], filePath: string): TranspileResult {
   const colDef = parseSequelizeColumnDef(args[2], filePath, warnings);
   if (colDef) {
     sql.push(`ALTER TABLE "${tableName}" ADD COLUMN "${colName}" ${colDef}`);
+  } else if (warnings.some((warning) => warning.unanalyzable)) {
+    return { sql, warnings };
   }
 
   return { sql, warnings };
@@ -523,15 +554,25 @@ function transpileAddIndex(args: TSNode[], filePath: string): TranspileResult {
     return { sql, warnings };
   }
 
-  const cols = (colsArg.elements as TSNode[])
-    .map((e) => getStringArg(e))
-    .filter((c): c is string => c !== null);
-  if (cols.length === 0) return { sql, warnings };
+  const cols = (colsArg.elements as TSNode[]).map((e) => getStringArg(e));
+  const unresolvedCols = cols.filter((c): c is null => c === null).length;
+  const resolvedCols = cols.filter((c): c is string => c !== null);
+  if (resolvedCols.length === 0 || unresolvedCols > 0) {
+    warnings.push({
+      filePath,
+      line: colsArg.loc?.start?.line ?? 0,
+      column: colsArg.loc?.start?.column ?? 0,
+      message: 'Dynamic or partially resolved columns in addIndex: cannot transpile safely',
+      unanalyzable: true,
+    });
+    return { sql, warnings };
+  }
 
   // Parse options (third argument)
   let concurrently = false;
   let unique = false;
-  let idxName = `idx_${tableName}_${cols.join('_')}`;
+  let idxName = `idx_${tableName}_${resolvedCols.join('_')}`;
+  let unsupportedOption = false;
 
   if (args.length >= 3 && args[2].type === 'ObjectExpression') {
     for (const prop of args[2].properties as TSNode[]) {
@@ -539,6 +580,10 @@ function transpileAddIndex(args: TSNode[], filePath: string): TranspileResult {
       const key = prop.key as TSNode;
       const keyName = key.type === 'Identifier' ? (key.name as string) : null;
       const value = prop.value as TSNode;
+      if (keyName && !['concurrently', 'unique', 'name'].includes(keyName)) {
+        unsupportedOption = true;
+        continue;
+      }
       if (keyName === 'concurrently' && value.type === 'Literal' && value.value === true) {
         concurrently = true;
       }
@@ -552,11 +597,22 @@ function transpileAddIndex(args: TSNode[], filePath: string): TranspileResult {
     }
   }
 
+  if (unsupportedOption) {
+    warnings.push({
+      filePath,
+      line: args[2].loc?.start?.line ?? 0,
+      column: args[2].loc?.start?.column ?? 0,
+      message: 'Unsupported addIndex() options such as partial index predicates cannot be transpiled safely',
+      unanalyzable: true,
+    });
+    return { sql, warnings };
+  }
+
   const parts = ['CREATE'];
   if (unique) parts.push('UNIQUE');
   parts.push('INDEX');
   if (concurrently) parts.push('CONCURRENTLY');
-  parts.push(`"${idxName}" ON "${tableName}" (${cols.map(c => `"${c}"`).join(', ')})`);
+  parts.push(`"${idxName}" ON "${tableName}" (${resolvedCols.map(c => `"${c}"`).join(', ')})`);
   sql.push(parts.join(' '));
 
   return { sql, warnings };
@@ -592,11 +648,20 @@ function transpileRemoveIndex(args: TSNode[], filePath: string): TranspileResult
   if (secondArg.type === 'Literal' && typeof secondArg.value === 'string') {
     sql.push(`DROP INDEX "${secondArg.value}"`);
   } else if (secondArg.type === 'ArrayExpression') {
-    const cols = (secondArg.elements as TSNode[])
-      .map((e) => getStringArg(e))
-      .filter((c): c is string => c !== null);
-    if (cols.length > 0) {
-      const idxName = `idx_${tableName}_${cols.join('_')}`;
+    const cols = (secondArg.elements as TSNode[]).map((e) => getStringArg(e));
+    if (cols.some((col) => col === null)) {
+      warnings.push({
+        filePath,
+        line: secondArg.loc?.start?.line ?? 0,
+        column: secondArg.loc?.start?.column ?? 0,
+        message: 'Dynamic or partially resolved columns in removeIndex: cannot transpile safely',
+        unanalyzable: true,
+      });
+      return { sql, warnings };
+    }
+    const resolvedCols = cols.filter((col): col is string => col !== null);
+    if (resolvedCols.length > 0) {
+      const idxName = `idx_${tableName}_${resolvedCols.join('_')}`;
       sql.push(`DROP INDEX "${idxName}"`);
     }
   }
@@ -708,6 +773,7 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
   let whereClause = '';
   let onDelete = '';
   let onUpdate = '';
+  let unresolvedForeignKey = false;
 
   for (const prop of props) {
     if (prop.type !== 'Property') continue;
@@ -724,29 +790,47 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
         break;
       case 'fields':
         if (value.type === 'ArrayExpression') {
-          fields = (value.elements as TSNode[])
-            .map((e) => getStringArg(e))
-            .filter((c): c is string => c !== null);
+          const parsedFields = (value.elements as TSNode[]).map((e) => getStringArg(e));
+          if (parsedFields.some((field) => field === null)) {
+            unresolvedForeignKey = true;
+          }
+          fields = parsedFields.filter((c): c is string => c !== null);
         }
         break;
       case 'references':
         if (value.type === 'ObjectExpression') {
+          let sawTable = false;
+          let sawField = false;
           for (const refProp of value.properties as TSNode[]) {
             if (refProp.type !== 'Property') continue;
             const rk = refProp.key as TSNode;
             const rv = refProp.value as TSNode;
             const rkName = rk.type === 'Identifier' ? (rk.name as string) : null;
-            if (rkName === 'table') refTable = getStringArg(rv) ?? '';
+            if (rkName === 'table') {
+              sawTable = true;
+              const resolvedTable = getStringArg(rv);
+              if (resolvedTable) refTable = resolvedTable;
+              else unresolvedForeignKey = true;
+            }
             if (rkName === 'field') {
+              sawField = true;
               const f = getStringArg(rv);
               if (f) refFields = [f];
+              else unresolvedForeignKey = true;
             }
             if (rkName === 'fields' && rv.type === 'ArrayExpression') {
-              refFields = (rv.elements as TSNode[])
-                .map((e) => getStringArg(e))
-                .filter((c): c is string => c !== null);
+              const parsedRefFields = (rv.elements as TSNode[]).map((e) => getStringArg(e));
+              if (parsedRefFields.some((field) => field === null)) {
+                unresolvedForeignKey = true;
+              }
+              refFields = parsedRefFields.filter((c): c is string => c !== null);
             }
           }
+          if (!sawTable || (!sawField && refFields.length === 0)) {
+            unresolvedForeignKey = true;
+          }
+        } else {
+          unresolvedForeignKey = true;
         }
         break;
       case 'where':
@@ -767,7 +851,18 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
     }
   }
 
-  if (fields.length === 0) return { sql, warnings };
+  if (fields.length === 0 || unresolvedForeignKey) {
+    if (constraintType === 'foreign key') {
+      warnings.push({
+        filePath,
+        line: optsArg.loc?.start?.line ?? 0,
+        column: optsArg.loc?.start?.column ?? 0,
+        message: 'Foreign key constraint metadata could not be fully resolved: cannot transpile safely',
+        unanalyzable: true,
+      });
+    }
+    return { sql, warnings };
+  }
 
   const quotedFields = fields.map(f => `"${f}"`).join(', ');
   const nameClause = constraintName ? `"${constraintName}" ` : '';
@@ -783,6 +878,14 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
         if (onDelete) fkSql += ` ON DELETE ${onDelete}`;
         if (onUpdate) fkSql += ` ON UPDATE ${onUpdate}`;
         sql.push(fkSql);
+      } else {
+        warnings.push({
+          filePath,
+          line: optsArg.loc?.start?.line ?? 0,
+          column: optsArg.loc?.start?.column ?? 0,
+          message: 'Foreign key constraint metadata could not be fully resolved: cannot transpile safely',
+          unanalyzable: true,
+        });
       }
       break;
     case 'check':

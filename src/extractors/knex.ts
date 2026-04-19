@@ -44,6 +44,7 @@ export async function extractKnexSQLFromSource(
     jsx: false,
   }) as unknown as TSNode;
 
+  const autoCommit = detectAutoCommit(ast);
   const upFn = findUpFunction(ast);
   if (!upFn) {
     warnings.push({
@@ -52,7 +53,7 @@ export async function extractKnexSQLFromSource(
       column: 0,
       message: 'No up() or exports.up function found in Knex migration',
     });
-    return { sql: '', warnings };
+    return { sql: '', warnings, autoCommit };
   }
 
   // Gap 11: track conditional depth to warn about conditional SQL
@@ -95,7 +96,7 @@ export async function extractKnexSQLFromSource(
         const result = transpileKnexSchemaCall(node, filePath);
         if (result.sql.length > 0) {
           queries.push(...result.sql);
-        } else {
+        } else if (result.warnings.length === 0) {
           const loc = node.loc?.start ?? { line: 0, column: 0 };
           warnings.push({
             filePath,
@@ -113,7 +114,7 @@ export async function extractKnexSQLFromSource(
     },
   });
 
-  return { sql: queries.join(';\n'), warnings };
+  return { sql: queries.join(';\n'), warnings, autoCommit };
 }
 
 function findUpFunction(ast: TSNode): TSNode | null {
@@ -175,6 +176,89 @@ function findUpFunction(ast: TSNode): TSNode | null {
     }
   });
   return result;
+}
+
+function detectAutoCommit(ast: TSNode): boolean {
+  let autoCommit = false;
+
+  walkNode(ast, (node: TSNode) => {
+    if (autoCommit) return;
+
+    if (node.type === 'VariableDeclarator') {
+      const id = node.id as TSNode | null;
+      const init = node.init as TSNode | null;
+      if (id?.type === 'Identifier' && (id.name as string) === 'config' && init?.type === 'ObjectExpression') {
+        if (objectHasTransactionFalse(init)) autoCommit = true;
+      }
+    }
+
+    if (node.type === 'AssignmentExpression') {
+      const left = node.left as TSNode;
+      const right = node.right as TSNode;
+      if (left?.type === 'MemberExpression') {
+        const chain = memberExpressionChain(left);
+        if (right?.type === 'ObjectExpression' && chain.join('.') === 'exports.config') {
+          if (objectHasTransactionFalse(right)) autoCommit = true;
+        }
+        if (right?.type === 'ObjectExpression' && chain.join('.') === 'module.exports.config') {
+          if (objectHasTransactionFalse(right)) autoCommit = true;
+        }
+        if (right?.type === 'Literal' && right.value === false && chain.join('.') === 'exports.config.transaction') {
+          autoCommit = true;
+        }
+        if (right?.type === 'Literal' && right.value === false && chain.join('.') === 'module.exports.config.transaction') {
+          autoCommit = true;
+        }
+        if (right?.type === 'ObjectExpression' && chain.join('.') === 'module.exports') {
+          if (objectHasNestedConfigTransactionFalse(right)) autoCommit = true;
+        }
+      }
+    }
+  });
+
+  return autoCommit;
+}
+
+function memberExpressionChain(node: TSNode): string[] {
+  const parts: string[] = [];
+  let current: TSNode | null = node;
+  while (current?.type === 'MemberExpression') {
+    const prop = current.property as TSNode;
+    if (prop?.type === 'Identifier') {
+      parts.unshift(prop.name as string);
+    }
+    current = current.object as TSNode;
+  }
+  if (current?.type === 'Identifier') {
+    parts.unshift(current.name as string);
+  }
+  return parts;
+}
+
+function objectHasTransactionFalse(node: TSNode): boolean {
+  const props = node.properties as TSNode[] | undefined;
+  if (!props) return false;
+  for (const prop of props) {
+    if (prop.type !== 'Property') continue;
+    const key = prop.key as TSNode;
+    const value = prop.value as TSNode;
+    if (key?.type !== 'Identifier' || (key.name as string) !== 'transaction') continue;
+    if (value.type === 'Literal' && value.value === false) return true;
+  }
+  return false;
+}
+
+function objectHasNestedConfigTransactionFalse(node: TSNode): boolean {
+  const props = node.properties as TSNode[] | undefined;
+  if (!props) return false;
+  for (const prop of props) {
+    if (prop.type !== 'Property') continue;
+    const key = prop.key as TSNode;
+    if (key?.type !== 'Identifier' || (key.name as string) !== 'config') continue;
+    const value = prop.value as TSNode;
+    if (value.type === 'ObjectExpression' && objectHasTransactionFalse(value)) return true;
+  }
+  return false;
 }
 
 function isRawCall(node: TSNode): boolean {

@@ -47,6 +47,44 @@ interface AlterTableCmd {
   };
 }
 
+interface ForeignKeyConstraint {
+  contype: string;
+  conname?: string;
+  skip_validation?: boolean;
+  pktable?: {
+    schemaname?: string;
+    relname: string;
+  };
+  fk_attrs?: Array<{ String: { sval: string } }>;
+  pk_attrs?: Array<{ String: { sval: string } }>;
+}
+
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function formatColumnList(columns: string): string {
+  return columns
+    .split(',')
+    .map((column) => column.trim())
+    .filter(Boolean)
+    .map((column) => (column.startsWith('<') && column.endsWith('>')) ? column : quoteIdentifier(column))
+    .join(', ');
+}
+
+function formatQualifiedRelation(relation?: { schemaname?: string; relname?: string }): string {
+  if (!relation?.relname) return '<unknown>';
+  const qualified = relation.schemaname
+    ? [relation.schemaname, relation.relname]
+    : [relation.relname];
+  return qualified.map(quoteIdentifier).join('.');
+}
+
+function sanitizeIdentifierFragment(fragment: string): string {
+  const cleaned = fragment.trim().replace(/[^a-zA-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  return cleaned || 'fk';
+}
+
 export function checkAddColumn(
   stmt: ParsedStatement,
   config: PgfenceConfig,
@@ -77,6 +115,55 @@ export function checkAddColumn(
     );
     const hasDefault = !!defaultConstraint;
     const defaultExpr = defaultConstraint?.Constraint.raw_expr;
+    const foreignKeyConstraint = constraints.find(
+      (con) => con.Constraint.contype === 'CONSTR_FOREIGN',
+    )?.Constraint as ForeignKeyConstraint | undefined;
+
+    if (foreignKeyConstraint) {
+      const refTable = formatQualifiedRelation(foreignKeyConstraint.pktable);
+      const fkCols = (foreignKeyConstraint.fk_attrs ?? [])
+        .map((attr) => attr.String?.sval ?? '?')
+        .filter((col) => col.length > 0)
+        .join(', ');
+      const refCols = (foreignKeyConstraint.pk_attrs ?? [])
+        .map((attr) => attr.String?.sval ?? '?')
+        .filter((col) => col.length > 0)
+        .join(', ');
+      const columnList = fkCols || colDef.colname;
+      const referencedList = refCols || '<referenced_column>';
+      const constraintName = foreignKeyConstraint.conname
+        ?? `fk_${sanitizeIdentifierFragment(tableName ?? 'tbl')}_${sanitizeIdentifierFragment(colDef.colname)}`;
+      const safeTableName = tableName ? quoteIdentifier(tableName) : '<table>';
+      const safeColumnName = quoteIdentifier(colDef.colname);
+      const safeColumnList = formatColumnList(columnList);
+      const safeReferencedList = formatColumnList(referencedList);
+      const safeConstraintName = quoteIdentifier(constraintName);
+      const safeTypeName = getTypeName(colDef.typeName) || '<type>';
+
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: foreignKeyConstraint.skip_validation === true ? RiskLevel.LOW : RiskLevel.HIGH,
+        message: foreignKeyConstraint.skip_validation === true
+          ? `ADD COLUMN "${colDef.colname}" with REFERENCES ${refTable}(${referencedList}) NOT VALID: acquires ACCESS EXCLUSIVE lock on "${tableName}" and defers referenced-table validation`
+          : `ADD COLUMN "${colDef.colname}" with REFERENCES ${refTable}(${referencedList}) without NOT VALID: acquires ACCESS EXCLUSIVE lock on "${tableName}" and also takes SHARE ROW EXCLUSIVE lock on ${refTable}`,
+        ruleId: foreignKeyConstraint.skip_validation === true
+          ? 'add-column-inline-foreign-key-not-valid'
+          : 'add-column-inline-foreign-key',
+        safeRewrite: {
+          description: 'Add the column first, then add the foreign key as NOT VALID and validate separately',
+          steps: [
+            `ALTER TABLE ${safeTableName} ADD COLUMN IF NOT EXISTS ${safeColumnName} ${safeTypeName};`,
+            `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${quoteIdentifier(`idx_${sanitizeIdentifierFragment(tableName ?? 'tbl')}_${sanitizeIdentifierFragment(columnList)}`)} ON ${safeTableName} (${safeColumnList});`,
+            `ALTER TABLE ${safeTableName} ADD CONSTRAINT ${safeConstraintName} FOREIGN KEY (${safeColumnList}) REFERENCES ${refTable}(${safeReferencedList}) NOT VALID;`,
+            `ALTER TABLE ${safeTableName} VALIDATE CONSTRAINT ${safeConstraintName};`,
+          ],
+        },
+      });
+    }
 
     // Case 1: NOT NULL without DEFAULT → HIGH
     if (hasNotNull && !hasDefault) {

@@ -113,6 +113,20 @@ describe('Extractor: Knex', () => {
         expect(result.sql).toContain("it''s pending");
     });
 
+    it('should warn and fail closed when Knex REFERENCES is incomplete', async () => {
+        const filePath = path.join(fixturesDir, 'knex-references-missing-intable.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.warnings.some((w) => w.unanalyzable)).toBe(true);
+        expect(result.sql).not.toContain('REFERENCES');
+    });
+
+    it('should detect Knex transaction = false and set autoCommit', async () => {
+        const filePath = path.join(fixturesDir, 'knex-transaction-false.ts');
+        const result = await extractKnexSQL(filePath);
+        expect(result.autoCommit).toBe(true);
+        expect(result.sql).toContain('CREATE INDEX CONCURRENTLY');
+    });
+
     it('should handle knex.schema.table() alias for alterTable', async () => {
         const filePath = path.join(fixturesDir, 'knex-table-alias.ts');
         const result = await extractKnexSQL(filePath);
@@ -178,6 +192,20 @@ describe('Extractor: Sequelize', () => {
         expect(result.sql).toContain('FOREIGN KEY');
         expect(result.sql).toContain('REFERENCES "users"');
         expect(result.sql).not.toContain('DROP CONSTRAINT');
+    });
+
+    it('should warn and fail closed when Sequelize REFERENCES metadata is incomplete', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-dynamic-fk.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.warnings.some((w) => w.unanalyzable)).toBe(true);
+        expect(result.sql).not.toContain('REFERENCES');
+    });
+
+    it('should warn and fail closed for partial Sequelize addIndex options', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-partial-index.js');
+        const result = await extractSequelizeSQL(filePath);
+        expect(result.warnings.some((w) => w.unanalyzable)).toBe(true);
+        expect(result.sql).not.toContain('CREATE INDEX');
     });
 
     it('should detect Sequelize.literal() as volatile default', async () => {

@@ -147,6 +147,7 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
       filePath,
       line: 1,
       column: 1,
+      unanalyzable: true,
     });
     return result;
   }
