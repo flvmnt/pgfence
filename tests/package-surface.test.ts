@@ -51,4 +51,10 @@ describe('package surface', () => {
 
     expect(orphanArtifacts).toEqual([]);
   });
+
+  it('exports the documented LSP subpath', async () => {
+    const lsp = await import('@flvmnt/pgfence/lsp');
+    expect(typeof lsp.createServer).toBe('function');
+    expect(typeof lsp.startStdioServer).toBe('function');
+  });
 });

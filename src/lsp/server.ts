@@ -152,6 +152,7 @@ export function createServer(conn: Connection) {
       connection.sendDiagnostics({ uri, diagnostics, version });
     } catch (err) {
       connection.console.error(`pgfence analysis failed for ${uri}: ${err}`);
+      analysisCache.delete(uri);
       connection.sendDiagnostics({ uri, diagnostics: [] });
     }
   }

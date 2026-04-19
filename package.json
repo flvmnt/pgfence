@@ -7,7 +7,7 @@
   "main": "dist/index.js",
   "exports": {
     ".": "./dist/index.js",
-    "./lsp": "./dist/index.js",
+    "./lsp": "./dist/lsp/server.js",
     "./analyzer": "./dist/analyzer.js",
     "./types": "./dist/types.js"
   },
