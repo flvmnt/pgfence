@@ -15,6 +15,7 @@
 import { createHash } from 'node:crypto';
 import type { AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
+import { countUnanalyzable } from './coverage.js';
 
 type GitLabSeverity = 'info' | 'minor' | 'major' | 'critical' | 'blocker';
 
@@ -102,10 +103,11 @@ export function reportGitLab(results: AnalysisResult[]): string {
       }, checkName, syntheticLine++);
     }
 
-    const dynamicWarnings = (result.extractionWarnings ?? []).filter((warning) => warning.unanalyzable).length;
-    const coveragePct = result.statementCount > 0
-      ? Math.max(0, Math.round(((result.statementCount - dynamicWarnings) / result.statementCount) * 100))
-      : dynamicWarnings > 0 ? 0 : 100;
+    const dynamicWarnings = countUnanalyzable(result);
+    const totalStatements = result.statementCount + dynamicWarnings;
+    const coveragePct = totalStatements > 0
+      ? Math.round((result.statementCount / totalStatements) * 100)
+      : 100;
     pushViolation({
       description: `Analyzed ${result.statementCount} SQL statements. ${dynamicWarnings} dynamic statements not analyzable. Coverage: ${coveragePct}%.`,
       check_name: 'pgfence-coverage-summary',

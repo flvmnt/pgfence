@@ -9,6 +9,7 @@
 
 import type { AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
+import { summarizeCoverage } from './coverage.js';
 
 interface SarifLocation {
   physicalLocation: {
@@ -150,17 +151,10 @@ export function reportSARIF(results: AnalysisResult[]): string {
   const rules = new Map<string, SarifRule>();
   const sarifResults: SarifResult[] = [];
 
-  let totalStatements = 0;
-  let dynamicWarnings = 0;
   for (const result of results) {
     sarifResults.push(...toSarifResults(result, rules));
-    totalStatements += result.statementCount;
-    dynamicWarnings += result.extractionWarnings?.filter(w => w.unanalyzable).length ?? 0;
   }
-
-  const coveragePct = totalStatements > 0
-    ? Math.max(0, Math.round(((totalStatements - dynamicWarnings) / totalStatements) * 100))
-    : dynamicWarnings > 0 ? 0 : 100;
+  const coverage = summarizeCoverage(results);
 
   const sarif = {
     $schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
@@ -177,9 +171,10 @@ export function reportSARIF(results: AnalysisResult[]): string {
         results: sarifResults,
         properties: {
           coverageSummary: {
-            totalStatements,
-            dynamicStatements: dynamicWarnings,
-            coveragePercent: coveragePct,
+            totalStatements: coverage.totalStatements,
+            analyzedStatements: coverage.analyzedStatements,
+            dynamicStatements: coverage.unanalyzableStatements,
+            coveragePercent: coverage.coveragePercent,
           },
         },
       },

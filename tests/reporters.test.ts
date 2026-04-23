@@ -76,9 +76,10 @@ describe('Reporter: JSON', () => {
         const output = reportJSON(resultsWithWarnings);
         const parsed = JSON.parse(output);
 
-        expect(parsed.coverage.totalStatements).toBe(2);
+        expect(parsed.coverage.totalStatements).toBe(3);
+        expect(parsed.coverage.analyzedStatements).toBe(2);
         expect(parsed.coverage.dynamicStatements).toBe(1);
-        expect(parsed.coverage.coveragePercent).toBe(50);
+        expect(parsed.coverage.coveragePercent).toBe(67);
     });
 
     it('should not count informational warnings as unanalyzable', () => {
@@ -166,7 +167,7 @@ describe('Reporter: CLI', () => {
         const output = reportCLI(resultsWithWarnings, mockConfig);
         expect(output).toContain('=== Coverage ===');
         expect(output).toMatch(/Unanalyzable: 1/);
-        expect(output).toMatch(/Coverage: 67%/);
+        expect(output).toMatch(/Coverage: 75%/);
     });
 
     it('should not count informational warnings as unanalyzable in coverage', () => {
@@ -360,7 +361,7 @@ describe('Reporter: GitHub PR', () => {
         const output = reportGitHub(resultsWithWarnings);
         expect(output).toContain('### Coverage');
         expect(output).toMatch(/\*\*1\*\* dynamic statements not analyzable/);
-        expect(output).toMatch(/Coverage: \*\*50%\*\*/);
+        expect(output).toMatch(/Coverage: \*\*67%\*\*/);
     });
 
     it('should put LOW-risk safe rewrites in Notes section, not Safe Rewrite Recipes', () => {
@@ -439,9 +440,10 @@ describe('Reporter: SARIF', () => {
         const output = reportSARIF(resultsWithWarnings);
         const sarif = JSON.parse(output);
         const coverage = sarif.runs[0].properties.coverageSummary;
-        expect(coverage.totalStatements).toBe(4);
+        expect(coverage.totalStatements).toBe(6);
+        expect(coverage.analyzedStatements).toBe(4);
         expect(coverage.dynamicStatements).toBe(2);
-        expect(coverage.coveragePercent).toBe(50);
+        expect(coverage.coveragePercent).toBe(67);
     });
 
     it('should map risk levels to SARIF severity levels', () => {

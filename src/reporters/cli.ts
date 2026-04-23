@@ -9,6 +9,7 @@ import Table from 'cli-table3';
 import type { AnalysisResult, CheckResult, PgfenceConfig } from '../types.js';
 import { RiskLevel } from '../types.js';
 import { RISK_ORDER } from '../analyzer.js';
+import { summarizeCoverage } from './coverage.js';
 
 function riskIndex(risk: RiskLevel): number {
   return RISK_ORDER.indexOf(risk);
@@ -45,7 +46,7 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
 
   for (const result of results) {
     const hasUnanalyzable = result.extractionWarnings?.some(w => w.unanalyzable);
-    const displayRisk = (result.maxRisk === RiskLevel.SAFE && hasUnanalyzable) ? 'UNANALYZABLE' : result.maxRisk;
+    const displayRisk = hasUnanalyzable ? 'UNANALYZABLE' : result.maxRisk;
     const color = displayRisk === 'UNANALYZABLE' ? chalk.yellow : riskColor(result.maxRisk);
 
     lines.push('');
@@ -205,20 +206,13 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
   }
 
   // Coverage summary (Trust Contract requirement)
-  const totalStatements = results.reduce((sum, r) => sum + r.statementCount, 0);
-  const dynamicWarnings = results.reduce(
-    (sum, r) => sum + (r.extractionWarnings?.filter(w => w.unanalyzable).length ?? 0),
-    0,
-  );
+  const coverage = summarizeCoverage(results);
   lines.push(chalk.bold('=== Coverage ==='));
   lines.push(`Postgres ruleset: PG${config.minPostgresVersion}+ (configurable)`);
-  const coveragePct = totalStatements > 0
-    ? Math.max(0, Math.round(((totalStatements - dynamicWarnings) / totalStatements) * 100))
-    : dynamicWarnings > 0 ? 0 : 100;
   lines.push(
-    `Analyzed: ${totalStatements} statements  |  ` +
-    `Unanalyzable: ${dynamicWarnings}  |  ` +
-    `Coverage: ${coveragePct}%`,
+    `Analyzed: ${coverage.analyzedStatements} statements  |  ` +
+    `Unanalyzable: ${coverage.unanalyzableStatements}  |  ` +
+    `Coverage: ${coverage.coveragePercent}%`,
   );
   lines.push('');
 

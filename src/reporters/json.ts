@@ -5,23 +5,18 @@
  */
 
 import type { AnalysisResult } from '../types.js';
+import { summarizeCoverage } from './coverage.js';
 
 export function reportJSON(results: AnalysisResult[]): string {
-  const totalStatements = results.reduce((sum, r) => sum + r.statementCount, 0);
-  const dynamicWarnings = results.reduce(
-    (sum, r) => sum + (r.extractionWarnings?.filter(w => w.unanalyzable).length ?? 0),
-    0,
-  );
-  const coveragePct = totalStatements > 0
-    ? Math.max(0, Math.round(((totalStatements - dynamicWarnings) / totalStatements) * 100))
-    : dynamicWarnings > 0 ? 0 : 100;
+  const coverage = summarizeCoverage(results);
 
   const report = {
     version: '1.0',
     coverage: {
-      totalStatements,
-      dynamicStatements: dynamicWarnings,
-      coveragePercent: coveragePct,
+      totalStatements: coverage.totalStatements,
+      analyzedStatements: coverage.analyzedStatements,
+      dynamicStatements: coverage.unanalyzableStatements,
+      coveragePercent: coverage.coveragePercent,
     },
     results,
   };
