@@ -39,6 +39,58 @@ import type { PgfenceConfig } from '../types.js';
 
 export const DEBOUNCE_MS = 300;
 
+const FORMAT_VALUES = new Set(['sql', 'typeorm', 'prisma', 'knex', 'drizzle', 'sequelize', 'auto']);
+const OUTPUT_VALUES = new Set(['cli', 'json', 'github', 'sarif', 'gitlab']);
+
+function defaultLspConfig(): PgfenceConfig {
+  return {
+    format: 'auto',
+    output: 'cli',
+    minPostgresVersion: 14,
+    maxAllowedRisk: RiskLevel.HIGH,
+    requireLockTimeout: true,
+    requireStatementTimeout: true,
+    unknownHandling: 'warn',
+  };
+}
+
+function applyLspConfig(target: PgfenceConfig, items: Record<string, unknown>): void {
+  if (typeof items.format === 'string' && FORMAT_VALUES.has(items.format)) {
+    target.format = items.format as PgfenceConfig['format'];
+  }
+  if (typeof items.output === 'string' && OUTPUT_VALUES.has(items.output)) {
+    target.output = items.output as PgfenceConfig['output'];
+  }
+  if (typeof items.minPostgresVersion === 'number') target.minPostgresVersion = items.minPostgresVersion;
+  if (typeof items.requireLockTimeout === 'boolean') target.requireLockTimeout = items.requireLockTimeout;
+  if (typeof items.requireStatementTimeout === 'boolean') target.requireStatementTimeout = items.requireStatementTimeout;
+  if (typeof items.maxRisk === 'string') {
+    const risk = items.maxRisk.toUpperCase();
+    if (Object.values(RiskLevel).includes(risk as RiskLevel)) target.maxAllowedRisk = risk as RiskLevel;
+  }
+  if (typeof items.unknown === 'string' && (items.unknown === 'warn' || items.unknown === 'block')) {
+    target.unknownHandling = items.unknown;
+  }
+  if (typeof items.snapshot === 'string') target.snapshotFile = items.snapshot;
+  if (Array.isArray(items.plugins) && items.plugins.every((plugin) => typeof plugin === 'string')) {
+    target.plugins = items.plugins;
+  }
+  if (Array.isArray(items.disableRules) && items.disableRules.every((rule) => typeof rule === 'string')) {
+    target.rules = { ...target.rules, disable: items.disableRules };
+  }
+  if (Array.isArray(items.enableRules) && items.enableRules.every((rule) => typeof rule === 'string')) {
+    target.rules = { ...target.rules, enable: items.enableRules };
+  }
+}
+
+function configFromLspItems(items: Record<string, unknown> | null | undefined): PgfenceConfig {
+  const next = defaultLspConfig();
+  if (items) {
+    applyLspConfig(next, items);
+  }
+  return next;
+}
+
 /**
  * Create and wire up the LSP server.
  * Accepts a pre-built connection (for testing) or creates one from stdio.
@@ -50,23 +102,14 @@ export function createServer(conn: Connection) {
   const analysisCache = new Map<string, AnalyzeTextResult>();
   const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  const serverConfig: PgfenceConfig = {
-    format: 'auto',
-    output: 'cli',
-    minPostgresVersion: 14,
-    maxAllowedRisk: RiskLevel.HIGH,
-    requireLockTimeout: true,
-    requireStatementTimeout: true,
-  };
+  let serverConfig: PgfenceConfig = defaultLspConfig();
 
   connection.onInitialize((params): InitializeResult => {
     // Seed config from initializationOptions so the server doesn't use
     // defaults until the first workspace/didChangeConfiguration event.
     const init = params.initializationOptions as Record<string, unknown> | null;
     if (init) {
-      if (typeof init.minPostgresVersion === 'number') serverConfig.minPostgresVersion = init.minPostgresVersion;
-      if (typeof init.requireLockTimeout === 'boolean') serverConfig.requireLockTimeout = init.requireLockTimeout;
-      if (typeof init.requireStatementTimeout === 'boolean') serverConfig.requireStatementTimeout = init.requireStatementTimeout;
+      serverConfig = configFromLspItems(init);
     }
 
     return {
@@ -222,11 +265,7 @@ export function createServer(conn: Connection) {
       const items = await connection.workspace.getConfiguration({
         section: 'pgfence',
       }) as Record<string, unknown> | null;
-      if (items) {
-        if (typeof items.minPostgresVersion === 'number') serverConfig.minPostgresVersion = items.minPostgresVersion;
-        if (typeof items.requireLockTimeout === 'boolean') serverConfig.requireLockTimeout = items.requireLockTimeout;
-        if (typeof items.requireStatementTimeout === 'boolean') serverConfig.requireStatementTimeout = items.requireStatementTimeout;
-      }
+      serverConfig = configFromLspItems(items);
     } catch (err) {
       // Client may not support workspace/configuration (e.g. minimal Neovim/Helix LSP configs)
       // Log non-capability errors so they're not completely invisible

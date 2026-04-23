@@ -162,4 +162,59 @@ describe('LSP cache behavior', () => {
       diagnostics: [],
     });
   });
+
+  it('resets omitted configuration values to defaults on configuration refresh', async () => {
+    const { connection, handlers } = createMockConnection();
+    createServer(connection);
+    const uri = 'file:///test.sql';
+    const content = 'CREATE INDEX idx ON users (email);';
+
+    vi.mocked(analyzeText).mockResolvedValue({
+      checks: [],
+      policyViolations: [],
+      extractionWarnings: [],
+      maxRisk: RiskLevel.SAFE,
+      statementCount: 0,
+      sourceRanges: [],
+      policySourceRanges: [],
+    });
+
+    const initResult = handlers.initialize?.({
+      capabilities: {},
+      processId: 1,
+      rootUri: null,
+      initializationOptions: {
+        requireLockTimeout: false,
+        requireStatementTimeout: false,
+        unknown: 'block',
+      },
+    });
+    expect(initResult).toBeDefined();
+
+    handlers.didOpen?.({
+      textDocument: {
+        uri,
+        languageId: 'sql',
+        version: 1,
+        text: content,
+      },
+    });
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+    let firstConfig = vi.mocked(analyzeText).mock.calls[0][0].config;
+    expect(firstConfig.requireLockTimeout).toBe(false);
+    expect(firstConfig.requireStatementTimeout).toBe(false);
+    expect(firstConfig.unknownHandling).toBe('block');
+
+    vi.mocked(connection.workspace.getConfiguration).mockResolvedValue({});
+    await handlers.didChangeConfiguration?.({});
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+    const lastCall = vi.mocked(analyzeText).mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    firstConfig = lastCall![0].config;
+    expect(firstConfig.requireLockTimeout).toBe(true);
+    expect(firstConfig.requireStatementTimeout).toBe(true);
+    expect(firstConfig.unknownHandling).toBe('warn');
+  });
 });
