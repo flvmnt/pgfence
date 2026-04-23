@@ -7,12 +7,13 @@
  * Never uses regex. Warns on dynamic SQL, never silently ignores it.
  */
 
-import { readFile } from 'node:fs/promises';
 import type { ExtractionResult, ExtractionWarning } from '../types.js';
+import { readTextMigrationFile } from './file-guards.js';
 
 interface TSNode {
   type: string;
   loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+  range?: [number, number];
   [key: string]: unknown;
 }
 
@@ -54,7 +55,7 @@ const TYPEORM_BUILDER_METHODS = new Set([
 ]);
 
 export async function extractTypeORMSQL(filePath: string): Promise<ExtractionResult> {
-  const source = await readFile(filePath, 'utf8');
+  const source = await readTextMigrationFile(filePath);
   return extractTypeORMSQLFromSource(source, filePath);
 }
 
@@ -64,6 +65,7 @@ export async function extractTypeORMSQLFromSource(
 ): Promise<ExtractionResult> {
   const warnings: ExtractionWarning[] = [];
   const queries: string[] = [];
+  const sourceRanges: Array<{ startOffset: number; endOffset: number }> = [];
 
   // Dynamic import to keep typescript-estree as devDependency
   const { parse } = await import('@typescript-eslint/typescript-estree');
@@ -81,6 +83,7 @@ export async function extractTypeORMSQLFromSource(
       line: 1,
       column: 0,
       message: 'No up() method found in TypeORM migration',
+      unanalyzable: true,
     });
     return { sql: '', warnings };
   }
@@ -88,11 +91,17 @@ export async function extractTypeORMSQLFromSource(
   // Walk the up() method body to find <paramName>.query() calls
   // Gap 11: track conditional depth to warn about conditional SQL
   const conditionalTypes = new Set(['IfStatement', 'ConditionalExpression', 'SwitchCase']);
+  const queryRunnerNames = new Set([upInfo.paramName]);
+  const queryFunctionNames = new Set<string>();
   let conditionalDepth = 0;
 
   walkNodeWithContext(upInfo.body, {
     enter(node: TSNode) {
       if (conditionalTypes.has(node.type)) conditionalDepth++;
+
+      if (node.type === 'VariableDeclarator') {
+        trackTypeORMAlias(node, queryRunnerNames, queryFunctionNames);
+      }
 
       if (node.type === 'CallExpression') {
         // Check for builder API calls (queryRunner.createTable(), etc.)
@@ -100,7 +109,7 @@ export async function extractTypeORMSQLFromSource(
         if (
           callee?.type === 'MemberExpression' &&
           (callee.object as TSNode)?.type === 'Identifier' &&
-          ((callee.object as TSNode).name as string) === upInfo.paramName &&
+          queryRunnerNames.has((callee.object as TSNode).name as string) &&
           (callee.property as TSNode)?.type === 'Identifier' &&
           TYPEORM_BUILDER_METHODS.has((callee.property as TSNode).name as string)
         ) {
@@ -117,14 +126,15 @@ export async function extractTypeORMSQLFromSource(
         }
 
         // Check for queryRunner.query() calls
-        if (isQueryRunnerQuery(node, upInfo.paramName)) {
+        if (isQueryRunnerQuery(node, queryRunnerNames) || isQueryFunctionCall(node, queryFunctionNames)) {
           const args = node.arguments as TSNode[];
           if (args.length === 0) return;
 
           const arg = args[0];
-          const extracted = extractStringValue(arg);
+          const extracted = extractStringLiteral(arg);
           if (extracted !== null) {
-            queries.push(extracted);
+            queries.push(extracted.value);
+            sourceRanges.push(extracted.range);
             if (conditionalDepth > 0) {
               const loc = node.loc?.start ?? { line: 0, column: 0 };
               warnings.push({
@@ -132,6 +142,7 @@ export async function extractTypeORMSQLFromSource(
                 line: loc.line,
                 column: loc.column,
                 message: `Conditional SQL at line ${loc.line} -- statement may or may not execute depending on runtime condition`,
+                unanalyzable: true,
               });
             }
           } else {
@@ -152,7 +163,7 @@ export async function extractTypeORMSQLFromSource(
     },
   });
 
-  return { sql: queries.join(';\n'), warnings, autoCommit: upInfo.autoCommit };
+  return { sql: queries.join(';\n'), warnings, autoCommit: upInfo.autoCommit, sourceRanges };
 }
 
 function findUpMethod(ast: TSNode): UpMethodInfo | null {
@@ -211,19 +222,19 @@ function findUpMethod(ast: TSNode): UpMethodInfo | null {
   return { body, paramName, autoCommit };
 }
 
-function isQueryRunnerQuery(node: TSNode, paramName: string): boolean {
+function isQueryRunnerQuery(node: TSNode, queryRunnerNames: Set<string>): boolean {
   const callee = node.callee as TSNode;
   if (callee?.type !== 'MemberExpression') return false;
   const prop = callee.property as TSNode;
   if (prop?.type !== 'Identifier' || (prop.name as string) !== 'query') return false;
   const obj = callee.object as TSNode;
   // queryRunner.query()
-  if (obj?.type === 'Identifier' && (obj.name as string) === paramName) return true;
+  if (obj?.type === 'Identifier' && queryRunnerNames.has(obj.name as string)) return true;
   // queryRunner.manager.query()
   if (obj?.type === 'MemberExpression') {
     const innerObj = obj.object as TSNode;
     const innerProp = obj.property as TSNode;
-    if (innerObj?.type === 'Identifier' && (innerObj.name as string) === paramName &&
+    if (innerObj?.type === 'Identifier' && queryRunnerNames.has(innerObj.name as string) &&
         innerProp?.type === 'Identifier' && (innerProp.name as string) === 'manager') {
       return true;
     }
@@ -231,21 +242,75 @@ function isQueryRunnerQuery(node: TSNode, paramName: string): boolean {
   return false;
 }
 
-function extractStringValue(node: TSNode): string | null {
+function isQueryFunctionCall(node: TSNode, queryFunctionNames: Set<string>): boolean {
+  const callee = node.callee as TSNode;
+  return callee?.type === 'Identifier' && queryFunctionNames.has(callee.name as string);
+}
+
+function trackTypeORMAlias(
+  node: TSNode,
+  queryRunnerNames: Set<string>,
+  queryFunctionNames: Set<string>,
+): void {
+  const id = node.id as TSNode | undefined;
+  const init = node.init as TSNode | undefined;
+  if (!id || !init) return;
+
+  if (id.type === 'Identifier' && init.type === 'Identifier' && queryRunnerNames.has(init.name as string)) {
+    queryRunnerNames.add(id.name as string);
+    return;
+  }
+
+  if (id.type === 'Identifier' && isQueryMember(init, queryRunnerNames)) {
+    queryFunctionNames.add(id.name as string);
+    return;
+  }
+
+  if (id.type === 'ObjectPattern' && init.type === 'Identifier' && queryRunnerNames.has(init.name as string)) {
+    const properties = id.properties as TSNode[] | undefined;
+    for (const prop of properties ?? []) {
+      if (prop.type !== 'Property') continue;
+      const key = prop.key as TSNode;
+      const value = prop.value as TSNode;
+      if (key?.type === 'Identifier' && key.name === 'query' && value?.type === 'Identifier') {
+        queryFunctionNames.add(value.name as string);
+      }
+    }
+  }
+}
+
+function isQueryMember(node: TSNode, queryRunnerNames: Set<string>): boolean {
+  if (node.type !== 'MemberExpression') return false;
+  const prop = node.property as TSNode;
+  if (prop?.type !== 'Identifier' || prop.name !== 'query') return false;
+  const obj = node.object as TSNode;
+  return obj?.type === 'Identifier' && queryRunnerNames.has(obj.name as string);
+}
+
+function extractStringLiteral(node: TSNode): { value: string; range: { startOffset: number; endOffset: number } } | null {
   if (node.type === 'Literal' && typeof node.value === 'string') {
-    return node.value;
+    return { value: node.value, range: literalContentRange(node) };
   }
   if (node.type === 'TemplateLiteral') {
     const quasis = node.quasis as TSNode[];
     const expressions = node.expressions as TSNode[];
     if (expressions.length === 0) {
       // No interpolations - safe to extract
-      return quasis.map((q) => (q.value as { cooked: string }).cooked).join('');
+      return {
+        value: quasis.map((q) => (q.value as { cooked: string }).cooked).join(''),
+        range: literalContentRange(node),
+      };
     }
     // Has interpolations - extract what we can but this is incomplete
     return null;
   }
   return null;
+}
+
+function literalContentRange(node: TSNode): { startOffset: number; endOffset: number } {
+  if (!node.range) return { startOffset: 0, endOffset: 0 };
+  const [start, end] = node.range;
+  return { startOffset: start + 1, endOffset: Math.max(start + 1, end - 1) };
 }
 
 function walkNode(node: unknown, visitor: (n: TSNode) => void): void {

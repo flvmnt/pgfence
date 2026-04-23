@@ -38,6 +38,7 @@ describe('analyzeText', () => {
     });
     expect(result.checks).toHaveLength(0);
     expect(result.parseError).toBeDefined();
+    expect(result.extractionWarnings.some((warning) => warning.unanalyzable)).toBe(true);
   });
 
   it('should return empty results for empty content', async () => {
@@ -227,18 +228,21 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx ON users (email);`;
   });
 
   it('should analyze TypeORM content from the in-memory buffer', async () => {
-    const result = await analyzeText({
-      content: `export class AddUserIndex {
+    const content = `export class AddUserIndex {
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query('CREATE INDEX idx_users_email ON users (email)');
   }
-}`,
+}`;
+    const result = await analyzeText({
+      content,
       filePath: 'migrations/001-typeorm.ts',
       config: { ...defaultConfig, format: 'typeorm' },
     });
 
     expect(result.checks.find((c) => c.ruleId === 'create-index-not-concurrent')).toBeDefined();
     expect(result.extractionWarnings).toHaveLength(0);
+    const range = result.sourceRanges[0];
+    expect(content.slice(range.startOffset, range.endOffset)).toBe('CREATE INDEX idx_users_email ON users (email)');
   });
 
   it('should analyze Knex content from the in-memory buffer', async () => {

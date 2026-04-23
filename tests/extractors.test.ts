@@ -6,8 +6,21 @@ import { extractKnexSQL } from '../src/extractors/knex.js';
 import { extractDrizzleSQL } from '../src/extractors/drizzle.js';
 import { extractSequelizeSQL } from '../src/extractors/sequelize.js';
 import path from 'path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 const fixturesDir = path.join(process.cwd(), 'tests', 'fixtures');
+
+async function withTempFile(prefix: string, suffix: string, content: string, run: (filePath: string) => Promise<void>): Promise<void> {
+    const dir = await mkdtemp(path.join(tmpdir(), prefix));
+    const filePath = path.join(dir, `migration${suffix}`);
+    await writeFile(filePath, content, 'utf8');
+    try {
+        await run(filePath);
+    } finally {
+        await rm(dir, { recursive: true, force: true });
+    }
+}
 
 describe('Extractor: Raw SQL', () => {
     it('should extract raw sql correctly', async () => {
@@ -15,6 +28,28 @@ describe('Extractor: Raw SQL', () => {
         const result = await extractRawSQL(filePath);
         expect(result.warnings).toHaveLength(0);
         expect(result.sql).toContain('ALTER TABLE appointments ADD COLUMN');
+    });
+
+    it('should fail closed for binary-looking files', async () => {
+        await withTempFile('pgfence-binary-sql-', '.sql', 'ALTER TABLE users ADD COLUMN a int;\0', async (filePath) => {
+            await expect(extractRawSQL(filePath)).rejects.toThrow('appears to be binary');
+        });
+    });
+
+    it('should fail closed for files over the configured size limit', async () => {
+        const originalLimit = process.env.PGFENCE_MAX_MIGRATION_BYTES;
+        process.env.PGFENCE_MAX_MIGRATION_BYTES = '10';
+        try {
+            await withTempFile('pgfence-large-sql-', '.sql', 'ALTER TABLE users ADD COLUMN a int;', async (filePath) => {
+                await expect(extractRawSQL(filePath)).rejects.toThrow('too large to analyze safely');
+            });
+        } finally {
+            if (originalLimit === undefined) {
+                delete process.env.PGFENCE_MAX_MIGRATION_BYTES;
+            } else {
+                process.env.PGFENCE_MAX_MIGRATION_BYTES = originalLimit;
+            }
+        }
     });
 });
 
@@ -50,6 +85,37 @@ describe('Extractor: TypeORM', () => {
 
         expect(result.warnings).toHaveLength(1);
         expect(result.warnings[0].message).toContain('No up() method found');
+        expect(result.warnings[0].unanalyzable).toBe(true);
+    });
+
+    it('should extract SQL from aliased queryRunner variables', async () => {
+        await withTempFile('pgfence-typeorm-alias-', '.ts', `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class DropUsers implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    const qr = queryRunner;
+    await qr.query('DROP TABLE users');
+  }
+}`, async (filePath) => {
+            const result = await extractTypeORMSQL(filePath);
+            expect(result.sql).toContain('DROP TABLE users');
+            expect(result.sourceRanges).toHaveLength(1);
+        });
+    });
+
+    it('should mark conditional SQL as unanalyzable for strict unknown handling', async () => {
+        await withTempFile('pgfence-typeorm-conditional-', '.ts', `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class ConditionalDrop implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    if (process.env.DROP_USERS) {
+      await queryRunner.query('DROP TABLE users');
+    }
+  }
+}`, async (filePath) => {
+            const result = await extractTypeORMSQL(filePath);
+            expect(result.sql).toContain('DROP TABLE users');
+            expect(result.warnings.some((warning) => warning.unanalyzable)).toBe(true);
+            expect(result.warnings.some((warning) => warning.message.includes('Conditional SQL'))).toBe(true);
+        });
     });
 
     it('should extract SQL when parameter is named something other than queryRunner', async () => {
@@ -103,6 +169,54 @@ describe('Extractor: Knex', () => {
         const result = await extractKnexSQL(filePath);
         expect(result.warnings).toHaveLength(1);
         expect(result.warnings[0].message).toContain('No up()');
+        expect(result.warnings[0].unanalyzable).toBe(true);
+    });
+
+    it('should extract SQL from object-style module exports', async () => {
+        await withTempFile('pgfence-knex-object-export-', '.js', `module.exports = {
+  async up(knex) {
+    await knex.raw('DROP TABLE users');
+  }
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.sql).toContain('DROP TABLE users');
+        });
+    });
+
+    it('should extract SQL from destructured raw aliases', async () => {
+        await withTempFile('pgfence-knex-raw-alias-', '.js', `exports.up = async function(knex) {
+  const { raw } = knex;
+  await raw('DROP TABLE users');
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.sql).toContain('DROP TABLE users');
+        });
+    });
+
+    it('should mark conditional raw SQL as unanalyzable for strict unknown handling', async () => {
+        await withTempFile('pgfence-knex-conditional-', '.js', `exports.up = async function(knex) {
+  if (process.env.DROP_USERS) {
+    await knex.raw('DROP TABLE users');
+  }
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.sql).toContain('DROP TABLE users');
+            expect(result.warnings.some((warning) => warning.unanalyzable)).toBe(true);
+            expect(result.warnings.some((warning) => warning.message.includes('Conditional SQL'))).toBe(true);
+        });
+    });
+
+    it('should warn on dynamic Knex builder column names', async () => {
+        await withTempFile('pgfence-knex-dynamic-column-', '.js', `exports.up = async function(knex) {
+  const columnName = 'old_name';
+  await knex.schema.alterTable('users', function(table) {
+    table.dropColumn(columnName);
+  });
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.warnings.some((warning) => warning.unanalyzable)).toBe(true);
+            expect(result.warnings.some((warning) => warning.message.includes('Dynamic column name'))).toBe(true);
+        });
     });
 
     it('should fix references().inTable() chain and escape quotes in defaults', async () => {
@@ -163,6 +277,7 @@ describe('Extractor: Sequelize', () => {
         const result = await extractSequelizeSQL(filePath);
         expect(result.sql).toContain('CREATE INDEX idx_users_email');
         expect(result.sql).not.toContain('DROP INDEX');
+        expect(result.sourceRanges).toHaveLength(1);
     });
 
     it('should warn on dynamic SQL', async () => {
@@ -170,6 +285,52 @@ describe('Extractor: Sequelize', () => {
         const result = await extractSequelizeSQL(filePath);
         expect(result.warnings.length).toBeGreaterThan(0);
         expect(result.warnings[0].message).toContain('Dynamic SQL');
+    });
+
+    it('should warn as unanalyzable if no up() function is found', async () => {
+        await withTempFile('pgfence-sequelize-no-up-', '.js', `module.exports = {
+  async down(queryInterface) {
+    await queryInterface.sequelize.query('DROP TABLE users');
+  }
+};`, async (filePath) => {
+            const result = await extractSequelizeSQL(filePath);
+            expect(result.warnings).toHaveLength(1);
+            expect(result.warnings[0].message).toContain('No up() function found');
+            expect(result.warnings[0].unanalyzable).toBe(true);
+        });
+    });
+
+    it('should map raw Sequelize SQL back to the original source range', async () => {
+        await withTempFile('pgfence-sequelize-range-', '.js', `module.exports = {
+  async up(queryInterface) {
+    await queryInterface.sequelize.query('DROP TABLE users');
+  }
+};`, async (filePath) => {
+            const result = await extractSequelizeSQL(filePath);
+            const range = result.sourceRanges?.[0];
+            expect(range).toBeDefined();
+            const source = `module.exports = {
+  async up(queryInterface) {
+    await queryInterface.sequelize.query('DROP TABLE users');
+  }
+};`;
+            expect(source.slice(range!.startOffset, range!.endOffset)).toBe('DROP TABLE users');
+        });
+    });
+
+    it('should mark conditional raw SQL as unanalyzable for strict unknown handling', async () => {
+        await withTempFile('pgfence-sequelize-conditional-', '.js', `module.exports = {
+  async up(queryInterface) {
+    if (process.env.DROP_USERS) {
+      await queryInterface.sequelize.query('DROP TABLE users');
+    }
+  }
+};`, async (filePath) => {
+            const result = await extractSequelizeSQL(filePath);
+            expect(result.sql).toContain('DROP TABLE users');
+            expect(result.warnings.some((warning) => warning.unanalyzable)).toBe(true);
+            expect(result.warnings.some((warning) => warning.message.includes('Conditional SQL'))).toBe(true);
+        });
     });
 
     it('should transpile queryInterface builder calls to SQL', async () => {

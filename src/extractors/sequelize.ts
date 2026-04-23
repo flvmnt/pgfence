@@ -7,18 +7,19 @@
  * Warns on dynamic SQL, never silently ignores it.
  */
 
-import { readFile } from 'node:fs/promises';
 import type { ExtractionResult, ExtractionWarning } from '../types.js';
+import { readTextMigrationFile } from './file-guards.js';
 import { transpileSequelizeCall } from './sequelize-transpiler.js';
 
 interface TSNode {
     type: string;
     loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+    range?: [number, number];
     [key: string]: unknown;
 }
 
 export async function extractSequelizeSQL(filePath: string): Promise<ExtractionResult> {
-    const source = await readFile(filePath, 'utf8');
+    const source = await readTextMigrationFile(filePath);
     return extractSequelizeSQLFromSource(source, filePath);
 }
 
@@ -28,6 +29,7 @@ export async function extractSequelizeSQLFromSource(
 ): Promise<ExtractionResult> {
     const warnings: ExtractionWarning[] = [];
     const queries: string[] = [];
+    const sourceRanges: Array<{ startOffset: number; endOffset: number }> = [];
 
     // Dynamic import to keep typescript-estree as devDependency
     const { parse } = await import('@typescript-eslint/typescript-estree');
@@ -44,6 +46,7 @@ export async function extractSequelizeSQLFromSource(
             line: 1,
             column: 0,
             message: 'No up() function found in Sequelize migration',
+            unanalyzable: true,
         });
         return { sql: '', warnings };
     }
@@ -66,9 +69,10 @@ export async function extractSequelizeSQLFromSource(
                     if (args.length === 0) return;
 
                     const arg = args[0];
-                    const extracted = extractStringValue(arg);
+                    const extracted = extractStringLiteral(arg);
                     if (extracted !== null) {
-                        queries.push(extracted);
+                        queries.push(extracted.value);
+                        sourceRanges.push(extracted.range);
                         if (conditionalDepth > 0) {
                             const loc = node.loc?.start ?? { line: 0, column: 0 };
                             warnings.push({
@@ -76,6 +80,7 @@ export async function extractSequelizeSQLFromSource(
                                 line: loc.line,
                                 column: loc.column,
                                 message: `Conditional SQL at line ${loc.line}, statement may or may not execute depending on runtime condition`,
+                                unanalyzable: true,
                             });
                         }
                     } else {
@@ -94,6 +99,9 @@ export async function extractSequelizeSQLFromSource(
                     const result = transpileSequelizeCall(node, filePath);
                     if (result.sql.length > 0) {
                         queries.push(...result.sql);
+                        for (let i = 0; i < result.sql.length; i++) {
+                            sourceRanges.push(nodeRange(node));
+                        }
                     } else if (result.warnings.length === 0) {
                         const loc = node.loc?.start ?? { line: 0, column: 0 };
                         warnings.push({
@@ -119,10 +127,11 @@ export async function extractSequelizeSQLFromSource(
             line: 1,
             column: 0,
             message: 'No queryInterface.sequelize.query() or builder calls found in Sequelize migration',
+            unanalyzable: true,
         });
     }
 
-    return { sql: queries.join(';\n'), warnings };
+    return { sql: queries.join(';\n'), warnings, sourceRanges };
 }
 
 function isSequelizeQuery(node: TSNode): boolean {
@@ -167,21 +176,35 @@ function isQueryInterfaceBuilder(node: TSNode): boolean {
     return false;
 }
 
-function extractStringValue(node: TSNode): string | null {
+function extractStringLiteral(node: TSNode): { value: string; range: { startOffset: number; endOffset: number } } | null {
     if (node.type === 'Literal' && typeof node.value === 'string') {
-        return node.value;
+        return { value: node.value, range: literalContentRange(node) };
     }
     if (node.type === 'TemplateLiteral') {
         const quasis = node.quasis as TSNode[];
         const expressions = node.expressions as TSNode[];
         if (expressions.length === 0) {
             // No interpolations - safe to extract
-            return quasis.map((q) => (q.value as { cooked: string }).cooked).join('');
+            return {
+                value: quasis.map((q) => (q.value as { cooked: string }).cooked).join(''),
+                range: literalContentRange(node),
+            };
         }
         // Has interpolations - extract what we can but this is incomplete
         return null;
     }
     return null;
+}
+
+function literalContentRange(node: TSNode): { startOffset: number; endOffset: number } {
+    if (!node.range) return { startOffset: 0, endOffset: 0 };
+    const [start, end] = node.range;
+    return { startOffset: start + 1, endOffset: Math.max(start + 1, end - 1) };
+}
+
+function nodeRange(node: TSNode): { startOffset: number; endOffset: number } {
+    if (!node.range) return { startOffset: 0, endOffset: 0 };
+    return { startOffset: node.range[0], endOffset: node.range[1] };
 }
 
 function findUpFunction(ast: TSNode): TSNode | null {

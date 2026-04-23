@@ -9,13 +9,14 @@
  * since those can't be analyzed as SQL.
  */
 
-import { readFile } from 'node:fs/promises';
 import type { ExtractionResult, ExtractionWarning } from '../types.js';
+import { readTextMigrationFile } from './file-guards.js';
 import { transpileKnexSchemaCall } from './knex-transpiler.js';
 
 interface TSNode {
   type: string;
   loc?: { start: { line: number; column: number }; end: { line: number; column: number } };
+  range?: [number, number];
   [key: string]: unknown;
 }
 
@@ -26,7 +27,7 @@ const SCHEMA_BUILDER_METHODS = new Set([
 ]);
 
 export async function extractKnexSQL(filePath: string): Promise<ExtractionResult> {
-  const source = await readFile(filePath, 'utf8');
+  const source = await readTextMigrationFile(filePath);
   return extractKnexSQLFromSource(source, filePath);
 }
 
@@ -36,6 +37,7 @@ export async function extractKnexSQLFromSource(
 ): Promise<ExtractionResult> {
   const warnings: ExtractionWarning[] = [];
   const queries: string[] = [];
+  const sourceRanges: Array<{ startOffset: number; endOffset: number }> = [];
 
   const { parse } = await import('@typescript-eslint/typescript-estree');
   const ast = parse(source, {
@@ -52,26 +54,33 @@ export async function extractKnexSQLFromSource(
       line: 1,
       column: 0,
       message: 'No up() or exports.up function found in Knex migration',
+      unanalyzable: true,
     });
     return { sql: '', warnings, autoCommit };
   }
 
   // Gap 11: track conditional depth to warn about conditional SQL
   const conditionalTypes = new Set(['IfStatement', 'ConditionalExpression', 'SwitchCase']);
+  const rawFunctionNames = new Set<string>();
   let conditionalDepth = 0;
 
   walkNodeWithContext(upFn, {
     enter(node: TSNode) {
       if (conditionalTypes.has(node.type)) conditionalDepth++;
 
+      if (node.type === 'VariableDeclarator') {
+        trackKnexRawAlias(node, rawFunctionNames);
+      }
+
       if (node.type !== 'CallExpression') return;
 
-      if (isRawCall(node)) {
+      if (isRawCall(node) || isRawFunctionCall(node, rawFunctionNames)) {
         const args = node.arguments as TSNode[];
         if (args.length === 0) return;
-        const extracted = extractStringValue(args[0]);
+        const extracted = extractStringLiteral(args[0]);
         if (extracted !== null) {
-          queries.push(extracted);
+          queries.push(extracted.value);
+          sourceRanges.push(extracted.range);
           if (conditionalDepth > 0) {
             const loc = node.loc?.start ?? { line: 0, column: 0 };
             warnings.push({
@@ -79,6 +88,7 @@ export async function extractKnexSQLFromSource(
               line: loc.line,
               column: loc.column,
               message: `Conditional SQL at line ${loc.line}, statement may or may not execute depending on runtime condition`,
+              unanalyzable: true,
             });
           }
         } else {
@@ -96,6 +106,9 @@ export async function extractKnexSQLFromSource(
         const result = transpileKnexSchemaCall(node, filePath);
         if (result.sql.length > 0) {
           queries.push(...result.sql);
+          for (let i = 0; i < result.sql.length; i++) {
+            sourceRanges.push(nodeRange(node));
+          }
         } else if (result.warnings.length === 0) {
           const loc = node.loc?.start ?? { line: 0, column: 0 };
           warnings.push({
@@ -114,7 +127,7 @@ export async function extractKnexSQLFromSource(
     },
   });
 
-  return { sql: queries.join(';\n'), warnings, autoCommit };
+  return { sql: queries.join(';\n'), warnings, autoCommit, sourceRanges };
 }
 
 function findUpFunction(ast: TSNode): TSNode | null {
@@ -157,6 +170,7 @@ function findUpFunction(ast: TSNode): TSNode | null {
     // module.exports.up = ...
     if (node.type === 'AssignmentExpression') {
       const left = node.left as TSNode;
+      const right = node.right as TSNode;
       if (
         left?.type === 'MemberExpression' &&
         (left.object as TSNode)?.type === 'MemberExpression'
@@ -171,6 +185,25 @@ function findUpFunction(ast: TSNode): TSNode | null {
           ((left.property as TSNode).name as string) === 'up'
         ) {
           result = node.right as TSNode;
+        }
+      }
+      if (
+        left?.type === 'MemberExpression' &&
+        (left.object as TSNode)?.type === 'Identifier' &&
+        ((left.object as TSNode).name as string) === 'module' &&
+        (left.property as TSNode)?.type === 'Identifier' &&
+        ((left.property as TSNode).name as string) === 'exports' &&
+        right?.type === 'ObjectExpression'
+      ) {
+        const props = right.properties as TSNode[] | undefined;
+        for (const prop of props ?? []) {
+          if (prop.type !== 'Property') continue;
+          const key = prop.key as TSNode;
+          const value = prop.value as TSNode;
+          if (key?.type === 'Identifier' && key.name === 'up' &&
+            (value.type === 'FunctionExpression' || value.type === 'ArrowFunctionExpression')) {
+            result = value;
+          }
         }
       }
     }
@@ -277,6 +310,40 @@ function isRawCall(node: TSNode): boolean {
   return false;
 }
 
+function isRawFunctionCall(node: TSNode, rawFunctionNames: Set<string>): boolean {
+  const callee = node.callee as TSNode;
+  return callee?.type === 'Identifier' && rawFunctionNames.has(callee.name as string);
+}
+
+function trackKnexRawAlias(node: TSNode, rawFunctionNames: Set<string>): void {
+  const id = node.id as TSNode | undefined;
+  const init = node.init as TSNode | undefined;
+  if (!id || !init) return;
+
+  if (id.type === 'Identifier' && isRawMember(init)) {
+    rawFunctionNames.add(id.name as string);
+    return;
+  }
+
+  if (id.type === 'ObjectPattern') {
+    const properties = id.properties as TSNode[] | undefined;
+    for (const prop of properties ?? []) {
+      if (prop.type !== 'Property') continue;
+      const key = prop.key as TSNode;
+      const value = prop.value as TSNode;
+      if (key?.type === 'Identifier' && key.name === 'raw' && value?.type === 'Identifier') {
+        rawFunctionNames.add(value.name as string);
+      }
+    }
+  }
+}
+
+function isRawMember(node: TSNode): boolean {
+  if (node.type !== 'MemberExpression') return false;
+  const prop = node.property as TSNode;
+  return prop?.type === 'Identifier' && prop.name === 'raw';
+}
+
 function isSchemaBuilderCall(node: TSNode): boolean {
   const callee = node.callee as TSNode;
   if (callee?.type !== 'MemberExpression') return false;
@@ -293,19 +360,33 @@ function isSchemaBuilderCall(node: TSNode): boolean {
   return false;
 }
 
-function extractStringValue(node: TSNode): string | null {
+function extractStringLiteral(node: TSNode): { value: string; range: { startOffset: number; endOffset: number } } | null {
   if (node.type === 'Literal' && typeof node.value === 'string') {
-    return node.value;
+    return { value: node.value, range: literalContentRange(node) };
   }
   if (node.type === 'TemplateLiteral') {
     const quasis = node.quasis as TSNode[];
     const expressions = node.expressions as TSNode[];
     if (expressions.length === 0) {
-      return quasis.map((q) => (q.value as { cooked: string }).cooked).join('');
+      return {
+        value: quasis.map((q) => (q.value as { cooked: string }).cooked).join(''),
+        range: literalContentRange(node),
+      };
     }
     return null;
   }
   return null;
+}
+
+function literalContentRange(node: TSNode): { startOffset: number; endOffset: number } {
+  if (!node.range) return { startOffset: 0, endOffset: 0 };
+  const [start, end] = node.range;
+  return { startOffset: start + 1, endOffset: Math.max(start + 1, end - 1) };
+}
+
+function nodeRange(node: TSNode): { startOffset: number; endOffset: number } {
+  if (!node.range) return { startOffset: 0, endOffset: 0 };
+  return { startOffset: node.range[0], endOffset: node.range[1] };
 }
 
 function walkNode(node: unknown, visitor: (n: TSNode) => void): void {

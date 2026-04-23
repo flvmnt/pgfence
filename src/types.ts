@@ -39,6 +39,8 @@ export interface CheckResult {
   statementPreview: string;
   /** Which table is affected */
   tableName: string | null;
+  /** Schema-qualified table key when known */
+  tableKey?: string;
   /** Lock mode this statement acquires */
   lockMode: LockMode;
   /** What operations are blocked while this lock is held */
@@ -90,6 +92,7 @@ export interface ExtractionResult {
   sql: string;
   warnings: ExtractionWarning[];
   autoCommit?: boolean;
+  sourceRanges?: Array<{ startOffset: number; endOffset: number }>;
 }
 
 export interface AnalysisResult {
@@ -136,6 +139,8 @@ export interface PgfenceConfig {
   plugins?: string[];
   /** Schema snapshot file for definitive type change analysis */
   snapshotFile?: string;
+  /** How CI treats statements that could not be statically analyzed */
+  unknownHandling?: 'warn' | 'block';
 }
 
 export interface RulesConfig {

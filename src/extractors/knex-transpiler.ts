@@ -106,6 +106,21 @@ function getStringArg(node: TSNode): string | null {
   return null;
 }
 
+function pushDynamicColumnWarning(
+  warnings: ExtractionWarning[],
+  filePath: string,
+  methodName: string,
+  node: TSNode,
+): void {
+  warnings.push({
+    filePath,
+    line: node.loc?.start?.line ?? 0,
+    column: node.loc?.start?.column ?? 0,
+    message: `Dynamic column name in ${methodName}: cannot statically analyze`,
+    unanalyzable: true,
+  });
+}
+
 function transpileCreateTable(
   args: TSNode[],
   filePath: string,
@@ -264,6 +279,8 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
         const colName = getStringArg(callArgs[0]);
         if (colName) {
           sql.push(`ALTER TABLE "${tableName}" DROP COLUMN "${colName}"`);
+        } else {
+          pushDynamicColumnWarning(warnings, filePath, 'dropColumn', callArgs[0]);
         }
       }
     } else if (method === 'dropColumns') {
@@ -272,6 +289,8 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
         const colName = getStringArg(arg);
         if (colName) {
           sql.push(`ALTER TABLE "${tableName}" DROP COLUMN "${colName}"`);
+        } else {
+          pushDynamicColumnWarning(warnings, filePath, 'dropColumns', arg);
         }
       }
     } else if (method === 'renameColumn') {
@@ -281,6 +300,8 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
         const to = getStringArg(callArgs[1]);
         if (from && to) {
           sql.push(`ALTER TABLE "${tableName}" RENAME COLUMN "${from}" TO "${to}"`);
+        } else {
+          pushDynamicColumnWarning(warnings, filePath, 'renameColumn', from ? callArgs[1] : callArgs[0]);
         }
       }
     } else if (method === 'setNullable') {
@@ -289,6 +310,8 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
         const colName = getStringArg(callArgs[0]);
         if (colName) {
           sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" DROP NOT NULL`);
+        } else {
+          pushDynamicColumnWarning(warnings, filePath, 'setNullable', callArgs[0]);
         }
       }
     } else if (method === 'dropNullable') {
@@ -297,6 +320,8 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
         const colName = getStringArg(callArgs[0]);
         if (colName) {
           sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" SET NOT NULL`);
+        } else {
+          pushDynamicColumnWarning(warnings, filePath, 'dropNullable', callArgs[0]);
         }
       }
     }
@@ -478,12 +503,22 @@ function parseColumnChain(
   // First in chain should be the type method: t.string('name'), t.integer('count'), etc.
   const typeCall = chain[0];
   const knexType = typeCall.method;
-  const pgType = KNEX_TYPE_MAP[knexType];
-
-  if (pgType === undefined) return null; // Not a column type method
 
   // Skip methods that aren't column definitions (like dropColumn, renameColumn)
   if (['dropColumn', 'dropColumns', 'renameColumn', 'setNullable', 'dropNullable', 'index', 'unique', 'primary', 'dropUnique', 'dropPrimary', 'dropIndex', 'dropForeign'].includes(knexType)) {
+    return null;
+  }
+
+  const pgType = KNEX_TYPE_MAP[knexType];
+
+  if (pgType === undefined) {
+    warnings.push({
+      filePath,
+      line: node.loc?.start?.line ?? 0,
+      column: node.loc?.start?.column ?? 0,
+      message: `Unsupported Knex column builder method ${knexType}(): cannot transpile`,
+      unanalyzable: true,
+    });
     return null;
   }
 
@@ -493,12 +528,16 @@ function parseColumnChain(
       line: node.loc?.start?.line ?? 0,
       column: node.loc?.start?.column ?? 0,
       message: `Knex column builder ${knexType}() without column name: cannot transpile`,
+      unanalyzable: true,
     });
     return null;
   }
 
   const colName = getStringArg(typeCall.args[0]);
-  if (!colName) return null;
+  if (!colName) {
+    pushDynamicColumnWarning(warnings, filePath, knexType, typeCall.args[0]);
+    return null;
+  }
 
   // Handle string with custom length: t.string('name', 100) → varchar(100)
   let type = pgType;

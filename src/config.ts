@@ -21,6 +21,8 @@ export interface PgfenceConfigFile {
   'require-statement-timeout'?: boolean;
   'max-lock-timeout'?: number;
   'max-statement-timeout'?: number;
+  unknown?: string;
+  'unknown-handling'?: string;
   'disable-rules'?: string[];
   'enable-rules'?: string[];
   snapshot?: string;
@@ -30,6 +32,7 @@ export interface PgfenceConfigFile {
 const VALID_FORMATS = new Set(['sql', 'typeorm', 'prisma', 'knex', 'drizzle', 'sequelize', 'auto']);
 const VALID_OUTPUTS = new Set(['cli', 'json', 'github', 'sarif', 'gitlab']);
 const VALID_RISKS = new Set(Object.values(RiskLevel));
+const VALID_UNKNOWN_HANDLING = new Set(['warn', 'block']);
 
 function expectString(value: unknown, key: string, configPath: string): string {
   if (typeof value !== 'string') {
@@ -103,6 +106,14 @@ function validateConfigFile(configPath: string, parsed: PgfenceConfigFile): Pgfe
   }
   if (parsed['require-statement-timeout'] != null) {
     expectBoolean(parsed['require-statement-timeout'], 'require-statement-timeout', configPath);
+  }
+
+  const unknownHandling = parsed.unknown ?? parsed['unknown-handling'];
+  if (unknownHandling != null) {
+    const value = expectString(unknownHandling, 'unknown', configPath);
+    if (!VALID_UNKNOWN_HANDLING.has(value)) {
+      throw new Error(`Invalid config file ${configPath}: "unknown" must be one of warn, block`);
+    }
   }
 
   if (parsed['max-lock-timeout'] != null) {
@@ -189,6 +200,7 @@ export function mergeConfig(
     maxAllowedRisk: RiskLevel.HIGH,
     requireLockTimeout: true,
     requireStatementTimeout: true,
+    unknownHandling: 'warn',
   };
 
   if (fileConfig) {
@@ -202,6 +214,9 @@ export function mergeConfig(
     }
     if (fileConfig['require-lock-timeout'] != null) base.requireLockTimeout = fileConfig['require-lock-timeout'];
     if (fileConfig['require-statement-timeout'] != null) base.requireStatementTimeout = fileConfig['require-statement-timeout'];
+    if (fileConfig.unknown != null || fileConfig['unknown-handling'] != null) {
+      base.unknownHandling = (fileConfig.unknown ?? fileConfig['unknown-handling']) as PgfenceConfig['unknownHandling'];
+    }
     if (fileConfig['max-lock-timeout'] != null) base.maxLockTimeoutMs = fileConfig['max-lock-timeout'];
     if (fileConfig['max-statement-timeout'] != null) base.maxStatementTimeoutMs = fileConfig['max-statement-timeout'];
     if (fileConfig['disable-rules'] != null) {

@@ -33,6 +33,84 @@ function parseRiskLevel(value: string): RiskLevel {
   return upper;
 }
 
+function parseUnknownHandling(value: string): PgfenceConfig['unknownHandling'] {
+  if (value !== 'warn' && value !== 'block') {
+    throw new Error(`Invalid --unknown value: "${value}" (must be warn or block)`);
+  }
+  return value;
+}
+
+function optionFromCli(command: Command, name: string): boolean {
+  return command.getOptionValueSource(name) === 'cli';
+}
+
+function parsePositiveIntOption(value: string, optionName: string): number {
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${optionName} value: "${value}" (must be a positive integer)`);
+  }
+  return parsed;
+}
+
+function applyAnalyzeOptionOverrides(
+  command: Command,
+  opts: {
+    format?: string;
+    output?: string;
+    dbUrl?: string;
+    minPgVersion?: string;
+    maxRisk?: string;
+    lockTimeout?: boolean;
+    statementTimeout?: boolean;
+    maxLockTimeout?: string;
+    maxStatementTimeout?: string;
+    snapshot?: string;
+    plugin?: string[];
+    disableRules?: string[];
+    enableRules?: string[];
+    unknown?: string;
+  },
+  overrides: Partial<PgfenceConfig>,
+): void {
+  if (optionFromCli(command, 'format') && opts.format) overrides.format = opts.format as PgfenceConfig['format'];
+  if (optionFromCli(command, 'output') && opts.output) overrides.output = opts.output as PgfenceConfig['output'];
+  if (optionFromCli(command, 'dbUrl')) overrides.dbUrl = opts.dbUrl;
+  if (optionFromCli(command, 'minPgVersion') && opts.minPgVersion) {
+    overrides.minPostgresVersion = parsePositiveIntOption(opts.minPgVersion, '--min-pg-version');
+  }
+  if (optionFromCli(command, 'maxRisk') && opts.maxRisk) overrides.maxAllowedRisk = parseRiskLevel(opts.maxRisk);
+  if (optionFromCli(command, 'lockTimeout')) overrides.requireLockTimeout = opts.lockTimeout !== false;
+  if (optionFromCli(command, 'statementTimeout')) overrides.requireStatementTimeout = opts.statementTimeout !== false;
+  if (optionFromCli(command, 'unknown') && opts.unknown) overrides.unknownHandling = parseUnknownHandling(opts.unknown);
+  if (optionFromCli(command, 'maxLockTimeout') && opts.maxLockTimeout) {
+    overrides.maxLockTimeoutMs = parsePositiveIntOption(opts.maxLockTimeout, '--max-lock-timeout');
+  }
+  if (optionFromCli(command, 'maxStatementTimeout') && opts.maxStatementTimeout) {
+    overrides.maxStatementTimeoutMs = parsePositiveIntOption(opts.maxStatementTimeout, '--max-statement-timeout');
+  }
+  if (optionFromCli(command, 'snapshot')) overrides.snapshotFile = opts.snapshot;
+  if (optionFromCli(command, 'plugin')) overrides.plugins = opts.plugin;
+  if (optionFromCli(command, 'disableRules') || optionFromCli(command, 'enableRules')) {
+    overrides.rules = {};
+    if (optionFromCli(command, 'disableRules')) overrides.rules.disable = opts.disableRules ?? [];
+    if (optionFromCli(command, 'enableRules')) overrides.rules.enable = opts.enableRules ?? [];
+  }
+}
+
+function hasUnanalyzableStatements(results: Awaited<ReturnType<typeof analyze>>): boolean {
+  return results.some((result) => result.extractionWarnings?.some((warning) => warning.unanalyzable));
+}
+
+function shouldFailCI(results: Awaited<ReturnType<typeof analyze>>, config: PgfenceConfig): boolean {
+  const maxAllowedIdx = RISK_ORDER.indexOf(config.maxAllowedRisk);
+  for (const result of results) {
+    const maxIdx = RISK_ORDER.indexOf(result.maxRisk);
+    if (maxIdx > maxAllowedIdx) return true;
+    if (result.policyViolations.some((v) => v.severity === 'error')) return true;
+  }
+  return config.unknownHandling === 'block' && hasUnanalyzableStatements(results);
+}
+
 const program = new Command();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -72,13 +150,14 @@ program
   .option('--enable-rules <rules...>', 'Enable only specific rules by ID (whitelist)')
   .option('--snapshot <path>', 'Schema snapshot JSON for definitive type analysis')
   .option('--plugin <paths...>', 'Plugin file paths for custom rules')
-  .action(async (files: string[], opts) => {
+  .option('--unknown <mode>', 'How CI handles unanalyzable SQL: warn or block', 'warn')
+  .action(async (files: string[], opts, command: Command) => {
     // Load config file (.pgfence.toml or .pgfence.json)
     const fileConfig = await loadConfigFile(process.cwd());
 
     // Load stats file if provided (alternative to --db-url)
     let tableStats: TableStats[] | undefined;
-    const statsFilePath = opts.statsFile ?? fileConfig?.['stats-file'];
+    const statsFilePath = optionFromCli(command, 'statsFile') ? opts.statsFile : fileConfig?.['stats-file'];
     if (statsFilePath) {
       try {
         const raw = await readFile(statsFilePath, 'utf8');
@@ -99,35 +178,9 @@ program
       }
     }
 
-    // Build CLI overrides
-    const cliOverrides: Partial<PgfenceConfig> = {
-      format: opts.format as PgfenceConfig['format'],
-      output: opts.output as PgfenceConfig['output'],
-      dbUrl: opts.dbUrl,
-      tableStats,
-      minPostgresVersion: Number.isNaN(parseInt(opts.minPgVersion, 10)) ? 14 : parseInt(opts.minPgVersion, 10),
-      maxAllowedRisk: parseRiskLevel(opts.maxRisk),
-      requireLockTimeout: opts.lockTimeout !== false,
-      requireStatementTimeout: opts.statementTimeout !== false,
-    };
-
-    if (opts.maxLockTimeout) {
-      const parsed = parseInt(opts.maxLockTimeout, 10);
-      if (Number.isNaN(parsed) || parsed <= 0) throw new Error(`Invalid --max-lock-timeout value: "${opts.maxLockTimeout}" (must be a positive integer)`);
-      cliOverrides.maxLockTimeoutMs = parsed;
-    }
-    if (opts.maxStatementTimeout) {
-      const parsed = parseInt(opts.maxStatementTimeout, 10);
-      if (Number.isNaN(parsed) || parsed <= 0) throw new Error(`Invalid --max-statement-timeout value: "${opts.maxStatementTimeout}" (must be a positive integer)`);
-      cliOverrides.maxStatementTimeoutMs = parsed;
-    }
-    if (opts.snapshot) cliOverrides.snapshotFile = opts.snapshot;
-    if (opts.plugin) cliOverrides.plugins = opts.plugin;
-    if (opts.disableRules || opts.enableRules) {
-      cliOverrides.rules = {};
-      if (opts.disableRules) cliOverrides.rules.disable = opts.disableRules;
-      if (opts.enableRules) cliOverrides.rules.enable = opts.enableRules;
-    }
+    const cliOverrides: Partial<PgfenceConfig> = {};
+    applyAnalyzeOptionOverrides(command, opts, cliOverrides);
+    if (tableStats) cliOverrides.tableStats = tableStats;
 
     const config = mergeConfig(fileConfig, cliOverrides);
 
@@ -154,25 +207,8 @@ program
           break;
       }
 
-      // CI mode: fail on excessive risk or policy errors
-      if (opts.ci) {
-        const maxAllowedIdx = RISK_ORDER.indexOf(config.maxAllowedRisk);
-        let shouldFail = false;
-
-        for (const result of results) {
-          const maxIdx = RISK_ORDER.indexOf(result.maxRisk);
-          if (maxIdx > maxAllowedIdx) {
-            shouldFail = true;
-          }
-          // Policy errors also fail CI
-          if (result.policyViolations.some((v) => v.severity === 'error')) {
-            shouldFail = true;
-          }
-        }
-
-        if (shouldFail) {
-          process.exit(1);
-        }
+      if (opts.ci && shouldFailCI(results, config)) {
+        process.exit(1);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -198,9 +234,10 @@ program
   .option('--enable-rules <rules...>', 'Enable only specific rules by ID (whitelist)')
   .option('--snapshot <path>', 'Schema snapshot JSON for definitive type analysis')
   .option('--plugin <paths...>', 'Plugin file paths for custom rules')
+  .option('--unknown <mode>', 'How CI handles unanalyzable SQL: warn or block', 'warn')
   .option('--pg-version <version>', 'PostgreSQL version for the Docker container', '17')
   .option('--docker-image <image>', 'Custom Docker image (overrides --pg-version)')
-  .action(async (files: string[], opts) => {
+  .action(async (files: string[], opts, command: Command) => {
     // 1. Check Docker availability (fail fast)
     const { checkDockerAvailable, startContainer, waitForReady, stopContainer, traceStatement } = await import('./tracer.js');
     if (!checkDockerAvailable()) {
@@ -211,32 +248,8 @@ program
     // 2. Load config (same as analyze, minus db-url/stats-file)
     const fileConfig = await loadConfigFile(process.cwd());
 
-    const cliOverrides: Partial<PgfenceConfig> = {
-      format: opts.format as PgfenceConfig['format'],
-      output: opts.output as PgfenceConfig['output'],
-      minPostgresVersion: Number.isNaN(parseInt(opts.minPgVersion, 10)) ? 14 : parseInt(opts.minPgVersion, 10),
-      maxAllowedRisk: parseRiskLevel(opts.maxRisk),
-      requireLockTimeout: opts.lockTimeout !== false,
-      requireStatementTimeout: opts.statementTimeout !== false,
-    };
-
-    if (opts.maxLockTimeout) {
-      const parsed = parseInt(opts.maxLockTimeout, 10);
-      if (Number.isNaN(parsed) || parsed <= 0) throw new Error(`Invalid --max-lock-timeout value: "${opts.maxLockTimeout}" (must be a positive integer)`);
-      cliOverrides.maxLockTimeoutMs = parsed;
-    }
-    if (opts.maxStatementTimeout) {
-      const parsed = parseInt(opts.maxStatementTimeout, 10);
-      if (Number.isNaN(parsed) || parsed <= 0) throw new Error(`Invalid --max-statement-timeout value: "${opts.maxStatementTimeout}" (must be a positive integer)`);
-      cliOverrides.maxStatementTimeoutMs = parsed;
-    }
-    if (opts.snapshot) cliOverrides.snapshotFile = opts.snapshot;
-    if (opts.plugin) cliOverrides.plugins = opts.plugin;
-    if (opts.disableRules || opts.enableRules) {
-      cliOverrides.rules = {};
-      if (opts.disableRules) cliOverrides.rules.disable = opts.disableRules;
-      if (opts.enableRules) cliOverrides.rules.enable = opts.enableRules;
-    }
+    const cliOverrides: Partial<PgfenceConfig> = {};
+    applyAnalyzeOptionOverrides(command, opts, cliOverrides);
 
     const config = mergeConfig(fileConfig, cliOverrides);
 
@@ -418,14 +431,12 @@ program
 
         // 9. CI mode
         if (opts.ci) {
-          const maxAllowedIdx = RISK_ORDER.indexOf(config.maxAllowedRisk);
           let shouldFail = false;
           for (const result of traceResults) {
-            if (RISK_ORDER.indexOf(result.maxRisk) > maxAllowedIdx) shouldFail = true;
-            if (result.policyViolations.some(v => v.severity === 'error')) shouldFail = true;
             if (result.mismatches > 0) shouldFail = true;
             if (result.errors > 0) shouldFail = true;
           }
+          if (shouldFailCI(traceResults, config)) shouldFail = true;
           if (shouldFail) process.exit(1);
         }
       } finally {

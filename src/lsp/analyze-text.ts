@@ -12,9 +12,11 @@ import { applyRules, filterByRulesConfig, adjustRisk, detectFormat, RISK_ORDER }
 import { checkPolicies } from '../rules/policy.js';
 import { getStatementTableKey } from '../table-ref.js';
 import { loadSnapshot, loadSnapshotFile } from '../schema-snapshot.js';
+import { loadPlugins, runPluginPolicies, runPluginRules } from '../plugins.js';
 import { RiskLevel } from '../types.js';
 import type {
   CheckResult,
+  ExtractionResult,
   ExtractionWarning,
   PgfenceConfig,
   PolicyViolation,
@@ -71,7 +73,7 @@ async function extractSQLFromContent(
   content: string,
   filePath: string,
   format: PgfenceConfig['format'],
-): Promise<{ sql: string; warnings: ExtractionWarning[]; autoCommit?: boolean }> {
+): Promise<ExtractionResult> {
   if (format === 'sql' || format === 'prisma' || format === 'drizzle') {
     // Strip UTF-8 BOM
     let sql = content;
@@ -135,10 +137,12 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   // Extract SQL
   let sql: string;
   let autoCommit: boolean | undefined;
+  let extractedSourceRanges: SourceRange[] | undefined;
   try {
     const extraction = await extractSQLFromContent(content, filePath, format);
     sql = extraction.sql;
     autoCommit = extraction.autoCommit;
+    extractedSourceRanges = extraction.sourceRanges;
     result.extractionWarnings.push(...extraction.warnings);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -161,14 +165,27 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     result.parseError = message;
+    result.extractionWarnings.push({
+      message: `SQL parse error: ${message}, this file could not be analyzed`,
+      filePath,
+      line: 1,
+      column: 1,
+      unanalyzable: true,
+    });
     return result;
   }
 
   result.statementCount = stmts.length;
+  const statementSourceRanges = stmts.map((stmt, index) => {
+    return extractedSourceRanges?.[index] ?? { startOffset: stmt.startOffset, endOffset: stmt.endOffset };
+  });
 
   const schemaLookup: SchemaLookup | undefined = config.snapshotFile
     ? loadSnapshot(await loadSnapshotFile(config.snapshotFile))
     : undefined;
+  const plugins = config.plugins && config.plugins.length > 0
+    ? await loadPlugins(config.plugins)
+    : { rules: [], policies: [] };
 
   // Track tables created in this migration
   const createdTables = new Set<string>();
@@ -200,33 +217,42 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
       });
     }
 
-    const rawChecks = filterByRulesConfig(applyRules(stmt, config, schemaLookup), config.rules);
+    const builtInChecks = applyRules(stmt, config, schemaLookup);
+    if (plugins.rules.length > 0) {
+      builtInChecks.push(...runPluginRules(plugins.rules, stmt, config, result.extractionWarnings, filePath));
+    }
+    const rawChecks = filterByRulesConfig(builtInChecks, config.rules);
     for (const check of rawChecks) {
       // Inline ignore directives
       if (stmt.ignoredRules?.includes('*') || stmt.ignoredRules?.includes(check.ruleId)) continue;
       // Visibility: skip for newly-created tables
       if (stmtTableKey && createdTables.has(stmtTableKey) && !writtenTables.has(stmtTableKey) && !check.appliesToNewTables) continue;
+      if (stmtTableKey && check.tableName) {
+        const checkTable = check.tableName.toLowerCase();
+        if (stmtTableKey === checkTable || stmtTableKey.endsWith(`.${checkTable}`)) {
+          check.tableKey = stmtTableKey;
+        }
+      }
 
       result.checks.push(check);
-      result.sourceRanges.push({
-        startOffset: stmt.startOffset,
-        endOffset: stmt.endOffset,
-      });
+      result.sourceRanges.push(statementSourceRanges[stmts.indexOf(stmt)]);
     }
   }
 
   // Apply policy checks
-  const policies = filterByRulesConfig(
-    checkPolicies(stmts, config, { autoCommit }),
-    config.rules,
-  );
+  const builtInPolicies = checkPolicies(stmts, config, { autoCommit });
+  if (plugins.policies.length > 0) {
+    builtInPolicies.push(...runPluginPolicies(plugins.policies, stmts, config, result.extractionWarnings, filePath));
+  }
+  const policies = filterByRulesConfig(builtInPolicies, config.rules);
   result.policyViolations = policies;
   // Map statement-level policies to their actual statement byte offsets;
   // file-level policies (no statementIndex) get null.
   result.policySourceRanges = policies.map((v) => {
     if (v.statementIndex != null && v.statementIndex >= 0 && v.statementIndex < stmts.length) {
       const s = stmts[v.statementIndex];
-      return { startOffset: s.startOffset, endOffset: s.endOffset };
+      const index = stmts.indexOf(s);
+      return statementSourceRanges[index] ?? { startOffset: s.startOffset, endOffset: s.endOffset };
     }
     return null;
   });
@@ -234,14 +260,25 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   // Adjust risk with table stats
   if (tableStats && tableStats.length > 0) {
     const statsMap = new Map<string, TableStats>();
+    const counts = new Map<string, number>();
     for (const s of tableStats) {
       const lower = s.tableName.toLowerCase();
-      statsMap.set(lower, s);
+      counts.set(lower, (counts.get(lower) ?? 0) + 1);
+    }
+    const ambiguous = new Set(
+      [...counts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([table]) => table),
+    );
+    for (const s of tableStats) {
+      const lower = s.tableName.toLowerCase();
       statsMap.set(`${s.schemaName.toLowerCase()}.${lower}`, s);
+      if (!ambiguous.has(lower)) statsMap.set(lower, s);
     }
     for (const check of result.checks) {
-      if (check.tableName) {
-        const stats = statsMap.get(check.tableName.toLowerCase());
+      const statsKey = check.tableKey ?? check.tableName?.toLowerCase();
+      if (statsKey) {
+        const stats = statsMap.get(statsKey);
         if (stats) {
           check.adjustedRisk = adjustRisk(check.risk, stats.rowCount);
         }
