@@ -1,6 +1,6 @@
 -- demo-4-add-foreign-key-blocking.sql
 -- Missing NOT VALID validation.
--- This requires a full table scan and an ACCESS EXCLUSIVE lock, blocking writes.
+-- This requires a full table scan under SHARE ROW EXCLUSIVE, blocking writes.
 
 -- Satisfy safety policies:
 SET lock_timeout = '2s';

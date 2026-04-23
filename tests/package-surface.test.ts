@@ -2,14 +2,18 @@ import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 
-function listTrackedSourceFiles(): Set<string> {
-  const stdout = execFileSync('git', ['ls-files', 'src'], {
+function listPublicSourceFiles(): Set<string> {
+  const tracked = execFileSync('git', ['ls-files', 'src'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard', 'src'], {
     cwd: process.cwd(),
     encoding: 'utf8',
   });
 
   return new Set(
-    stdout
+    `${tracked}\n${untracked}`
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.endsWith('.ts')),
@@ -45,11 +49,13 @@ describe('package surface', () => {
     const pack = parsePackJson(packJson);
     const files = pack.flatMap((entry) => entry.files ?? []).map((file) => file.path);
 
-    const trackedSources = listTrackedSourceFiles();
+    const publicSources = listPublicSourceFiles();
     const distArtifacts = files.filter((file) => /^dist\/.+\.(?:js|js\.map|d\.ts|d\.ts\.map)$/.test(file));
-    const orphanArtifacts = distArtifacts.filter((file) => !trackedSources.has(buildSourcePathForArtifact(file)));
+    const orphanArtifacts = distArtifacts.filter((file) => !publicSources.has(buildSourcePathForArtifact(file)));
 
     expect(orphanArtifacts).toEqual([]);
+    expect(files.some((file) => file.startsWith('src/'))).toBe(false);
+    expect(files.some((file) => file.startsWith('packages/vscode-pgfence/'))).toBe(false);
   });
 
   it('exports the documented LSP subpath', async () => {

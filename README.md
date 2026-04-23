@@ -28,7 +28,7 @@
 
 Your ORM migration just took down production for 47 seconds.
 
-A seemingly innocent `ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT false` grabbed an `ACCESS EXCLUSIVE` lock on your 12M-row users table. Every query queued behind it. Your healthchecks failed. Pods restarted. Customers noticed.
+A seemingly innocent `ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()` grabbed an `ACCESS EXCLUSIVE` lock on your 12M-row users table. Every query queued behind it. Your healthchecks failed. Pods restarted. Customers noticed.
 
 This happens because ORMs hide the Postgres lock semantics from you. You can't fix what you can't see.
 
@@ -61,8 +61,8 @@ pgfence - Migration Safety Report
 ┌─────────────────────────────────────────────────┬──────────────────┬──────────┬────────┐
 │ Statement                                       │ Lock Mode        │ Blocks   │ Risk   │
 ├─────────────────────────────────────────────────┼──────────────────┼──────────┼────────┤
-│ ALTER TABLE users ADD COLUMN email_verified     │ ACCESS EXCLUSIVE │ R + W    │ HIGH   │
-│ BOOLEAN NOT NULL DEFAULT false                  │                  │          │        │
+│ ALTER TABLE users ADD COLUMN last_seen_at       │ ACCESS EXCLUSIVE │ R + W    │ HIGH   │
+│ TIMESTAMPTZ NOT NULL DEFAULT now()              │                  │          │        │
 ├─────────────────────────────────────────────────┼──────────────────┼──────────┼────────┤
 │ CREATE INDEX idx_users_email ON users(email)    │ SHARE            │ W        │ MEDIUM │
 └─────────────────────────────────────────────────┴──────────────────┴──────────┴────────┘
@@ -71,8 +71,8 @@ Policy Violations:
   ✗ Missing SET lock_timeout: add SET lock_timeout = '2s' at the start
 
 Safe Rewrites:
-  1. ADD COLUMN with NOT NULL + DEFAULT → split into expand/backfill/contract:
-     • ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN;
+  1. ADD COLUMN with NOT NULL + non-constant DEFAULT → split into expand/backfill/contract:
+     • ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
      • Backfill in batches: WITH batch AS (SELECT ctid FROM users WHERE email_verified IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED) UPDATE users t SET email_verified = <fill_value> FROM batch WHERE t.ctid = batch.ctid;
      • ALTER TABLE users ADD CONSTRAINT ... CHECK (email_verified IS NOT NULL) NOT VALID;
      • ALTER TABLE users VALIDATE CONSTRAINT ...;
@@ -290,8 +290,8 @@ pgfence checks a broad set of DDL patterns against Postgres's lock mode semantic
 | 4 | `ADD COLUMN ... GENERATED STORED` | ACCESS EXCLUSIVE | HIGH | Add regular column + trigger + backfill |
 | 5 | `CREATE INDEX` (non-concurrent) | SHARE | MEDIUM | `CREATE INDEX CONCURRENTLY` |
 | 6 | `DROP INDEX` (non-concurrent) | ACCESS EXCLUSIVE | MEDIUM | `DROP INDEX CONCURRENTLY` |
-| 7 | `ALTER COLUMN TYPE` (text/varchar widening) | ACCESS EXCLUSIVE | LOW | Metadata-only, no table rewrite |
-| | `ALTER COLUMN TYPE varchar(N)` | ACCESS EXCLUSIVE | MEDIUM | Safe if widening; verify with schema |
+| 7 | `ALTER COLUMN TYPE` (text/varchar widening, schema verified) | ACCESS EXCLUSIVE | LOW | Metadata-only, no table rewrite |
+| | `ALTER COLUMN TYPE varchar(N)` (schema unknown) | ACCESS EXCLUSIVE | HIGH | Provide a schema snapshot to prove widening |
 | | `ALTER COLUMN TYPE` (cross-family) | ACCESS EXCLUSIVE | HIGH | Expand/contract pattern |
 | 8 | `ALTER COLUMN SET NOT NULL` | ACCESS EXCLUSIVE | MEDIUM | CHECK constraint NOT VALID + validate |
 | 9 | `ADD CONSTRAINT ... FOREIGN KEY` | SHARE ROW EXCLUSIVE | HIGH | NOT VALID + VALIDATE CONSTRAINT |
@@ -312,7 +312,7 @@ pgfence checks a broad set of DDL patterns against Postgres's lock mode semantic
 | | `ATTACH PARTITION` (PG12+) | SHARE UPDATE EXCLUSIVE on parent, ACCESS EXCLUSIVE on partition | HIGH | CHECK constraint helps skip validation scan |
 | 22 | `DETACH PARTITION` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `DETACH PARTITION CONCURRENTLY` (PG14+) |
 | 23 | `REFRESH MATERIALIZED VIEW` | ACCESS EXCLUSIVE | HIGH | `REFRESH MATERIALIZED VIEW CONCURRENTLY` |
-| | `REFRESH MATERIALIZED VIEW CONCURRENTLY` | EXCLUSIVE | MEDIUM | Blocks writes; requires unique index |
+| | `REFRESH MATERIALIZED VIEW CONCURRENTLY` | EXCLUSIVE | LOW | Blocks writes and DDL; requires unique index |
 | 24a | `REINDEX TABLE` (non-concurrent) | SHARE | HIGH | `REINDEX TABLE CONCURRENTLY` (PG12+) |
 | 24b | `REINDEX INDEX` (non-concurrent) | ACCESS EXCLUSIVE | HIGH | `REINDEX INDEX CONCURRENTLY` (PG12+) |
 | 24c | `REINDEX SCHEMA/DATABASE` (non-concurrent) | ACCESS EXCLUSIVE | CRITICAL | `REINDEX CONCURRENTLY` (PG12+) |
@@ -369,33 +369,33 @@ Beyond DDL analysis, pgfence enforces operational best practices:
 
 When pgfence detects a dangerous pattern, it outputs the exact safe alternative:
 
-### ADD COLUMN with NOT NULL + DEFAULT
+### ADD COLUMN with NOT NULL + non-constant DEFAULT
 
 **Dangerous:**
 ```sql
-ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now();
 -- ACCESS EXCLUSIVE lock on entire table for duration of rewrite
 ```
 
 **Safe (expand/contract):**
 ```sql
 -- Migration 1: Add nullable column (instant, no lock)
-ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 
 -- Migration 2: Create index (non-blocking)
-CREATE INDEX CONCURRENTLY idx_users_email_verified ON users(email_verified);
+CREATE INDEX CONCURRENTLY idx_users_last_seen_at ON users(last_seen_at);
 
 -- Out-of-band backfill job (not in migration, repeat until 0 rows updated):
 -- WITH batch AS (
---   SELECT ctid FROM users WHERE email_verified IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED
+--   SELECT ctid FROM users WHERE last_seen_at IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED
 -- )
--- UPDATE users t SET email_verified = false FROM batch WHERE t.ctid = batch.ctid;
+-- UPDATE users t SET last_seen_at = now() FROM batch WHERE t.ctid = batch.ctid;
 
 -- Migration 3: Add NOT NULL constraint
-ALTER TABLE users ADD CONSTRAINT chk_email_verified CHECK (email_verified IS NOT NULL) NOT VALID;
-ALTER TABLE users VALIDATE CONSTRAINT chk_email_verified;
-ALTER TABLE users ALTER COLUMN email_verified SET NOT NULL;
-ALTER TABLE users DROP CONSTRAINT chk_email_verified;
+ALTER TABLE users ADD CONSTRAINT chk_last_seen_at CHECK (last_seen_at IS NOT NULL) NOT VALID;
+ALTER TABLE users VALIDATE CONSTRAINT chk_last_seen_at;
+ALTER TABLE users ALTER COLUMN last_seen_at SET NOT NULL;
+ALTER TABLE users DROP CONSTRAINT chk_last_seen_at;
 ```
 
 ## CI/CD Integration

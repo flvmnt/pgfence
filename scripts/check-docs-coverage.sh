@@ -49,7 +49,6 @@ add_doc_target "proof-points.md"
 add_doc_target "blog"
 add_doc_target "docs"
 add_doc_target "press-releases"
-add_doc_target "packages/vscode-pgfence/README.md"
 add_doc_target "website/src/pages/docs"
 
 if [ "${#DOC_TARGETS[@]}" -eq 0 ]; then

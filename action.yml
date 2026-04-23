@@ -39,13 +39,21 @@ runs:
         INPUT_STATS_FILE: ${{ inputs.stats-file }}
       run: |
         shopt -s nullglob
-        FILES=($INPUT_PATH)
+        FILES=()
+        while IFS= read -r file; do
+          if [ -n "$file" ]; then
+            FILES+=("$file")
+          fi
+        done < <(compgen -G "$INPUT_PATH" || true)
+        if [ "${#FILES[@]}" -eq 0 ] && [ -e "$INPUT_PATH" ]; then
+          FILES=("$INPUT_PATH")
+        fi
         if [ "${#FILES[@]}" -eq 0 ]; then
           echo "No files matched path: $INPUT_PATH"
           exit 1
         fi
 
-        ARGS=("${FILES[@]}" "--ci" "--max-risk" "$INPUT_MAX_RISK")
+        ARGS=("--ci" "--max-risk" "$INPUT_MAX_RISK")
         if [ "$INPUT_FORMAT" != "auto" ]; then
           ARGS+=("--format" "$INPUT_FORMAT")
         fi
@@ -55,5 +63,7 @@ runs:
         if [ -n "$INPUT_STATS_FILE" ]; then
           ARGS+=("--stats-file" "$INPUT_STATS_FILE")
         fi
+        ARGS+=("--" "${FILES[@]}")
 
-        npx --yes @flvmnt/pgfence analyze "${ARGS[@]}"
+        PACKAGE_VERSION=$(node -p "require('./package.json').version")
+        npx --yes "@flvmnt/pgfence@$PACKAGE_VERSION" analyze "${ARGS[@]}"

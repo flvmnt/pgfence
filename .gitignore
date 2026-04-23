@@ -39,3 +39,4 @@ docs/
 src/cloud/
 src/agent/
 tests/cloud/
+packages/vscode-pgfence/

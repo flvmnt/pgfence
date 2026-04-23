@@ -10,7 +10,7 @@ else
   DIFF_BASE="$(git hash-object -t tree /dev/null)"
 fi
 
-CLOUD_FILES=$(git diff --cached --name-only "$DIFF_BASE" 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/)' || true)
+CLOUD_FILES=$(git diff --cached --name-only "$DIFF_BASE" 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/|packages/vscode-pgfence/)' || true)
 if [ -z "$CLOUD_FILES" ]; then
   # Also check the commits being pushed. On a first push for a branch, Git gives
   # us a zero remote SHA, so inspect commits that are not yet on any remote.
@@ -27,7 +27,7 @@ if [ -z "$CLOUD_FILES" ]; then
         if [ -z "$COMMIT_SHA" ]; then
           continue
         fi
-        MATCHES=$(git diff-tree --no-commit-id --name-only -r "$COMMIT_SHA" 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/)' || true)
+        MATCHES=$(git diff-tree --no-commit-id --name-only -r "$COMMIT_SHA" 2>/dev/null | grep -E '^(src/cloud/|src/agent/|tests/cloud/|packages/vscode-pgfence/)' || true)
         if [ -n "$MATCHES" ]; then
           CLOUD_IN_COMMITS+="$MATCHES"$'\n'
         fi

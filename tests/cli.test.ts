@@ -95,6 +95,32 @@ describe.skipIf(!hasBuiltCli())('CLI e2e (built binary)', () => {
         ).rejects.toMatchObject({ code: 1 });
     });
 
+    it('exits 1 when unknown handling blocks unanalyzable SQL', async () => {
+        const fixture = path.join(fixturesDir, 'dynamic-typeorm.ts');
+        await expect(
+            execPromise(`node "${distCliPath}" analyze --ci --unknown block --max-risk critical --no-lock-timeout --no-statement-timeout --format typeorm "${fixture}"`),
+        ).rejects.toMatchObject({ code: 1 });
+    });
+
+    it('respects config file values when CLI flags are omitted', async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'pgfence-config-cli-'));
+        await writeFile(path.join(root, '.pgfence.json'), JSON.stringify({
+            output: 'json',
+            'max-risk': 'low',
+            'require-lock-timeout': false,
+            'require-statement-timeout': false,
+        }), 'utf8');
+        await writeFile(path.join(root, 'migration.sql'), 'CREATE INDEX idx_users_email ON users(email);\n', 'utf8');
+
+        try {
+            await expect(
+                execPromise(`node "${distCliPath}" analyze --ci migration.sql`, { cwd: root }),
+            ).rejects.toMatchObject({ code: 1 });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('exits 2 on system error (snapshot with bad db url)', async () => {
         try {
             await execPromise(cliCommand('snapshot --db-url postgres://bad:bad@localhost:0/noexist'));
@@ -117,12 +143,16 @@ describe('CLI tests', () => {
 
         try {
             const script = `
-shopt -s nullglob
 INPUT_PATH='migrations/*.sql'
-FILES=($INPUT_PATH)
+FILES=()
+while IFS= read -r file; do
+  if [ -n "$file" ]; then
+    FILES+=("$file")
+  fi
+done < <(compgen -G "$INPUT_PATH" || true)
 printf '%s\\n' "\${FILES[@]}"
 `;
-            const { stdout } = await execFilePromise('bash', ['-lc', script], { cwd: root });
+            const { stdout } = await execFilePromise('bash', ['-c', script], { cwd: root });
             expect(stdout.trim().split('\n').sort()).toEqual(['migrations/001.sql', 'migrations/002.sql']);
         } finally {
             await rm(root, { recursive: true, force: true });

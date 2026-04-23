@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v6
       - name: Block cloud/agent files from public repo
         run: |
-          LEAKED=$(git ls-files -- 'src/cloud/' 'src/agent/' 'tests/cloud/' | head -5)
+          LEAKED=$(git ls-files -- 'src/cloud/' 'src/agent/' 'tests/cloud/' 'packages/vscode-pgfence/' | head -5)
           if [ -n "$LEAKED" ]; then
             echo "::error::Cloud/agent files detected in tracked files:"
             echo "$LEAKED"

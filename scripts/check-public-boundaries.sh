@@ -12,7 +12,7 @@ filter_paths() {
   fi
 }
 
-FORBIDDEN_TRACKED=$(git ls-files | filter_paths '^(src/cloud/|src/agent/|tests/cloud/)')
+FORBIDDEN_TRACKED=$(git ls-files | filter_paths '^(src/cloud/|src/agent/|tests/cloud/|packages/vscode-pgfence/)')
 if [ -n "$FORBIDDEN_TRACKED" ]; then
   echo "ERROR: tracked cloud or agent files were found:"
   echo "$FORBIDDEN_TRACKED"
@@ -32,8 +32,8 @@ if [ -n "$FORBIDDEN_REFERENCES" ]; then
 fi
 
 if [ ! -d dist ]; then
-  echo "Skipping package boundary check because dist/ is missing."
-  exit 0
+  echo "ERROR: dist/ is missing. Run pnpm build before checking package boundaries."
+  exit 1
 fi
 
 PACK_JSON=$(npm pack --dry-run --json)
@@ -49,7 +49,7 @@ function parsePackJson(raw) {
 
 const pack = parsePackJson(process.env.PACK_JSON ?? '[]');
 const files = pack.flatMap((entry) => entry.files ?? []).map((file) => file.path);
-const forbidden = files.filter((file) => /^(src\/cloud\/|src\/agent\/|dist\/cloud\/|dist\/agent\/|tests\/cloud\/)/.test(file));
+const forbidden = files.filter((file) => /^(src\/cloud\/|src\/agent\/|dist\/cloud\/|dist\/agent\/|tests\/cloud\/|packages\/vscode-pgfence\/)/.test(file));
 if (forbidden.length > 0) {
   console.error('ERROR: npm package contains forbidden cloud or agent files:');
   for (const file of forbidden) console.error(file);
@@ -65,8 +65,8 @@ if (missing.length > 0) {
 }
 
 const { execSync } = require('node:child_process');
-const trackedSources = new Set(
-  execSync('git ls-files src', { encoding: 'utf8' })
+const publicSources = new Set(
+  execSync('git ls-files src && git ls-files --others --exclude-standard src', { encoding: 'utf8' })
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.endsWith('.ts')),
@@ -80,11 +80,11 @@ const orphanArtifacts = distArtifacts.filter((file) => {
     .replace(/\.d\.ts$/, '.ts')
     .replace(/\.js\.map$/, '.ts')
     .replace(/\.js$/, '.ts');
-  return !trackedSources.has(sourcePath);
+  return !publicSources.has(sourcePath);
 });
 
 if (orphanArtifacts.length > 0) {
-  console.error('ERROR: npm package contains dist artifacts without tracked source files:');
+  console.error('ERROR: npm package contains dist artifacts without public source files:');
   for (const file of orphanArtifacts) console.error(file);
   process.exit(1);
 }
