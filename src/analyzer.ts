@@ -11,7 +11,6 @@
  * 7. Compute maxRisk
  */
 
-import { readFile } from 'node:fs/promises';
 import { parseSQL } from './parser.js';
 import type { ParsedStatement } from './parser.js';
 import { checkAddColumn } from './rules/add-column.js';
@@ -29,17 +28,19 @@ import { checkTrigger } from './rules/trigger.js';
 import { checkPartition } from './rules/partition.js';
 import { checkPolicies } from './rules/policy.js';
 import { fetchTableStats } from './db-stats.js';
-import { getCloudHooks } from './cloud-hooks.js';
+import { getAnalysisHooks } from './analysis-hooks.js';
 import { getStatementTableKey } from './table-ref.js';
 import { loadSnapshot, loadSnapshotFile } from './schema-snapshot.js';
 import { loadPlugins, runPluginRules, runPluginPolicies } from './plugins.js';
 import type { LoadedPlugins } from './plugins.js';
 import type { SchemaLookup } from './schema-snapshot.js';
+import { readTextMigrationFile } from './extractors/file-guards.js';
 import type {
   AnalysisResult,
   CheckResult,
   ExtractionResult,
   PgfenceConfig,
+  PolicyViolation,
   RiskLevel as RiskLevelType,
   RulesConfig,
   TableStats,
@@ -88,7 +89,7 @@ export async function analyze(
   filePaths: string[],
   config: PgfenceConfig,
 ): Promise<AnalysisResult[]> {
-  const hooks = await getCloudHooks();
+  const hooks = await getAnalysisHooks();
   if (hooks.onAnalysisStart) {
     await hooks.onAnalysisStart(filePaths, config);
   }
@@ -101,6 +102,7 @@ export async function analyze(
 
   // Fetch DB stats once if needed (--db-url takes precedence, then --stats-file)
   let tableStatsMap: Map<string, TableStats> | null = null;
+  let ambiguousTableStats = new Set<string>();
   let allTableStats: TableStats[] | undefined;
   const rawStats = config.dbUrl
     ? await fetchTableStats(config.dbUrl)
@@ -108,11 +110,22 @@ export async function analyze(
   if (rawStats) {
     allTableStats = rawStats;
     tableStatsMap = new Map();
+    const unqualifiedCounts = new Map<string, number>();
     for (const s of rawStats) {
-      // Normalize to lowercase - Postgres identifiers are case-insensitive unless quoted
       const lower = s.tableName.toLowerCase();
-      tableStatsMap.set(lower, s);
+      unqualifiedCounts.set(lower, (unqualifiedCounts.get(lower) ?? 0) + 1);
+    }
+    ambiguousTableStats = new Set(
+      [...unqualifiedCounts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([table]) => table),
+    );
+    for (const s of rawStats) {
+      const lower = s.tableName.toLowerCase();
       tableStatsMap.set(`${s.schemaName.toLowerCase()}.${lower}`, s);
+      if (!ambiguousTableStats.has(lower)) {
+        tableStatsMap.set(lower, s);
+      }
     }
   }
 
@@ -195,23 +208,33 @@ export async function analyze(
         // Filter: visibility logic - skip warnings for tables created in this migration
         // (but best-practice checks with appliesToNewTables still fire)
         if (stmtTableKey && createdTables.has(stmtTableKey) && !writtenTables.has(stmtTableKey) && !check.appliesToNewTables) continue;
+        if (stmtTableKey && check.tableName) {
+          const checkTable = check.tableName.toLowerCase();
+          if (stmtTableKey === checkTable || stmtTableKey.endsWith(`.${checkTable}`)) {
+            check.tableKey = stmtTableKey;
+          }
+        }
         checks.push(check);
       }
     }
 
     // Apply policy checks
-    const builtInPolicies = checkPolicies(stmts, config, { autoCommit: extraction.autoCommit });
-    // Gap 14: Run plugin policies alongside built-in policies
-    if (plugins.policies.length > 0) {
-      builtInPolicies.push(...runPluginPolicies(plugins.policies, stmts, config, extraction.warnings, filePath));
+    let policyViolations: PolicyViolation[] = [];
+    if (stmts.length > 0) {
+      const builtInPolicies = checkPolicies(stmts, config, { autoCommit: extraction.autoCommit });
+      // Gap 14: Run plugin policies alongside built-in policies
+      if (plugins.policies.length > 0) {
+        builtInPolicies.push(...runPluginPolicies(plugins.policies, stmts, config, extraction.warnings, filePath));
+      }
+      policyViolations = filterByRulesConfig(builtInPolicies, config.rules);
     }
-    const policyViolations = filterByRulesConfig(builtInPolicies, config.rules);
 
     // Adjust risk if DB stats available
     if (tableStatsMap) {
       for (const check of checks) {
-        if (check.tableName) {
-          const stats = tableStatsMap.get(check.tableName.toLowerCase());
+        const statsKey = check.tableKey ?? check.tableName?.toLowerCase();
+        if (statsKey) {
+          const stats = tableStatsMap.get(statsKey);
           if (stats) {
             check.adjustedRisk = adjustRisk(check.risk, stats.rowCount);
           }
@@ -357,7 +380,7 @@ export async function extractSQL(
 
   if (format === 'auto') {
     // Need to read file for content-based detection
-    const content = await readFile(filePath, 'utf8');
+    const content = await readTextMigrationFile(filePath);
     format = detectFormat(filePath, content);
   }
 

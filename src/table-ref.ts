@@ -29,6 +29,10 @@ export function getStatementTableKey(stmt: ParsedStatement): string | null {
       const node = stmt.node as RelationLike;
       return relationKey(node.relation);
     }
+    case 'RenameStmt': {
+      const node = stmt.node as RelationLike;
+      return relationKey(node.relation);
+    }
     case 'TruncateStmt': {
       const node = stmt.node as {
         relations?: Array<{ RangeVar?: RelationRef }>;

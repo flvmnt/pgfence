@@ -80,6 +80,7 @@ export function checkPolicies(
   options?: { autoCommit?: boolean },
 ): PolicyViolation[] {
   const violations: PolicyViolation[] = [];
+  const migrationWrappedInTransaction = options?.autoCommit === false;
 
   // Index-based tracking for ordering validation (Gap 2)
   const lockTimeoutState = { active: false, index: -1 };
@@ -185,6 +186,8 @@ export function checkPolicies(
       }
     }
 
+    const statementRunsInTransaction = txState.active || migrationWrappedInTransaction;
+
     // Track ACCESS EXCLUSIVE statements for compounding danger (Eugene E4)
     // Also track the first dangerous statement for ordering validation (Gap 2)
     if (isAccessExclusiveStatement(stmt)) {
@@ -199,13 +202,15 @@ export function checkPolicies(
       // each statement auto-commits and locks don't compound across statements.
       if (!options?.autoCommit) {
         if (hasAccessExclusive) {
-          violations.push({
-            ruleId: 'statement-after-access-exclusive',
-            message: `Multiple statements holding ACCESS EXCLUSIVE lock in same transaction: "${makePreview(stmt.sql, 60)}" runs while ACCESS EXCLUSIVE is already held from "${accessExclusiveStmt}". This compounds the lock duration, blocking all reads and writes for the entire transaction.`,
-            suggestion: 'Split into separate transactions so each ACCESS EXCLUSIVE lock is held for the minimum time',
-            severity: 'warning',
-            statementIndex: i,
-          });
+          if (!isIgnored(stmt, 'statement-after-access-exclusive')) {
+            violations.push({
+              ruleId: 'statement-after-access-exclusive',
+              message: `Multiple statements holding ACCESS EXCLUSIVE lock in same transaction: "${makePreview(stmt.sql, 60)}" runs while ACCESS EXCLUSIVE is already held from "${accessExclusiveStmt}". This compounds the lock duration, blocking all reads and writes for the entire transaction.`,
+              suggestion: 'Split into separate transactions so each ACCESS EXCLUSIVE lock is held for the minimum time',
+              severity: 'warning',
+              statementIndex: i,
+            });
+          }
         } else {
           hasAccessExclusive = true;
           accessExclusiveStmt = makePreview(stmt.sql, 60);
@@ -214,28 +219,27 @@ export function checkPolicies(
     }
 
     // Gap 12: Record locks in transaction state and detect wide lock windows
-    if (txState.active && !options?.autoCommit) {
+    if (statementRunsInTransaction && !options?.autoCommit) {
       const tableName = getStatementTable(stmt);
       const lockMode = getStatementLockMode(stmt);
       if (tableName && lockMode) {
         const result = recordLock(txState, tableName, lockMode);
         if (result.wideLockWindow) {
-          violations.push({
-            ruleId: 'wide-lock-window',
-            message: `Wide lock window: ACCESS EXCLUSIVE locks held on multiple tables ("${result.previousTable}" and "${tableName}") in the same transaction. This multiplies the blast radius of lock contention.`,
-            suggestion: 'Split operations on different tables into separate transactions to minimize lock overlap',
-            severity: 'warning',
-            statementIndex: i,
-          });
+          if (!isIgnored(stmt, 'wide-lock-window')) {
+            violations.push({
+              ruleId: 'wide-lock-window',
+              message: `Wide lock window: ACCESS EXCLUSIVE locks held on multiple tables ("${result.previousTable}" and "${tableName}") in the same transaction. This multiplies the blast radius of lock contention.`,
+              suggestion: 'Split operations on different tables into separate transactions to minimize lock overlap',
+              severity: 'warning',
+              statementIndex: i,
+            });
+          }
         }
       }
     }
 
     // Track NOT VALID constraints and detect same-tx VALIDATE.
-    // Only track within explicit transactions (txState.active).
-    // Without explicit BEGIN, each statement is auto-committed so
-    // NOT VALID followed by VALIDATE in sequence is fine.
-    if (stmt.nodeType === 'AlterTableStmt' && txState.active) {
+    if (stmt.nodeType === 'AlterTableStmt' && statementRunsInTransaction) {
       const alterNode = stmt.node as {
         relation: { relname: string };
         cmds: Array<{
@@ -258,22 +262,24 @@ export function checkPolicies(
         if (c.subtype === 'AT_ValidateConstraint' && c.name) {
           const key = `${tbl}.${c.name}`;
           if (notValidConstraintsInTx.has(key)) {
-            violations.push({
-              ruleId: 'not-valid-validate-same-tx',
-              message: `NOT VALID + VALIDATE CONSTRAINT "${c.name}" in same transaction: this defeats the purpose of NOT VALID because the table scan runs while the SHARE ROW EXCLUSIVE lock from ADD CONSTRAINT is still held`,
-              suggestion: `Split into separate migrations: add the constraint with NOT VALID in one migration, then VALIDATE CONSTRAINT in a follow-up migration`,
-              severity: 'error',
-              statementIndex: i,
-            });
+            if (!isIgnored(stmt, 'not-valid-validate-same-tx')) {
+              violations.push({
+                ruleId: 'not-valid-validate-same-tx',
+                message: `NOT VALID + VALIDATE CONSTRAINT "${c.name}" in same transaction: this defeats the purpose of NOT VALID because the table scan runs while the SHARE ROW EXCLUSIVE lock from ADD CONSTRAINT is still held`,
+                suggestion: `Split into separate migrations: add the constraint with NOT VALID in one migration, then VALIDATE CONSTRAINT in a follow-up migration`,
+                severity: 'error',
+                statementIndex: i,
+              });
+            }
           }
         }
       }
     }
 
     // Operations that require autocommit must not run inside explicit transactions.
-    if (txState.active) {
+    if (statementRunsInTransaction) {
       const autocommitOnlyOp = getAutocommitOnlyOperation(stmt, config.minPostgresVersion);
-      if (autocommitOnlyOp) {
+      if (autocommitOnlyOp && !isIgnored(stmt, 'concurrent-in-transaction')) {
         violations.push({
           ruleId: 'concurrent-in-transaction',
           message: `${autocommitOnlyOp} inside a transaction: this will fail at runtime`,
@@ -292,15 +298,17 @@ export function checkPolicies(
         ? isAlwaysTrueWhereClause(updateNode.whereClause)
         : false;
       if (!hasWhere || hasTautologicalWhere) {
-        violations.push({
-          ruleId: 'update-in-migration',
-          message: hasTautologicalWhere
-            ? 'UPDATE with a tautological WHERE clause in migration: this still updates every row and should run out-of-band in batches'
-            : 'UPDATE without WHERE in migration: bulk backfills should run out-of-band in batches',
-          suggestion: 'Move data backfill to an out-of-band job using batched UPDATE with FOR UPDATE SKIP LOCKED',
-          severity: 'warning',
-          statementIndex: i,
-        });
+        if (!isIgnored(stmt, 'update-in-migration')) {
+          violations.push({
+            ruleId: 'update-in-migration',
+            message: hasTautologicalWhere
+              ? 'UPDATE with a tautological WHERE clause in migration: this still updates every row and should run out-of-band in batches'
+              : 'UPDATE without WHERE in migration: bulk backfills should run out-of-band in batches',
+            suggestion: 'Move data backfill to an out-of-band job using batched UPDATE with FOR UPDATE SKIP LOCKED',
+            severity: 'warning',
+            statementIndex: i,
+          });
+        }
       }
     }
   }
@@ -389,6 +397,14 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
           AlterTableCmd: {
             subtype: string;
             def?: {
+              ColumnDef?: {
+                constraints?: Array<{
+                  Constraint?: {
+                    contype?: string;
+                    raw_expr?: Record<string, unknown>;
+                  };
+                }>;
+              };
               Constraint?: { skip_validation?: boolean };
               PartitionCmd?: { concurrent?: boolean };
             };
@@ -399,8 +415,10 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
         const sub = cmd.AlterTableCmd?.subtype;
         // VALIDATE CONSTRAINT takes SHARE UPDATE EXCLUSIVE - skip
         if (sub === 'AT_ValidateConstraint') continue;
-        // ADD COLUMN is technically ACCESS EXCLUSIVE but instant - skip
-        if (sub === 'AT_AddColumn') continue;
+        if (sub === 'AT_AddColumn') {
+          if (isAddColumnRewriteRisk(cmd.AlterTableCmd)) return true;
+          continue;
+        }
         // DROP NOT NULL is instant (metadata-only on Postgres 9+) - skip
         if (sub === 'AT_DropNotNull') continue;
         // ADD CONSTRAINT with NOT VALID is brief (metadata only) - skip
@@ -450,6 +468,42 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
     default:
       return false;
   }
+}
+
+function isIgnored(stmt: ParsedStatement, ruleId: string): boolean {
+  return stmt.ignoredRules?.includes('*') === true || stmt.ignoredRules?.includes(ruleId) === true;
+}
+
+function isAddColumnRewriteRisk(cmd: {
+  subtype: string;
+  def?: {
+    ColumnDef?: {
+      constraints?: Array<{
+        Constraint?: {
+          contype?: string;
+          raw_expr?: Record<string, unknown>;
+        };
+      }>;
+    };
+  };
+}): boolean {
+  if (cmd.subtype !== 'AT_AddColumn') return false;
+  const constraints = cmd.def?.ColumnDef?.constraints ?? [];
+  if (constraints.some((con) => con.Constraint?.contype === 'CONSTR_GENERATED')) return true;
+  const hasNotNull = constraints.some((con) => con.Constraint?.contype === 'CONSTR_NOTNULL');
+  const defaultConstraint = constraints.find((con) => con.Constraint?.contype === 'CONSTR_DEFAULT');
+  const defaultExpr = defaultConstraint?.Constraint?.raw_expr;
+  if (defaultExpr && !isConstantDefault(defaultExpr)) return true;
+  return hasNotNull && !defaultExpr;
+}
+
+function isConstantDefault(expr: Record<string, unknown>): boolean {
+  if ('A_Const' in expr) return true;
+  if ('TypeCast' in expr) {
+    const cast = expr.TypeCast as { arg?: Record<string, unknown> };
+    return cast.arg != null && 'A_Const' in cast.arg;
+  }
+  return false;
 }
 
 /**

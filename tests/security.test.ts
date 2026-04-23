@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadConfigFile } from '../src/config.js';
-import { getCloudHooks, registerCloudHooks } from '../src/cloud-hooks.js';
+import { getAnalysisHooks, registerAnalysisHooks } from '../src/analysis-hooks.js';
 import { RiskLevel } from '../src/types.js';
 
 async function makeRepoLocalTempDir(prefix: string): Promise<string> {
@@ -34,7 +34,7 @@ async function collectTypeScriptFiles(dir: string): Promise<string[]> {
 
 describe('security boundaries', () => {
   afterEach(() => {
-    registerCloudHooks(null);
+    registerAnalysisHooks(null);
   });
 
   it('does not inherit config from ancestor directories', async () => {
@@ -261,19 +261,19 @@ describe('security boundaries', () => {
     }
   });
 
-  it('keeps cloud hooks explicit and opt-in', async () => {
-    const hooks = await getCloudHooks();
+  it('keeps analysis hooks explicit and opt-in', async () => {
+    const hooks = await getAnalysisHooks();
     expect(hooks.onAnalysisStart).toBeUndefined();
     expect(hooks.onAnalysisComplete).toBeUndefined();
 
     const started: string[] = [];
-    registerCloudHooks({
+    registerAnalysisHooks({
       onAnalysisStart: async (files) => {
         started.push(...files);
       },
     });
 
-    const registered = await getCloudHooks();
+    const registered = await getAnalysisHooks();
     await registered.onAnalysisStart?.(['fixture.sql'], {
       format: 'sql',
       output: 'cli',

@@ -117,26 +117,27 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
       }
       if (node.removeType !== 'OBJECT_TABLE') break;
 
-      const tableName = extractDropTableName(node.objects);
-      results.push({
-        statement: stmt.sql,
-        statementPreview: makePreview(stmt.sql),
-        tableName,
-        lockMode: LockMode.ACCESS_EXCLUSIVE,
-        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-        risk: RiskLevel.CRITICAL,
-        message: `DROP TABLE "${tableName}": irreversible data loss, acquires ACCESS EXCLUSIVE lock`,
-        ruleId: 'drop-table',
-        safeRewrite: {
-          description: 'Drop table in a separate release after confirming no references remain',
-          steps: [
-            `-- 1. Remove all application references to "${tableName}"`,
-            `-- 2. Deploy and verify in production`,
-            `-- 3. Drop in a follow-up migration after confirmation period`,
-            `DROP TABLE IF EXISTS ${tableName};`,
-          ],
-        },
-      });
+      for (const tableName of extractDropTableNames(node.objects)) {
+        results.push({
+          statement: stmt.sql,
+          statementPreview: makePreview(stmt.sql),
+          tableName,
+          lockMode: LockMode.ACCESS_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          risk: RiskLevel.CRITICAL,
+          message: `DROP TABLE "${tableName}": irreversible data loss, acquires ACCESS EXCLUSIVE lock`,
+          ruleId: 'drop-table',
+          safeRewrite: {
+            description: 'Drop table in a separate release after confirming no references remain',
+            steps: [
+              `-- 1. Remove all application references to "${tableName}"`,
+              `-- 2. Deploy and verify in production`,
+              `-- 3. Drop in a follow-up migration after confirmation period`,
+              `DROP TABLE IF EXISTS ${tableName};`,
+            ],
+          },
+        });
+      }
       break;
     }
 
@@ -145,45 +146,47 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
         relations: Array<{ RangeVar: { relname: string } }>;
         behavior?: string;
       };
-      const tableName = node.relations?.[0]?.RangeVar?.relname ?? null;
       const isCascade = node.behavior === 'DROP_CASCADE';
+      const tableNames = node.relations?.map((rel) => rel.RangeVar?.relname ?? null) ?? [null];
 
-      if (isCascade) {
-        results.push({
-          statement: stmt.sql,
-          statementPreview: makePreview(stmt.sql),
-          tableName,
-          lockMode: LockMode.ACCESS_EXCLUSIVE,
-          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-          risk: RiskLevel.CRITICAL,
-          message: `TRUNCATE "${tableName}" CASCADE: deletes all rows in this table AND all referencing tables via foreign keys, acquires ACCESS EXCLUSIVE on all affected tables`,
-          ruleId: 'truncate-cascade',
-          safeRewrite: {
-            description: 'Remove CASCADE and explicitly truncate each table, or use batched DELETE',
-            steps: [
-              `-- Delete in batches out-of-band, table by table:`,
-              `-- DELETE FROM ${tableName} WHERE ctid IN (SELECT ctid FROM ${tableName} LIMIT 1000);`,
-            ],
-          },
-        });
-      } else {
-        results.push({
-          statement: stmt.sql,
-          statementPreview: makePreview(stmt.sql),
-          tableName,
-          lockMode: LockMode.ACCESS_EXCLUSIVE,
-          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-          risk: RiskLevel.CRITICAL,
-          message: `TRUNCATE "${tableName}": deletes all rows, acquires ACCESS EXCLUSIVE lock`,
-          ruleId: 'truncate',
-          safeRewrite: {
-            description: 'Use batched DELETE instead of TRUNCATE for safer data removal',
-            steps: [
-              `-- Delete in batches out-of-band:`,
-              `-- DELETE FROM ${tableName} WHERE ctid IN (SELECT ctid FROM ${tableName} LIMIT 1000);`,
-            ],
-          },
-        });
+      for (const tableName of tableNames) {
+        if (isCascade) {
+          results.push({
+            statement: stmt.sql,
+            statementPreview: makePreview(stmt.sql),
+            tableName,
+            lockMode: LockMode.ACCESS_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            risk: RiskLevel.CRITICAL,
+            message: `TRUNCATE "${tableName}" CASCADE: deletes all rows in this table AND all referencing tables via foreign keys, acquires ACCESS EXCLUSIVE on all affected tables`,
+            ruleId: 'truncate-cascade',
+            safeRewrite: {
+              description: 'Remove CASCADE and explicitly truncate each table, or use batched DELETE',
+              steps: [
+                `-- Delete in batches out-of-band, table by table:`,
+                `-- DELETE FROM ${tableName} WHERE ctid IN (SELECT ctid FROM ${tableName} LIMIT 1000);`,
+              ],
+            },
+          });
+        } else {
+          results.push({
+            statement: stmt.sql,
+            statementPreview: makePreview(stmt.sql),
+            tableName,
+            lockMode: LockMode.ACCESS_EXCLUSIVE,
+            blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+            risk: RiskLevel.CRITICAL,
+            message: `TRUNCATE "${tableName}": deletes all rows, acquires ACCESS EXCLUSIVE lock`,
+            ruleId: 'truncate',
+            safeRewrite: {
+              description: 'Use batched DELETE instead of TRUNCATE for safer data removal',
+              steps: [
+                `-- Delete in batches out-of-band:`,
+                `-- DELETE FROM ${tableName} WHERE ctid IN (SELECT ctid FROM ${tableName} LIMIT 1000);`,
+              ],
+            },
+          });
+        }
       }
       break;
     }
@@ -248,24 +251,26 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
       );
       if (!isFull) break;
 
-      const tableName = node.rels?.[0]?.VacuumRelation?.relation?.relname ?? null;
-      results.push({
-        statement: stmt.sql,
-        statementPreview: makePreview(stmt.sql),
-        tableName,
-        lockMode: LockMode.ACCESS_EXCLUSIVE,
-        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-        risk: RiskLevel.HIGH,
-        message: `VACUUM FULL "${tableName}": rewrites table, acquires ACCESS EXCLUSIVE lock for entire duration`,
-        ruleId: 'vacuum-full',
-        safeRewrite: {
-          description: 'Use pg_repack instead of VACUUM FULL',
-          steps: [
-            `-- Use pg_repack (non-blocking alternative):`,
-            `-- pg_repack --table ${tableName} --no-superuser-check`,
-          ],
-        },
-      });
+      const tableNames = node.rels?.map((rel) => rel.VacuumRelation?.relation?.relname ?? null) ?? [null];
+      for (const tableName of tableNames) {
+        results.push({
+          statement: stmt.sql,
+          statementPreview: makePreview(stmt.sql),
+          tableName,
+          lockMode: LockMode.ACCESS_EXCLUSIVE,
+          blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+          risk: RiskLevel.HIGH,
+          message: `VACUUM FULL "${tableName}": rewrites table, acquires ACCESS EXCLUSIVE lock for entire duration`,
+          ruleId: 'vacuum-full',
+          safeRewrite: {
+            description: 'Use pg_repack instead of VACUUM FULL',
+            steps: [
+              `-- Use pg_repack (non-blocking alternative):`,
+              `-- pg_repack --table ${tableName} --no-superuser-check`,
+            ],
+          },
+        });
+      }
       break;
     }
   }
@@ -424,8 +429,17 @@ function readLiteralValue(node: unknown): string | number | boolean | null {
 function extractDropTableName(
   objects: Array<{ List: { items: Array<{ String: { sval: string } }> } }>,
 ): string | null {
-  if (!objects || objects.length === 0) return null;
-  const items = objects[0]?.List?.items;
-  if (!items || items.length === 0) return null;
-  return items[items.length - 1]?.String?.sval ?? null;
+  return extractDropTableNames(objects)[0] ?? null;
+}
+
+function extractDropTableNames(
+  objects: Array<{ List: { items: Array<{ String: { sval: string } }> } }>,
+): Array<string | null> {
+  if (!objects || objects.length === 0) return [null];
+  const names = objects.map((object) => {
+    const items = object?.List?.items;
+    if (!items || items.length === 0) return null;
+    return items[items.length - 1]?.String?.sval ?? null;
+  });
+  return names.length > 0 ? names : [null];
 }

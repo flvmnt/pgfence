@@ -211,6 +211,56 @@ ALTER TABLE users ADD COLUMN x int;`;
     expect(indexCheck).toBeDefined();
   });
 
+  it('should extract SQL from aliased TypeORM query runners', async () => {
+    const sql = `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class DropUsers implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    const qr = queryRunner;
+    await qr.query('DROP TABLE users');
+  }
+}`;
+    await withTempSqlFile('pgfence-typeorm-alias-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, format: 'typeorm', requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      expect(results[0].checks.some((check) => check.ruleId === 'drop-table')).toBe(true);
+      expect(results[0].extractionWarnings?.some((warning) => warning.unanalyzable)).not.toBe(true);
+    });
+  });
+
+  it('should reject CREATE INDEX CONCURRENTLY inside default TypeORM transactions', async () => {
+    const sql = `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class AddIndex implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query('CREATE INDEX CONCURRENTLY idx_users_email ON users(email)');
+  }
+}`;
+    await withTempSqlFile('pgfence-typeorm-concurrent-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, format: 'typeorm', requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      expect(results[0].policyViolations.some((violation) => violation.ruleId === 'concurrent-in-transaction')).toBe(true);
+    });
+  });
+
+  it('should detect NOT VALID plus VALIDATE inside default TypeORM transactions', async () => {
+    const sql = `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class AddCheck implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query('ALTER TABLE users ADD CONSTRAINT chk_users_email CHECK (email IS NOT NULL) NOT VALID; ALTER TABLE users VALIDATE CONSTRAINT chk_users_email');
+  }
+}`;
+    await withTempSqlFile('pgfence-typeorm-not-valid-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, format: 'typeorm', requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      expect(results[0].policyViolations.some((violation) => violation.ruleId === 'not-valid-validate-same-tx')).toBe(true);
+    });
+  });
+
   it('should skip down() method in TypeORM migrations', async () => {
     const results = await analyze(
       [fixture('dangerous-typeorm.ts')],
@@ -266,6 +316,28 @@ ALTER TABLE users ADD COLUMN x int;`;
 
   it('should bump +2 at 9,999,999 rows', () => {
     expect(adjustRisk(RiskLevel.LOW, 9_999_999)).toBe(RiskLevel.HIGH);
+  });
+
+  it('should match table stats by schema-qualified table keys', async () => {
+    const sql = 'ALTER TABLE archive.users RENAME COLUMN name TO full_name;';
+    await withTempSqlFile('pgfence-schema-stats-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        {
+          ...defaultConfig,
+          requireLockTimeout: false,
+          requireStatementTimeout: false,
+          tableStats: [
+            { schemaName: 'public', tableName: 'users', rowCount: 1_000, totalBytes: 1_000 },
+            { schemaName: 'archive', tableName: 'users', rowCount: 20_000_000, totalBytes: 1_000_000 },
+          ],
+        },
+      );
+      const check = results[0].checks.find((candidate) => candidate.ruleId === 'rename-column');
+      expect(check).toBeDefined();
+      expect(check!.tableKey).toBe('archive.users');
+      expect(check!.adjustedRisk).toBe(RiskLevel.CRITICAL);
+    });
   });
 
   it('should generate safe rewrite recipes for dangerous patterns', async () => {
@@ -1092,6 +1164,37 @@ COMMIT;
     expect(ordering).toBeDefined();
     expect(ordering!.severity).toBe('error');
     expect(ordering!.message).toContain('AFTER');
+  });
+
+  it('should detect lock_timeout set after ADD COLUMN with rewrite risk', async () => {
+    const sql = `ALTER TABLE users ADD COLUMN created_at timestamptz DEFAULT clock_timestamp();
+SET lock_timeout = '2s';
+SET statement_timeout = '5min';
+SET application_name = 'migrate:test';
+SET idle_in_transaction_session_timeout = '30s';`;
+    await withTempSqlFile('pgfence-add-column-order-test', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], defaultConfig);
+      expect(results[0].policyViolations.some((violation) => violation.ruleId === 'lock-timeout-after-dangerous-statement')).toBe(true);
+    });
+  });
+
+  it('should report each target in multi-table destructive statements', async () => {
+    const sql = `DROP TABLE users, accounts;
+TRUNCATE sessions, events;
+VACUUM FULL jobs, logs;`;
+    await withTempSqlFile('pgfence-multi-target-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      const targets = results[0].checks.map((check) => `${check.ruleId}:${check.tableName}`).sort();
+      expect(targets).toContain('drop-table:accounts');
+      expect(targets).toContain('drop-table:users');
+      expect(targets).toContain('truncate:events');
+      expect(targets).toContain('truncate:sessions');
+      expect(targets).toContain('vacuum-full:jobs');
+      expect(targets).toContain('vacuum-full:logs');
+    });
   });
 
   it('should NOT flag lock_timeout ordering when set BEFORE dangerous statement', async () => {
