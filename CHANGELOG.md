@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.5.0 (2026-04-29)
+
+### Trust Contract
+
+- **Fail-closed ORM extraction**: Knex, Sequelize, TypeORM, Drizzle, and raw SQL extraction paths now surface more unanalyzable statements instead of silently treating partially reconstructed migrations as complete.
+- **Coverage line across reporters**: CLI, JSON, GitHub PR markdown, SARIF, and GitLab Code Quality output now report analyzed statement counts and unanalyzable statement counts more consistently.
+- **Unanalyzable SQL is visible in review**: GitHub PR output no longer presents a file with unanalyzable statements as simply safe. The report calls out the gap and keeps the coverage summary visible.
+- **Policy edge cases hardened**: transaction state, missing policy statements, timeout ordering, and unsafe special operations in transactions have broader test coverage and clearer behavior.
+
+### Analyzer And Rules
+
+- Added stronger coverage for compounding lock windows, new-table visibility, schema collisions, unsafe destructive statements, tautological `DELETE` and `UPDATE` patterns, incomplete foreign key metadata, and concurrent special operations inside transactions.
+- Improved handling for generated columns, serial-style additions, JSON defaults, enum ordering, partition operations, renames, reindex operations, and type-change classification.
+- Added table-reference helpers and schema-snapshot handling used by rules that need better context.
+
+### Extractors
+
+- Knex extraction now fails closed for incomplete `references()` metadata, dynamic builder paths, conditional raw SQL, and transaction configuration cases.
+- Sequelize extraction now fails closed for dynamic foreign key metadata, partial index options, conditional raw SQL, missing `up()` methods, and unsupported builder shapes.
+- TypeORM extraction now emits clearer warnings for dynamic SQL and unsupported call shapes.
+- File guards now catch binary-looking files and oversized inputs before analysis proceeds as if the file had no statements.
+
+### LSP And Editor
+
+- LSP configuration refresh now resets cached config correctly.
+- Added document symbols, folding ranges, inlay hints, statement grouping, hover improvements, and stronger code-action coverage.
+- Server cache behavior and fixture-based LSP behavior now have dedicated tests.
+- The package surface test verifies the documented LSP export path.
+
+### Output Formats
+
+- GitLab Code Quality output is now shipped with extraction warnings and a coverage summary entry.
+- SARIF output carries coverage metadata and treats unanalyzable extraction warnings as visible warnings.
+- GitHub PR markdown includes clearer coverage output and avoids implying safety when dynamic statements need manual review.
+
+### Release Boundaries
+
+- Package surface tests and public-boundary checks now protect the npm package from local-only paths and unpublished surfaces.
+- `pnpm pack` parsing is more robust, and release checks verify package contents before publish.
+- GitHub Actions now run on the current Node action runtime and the pinned pnpm version.
+
+### Tests
+
+- Added package-surface tests, security tests, LSP cache tests, document symbol tests, folding range tests, inlay hint tests, and broader analyzer and reporter coverage.
+- Added fixtures for concurrent special operations in transactions, incomplete ORM foreign key metadata, partial Sequelize indexes, unclosed transactions, schema renames, wide lock windows, and tautological DML.
+
 ## 0.4.1 (2026-03-16)
 
 ### Trust Contract
