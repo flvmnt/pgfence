@@ -71,4 +71,3 @@ Policy checks live alongside the rule families above and enforce migration guard
 
 - Start with [`README.md`](README.md) for installation, usage, and the full risk matrix.
 - Use [`examples/pr-review-demo`](examples/pr-review-demo/README.md) for a realistic risky migration, generated review artifacts, and the safer rollout that should merge instead.
-- Use [`proof-points.md`](proof-points.md) when you need repo-backed evidence for support claims.

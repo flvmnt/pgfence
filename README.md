@@ -9,7 +9,6 @@
     <h1>pgfence</h1>
     <p>Postgres migration safety CLI. Know your lock modes, risk levels, and safe rewrite recipes before you merge.</p>
     <p><strong>ORM-aware migration safety for TypeORM, Prisma, Knex, Drizzle, and Sequelize.</strong></p>
-    <p><a href="proof-points.md">Proof points and related work</a></p>
     <p>
       <a href="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml"><img src="https://github.com/flvmnt/pgfence/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
       <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/v/@flvmnt/pgfence" alt="npm" /></a>
@@ -42,13 +41,12 @@ pgfence analyzes your SQL migration files **before they hit production** and tel
 
 Works with **raw SQL**, **TypeORM**, **Prisma**, **Knex**, **Drizzle**, and **Sequelize** migrations. No Ruby, no Rust, no Go. Just TypeScript.
 
-## Proof Points
+## Shipped Surfaces
 
 - Prisma support is real, not aspirational, with a dedicated extractor and tests in the repo.
 - TypeORM, Knex, Drizzle, and Sequelize support are also shipped with dedicated extractors and extractor coverage in the repo.
 - GitLab Code Quality output is shipped in the repo, with reporter tests covering repeated findings, extraction warnings, and coverage visibility.
 - The public changelog records major shipped surfaces such as GitHub PR comments, SARIF, LSP, and trace mode.
-- The evidence trail lives in [proof-points.md](proof-points.md), which separates repo-backed proof from external references.
 - The tracked rule-family reference lives in [checks-overview.md](checks-overview.md), and the concrete risky-migration walkthrough lives in [examples/pr-review-demo](examples/pr-review-demo/README.md).
 
 ## Quick Demo
@@ -483,9 +481,9 @@ Each statement gets a verification status:
 
 Requires Docker. Use `pgfence analyze` for static-only analysis without Docker.
 
-## pgfence Cloud (Design Partner Direction)
+## pgfence Cloud (Team Beta)
 
-pgfence Cloud is currently being shaped with design partners around team-grade migration governance:
+pgfence Cloud is currently in Team beta for production teams that need migration governance:
 
 - **Approval workflows** for higher-risk migrations before merge
 - **Exemptions with justification and expiry**
@@ -497,7 +495,7 @@ The planned governance layer is intended to avoid requiring production database 
 
 Learn more at **[pgfence.com](https://pgfence.com)**.
 
-The open-source CLI works on its own today, with no account, login, or API key required. Any future cloud features are additive rather than required for local analysis.
+The open-source CLI works on its own today, with no account, login, or API key required. Cloud features are additive rather than required for local analysis.
 
 ## Plugins
 

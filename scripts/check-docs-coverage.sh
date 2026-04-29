@@ -45,7 +45,6 @@ echo ""
 
 add_doc_target "CHANGELOG.md"
 add_doc_target "checks-overview.md"
-add_doc_target "proof-points.md"
 add_doc_target "blog"
 add_doc_target "docs"
 add_doc_target "press-releases"
