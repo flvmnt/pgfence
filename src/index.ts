@@ -152,39 +152,39 @@ program
   .option('--plugin <paths...>', 'Plugin file paths for custom rules')
   .option('--unknown <mode>', 'How CI handles unanalyzable SQL: warn or block', 'warn')
   .action(async (files: string[], opts, command: Command) => {
-    // Load config file (.pgfence.toml or .pgfence.json)
-    const fileConfig = await loadConfigFile(process.cwd());
-
-    // Load stats file if provided (alternative to --db-url)
-    let tableStats: TableStats[] | undefined;
-    const statsFilePath = optionFromCli(command, 'statsFile') ? opts.statsFile : fileConfig?.['stats-file'];
-    if (statsFilePath) {
-      try {
-        const raw = await readFile(statsFilePath, 'utf8');
-        const parsed = JSON.parse(raw);
-        tableStats = Array.isArray(parsed) ? parsed : parsed.tables ?? parsed;
-        if (tableStats && tableStats.length > 0) {
-          const sample = tableStats[0];
-          if (typeof sample.tableName !== 'string' || typeof sample.rowCount !== 'number') {
-            throw new Error(
-              `Invalid stats file format. Expected objects with {schemaName, tableName, rowCount, totalBytes}. ` +
-              `Got keys: ${Object.keys(sample).join(', ')}`,
-            );
-          }
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new Error(`Failed to load stats file "${statsFilePath}": ${message}`);
-      }
-    }
-
-    const cliOverrides: Partial<PgfenceConfig> = {};
-    applyAnalyzeOptionOverrides(command, opts, cliOverrides);
-    if (tableStats) cliOverrides.tableStats = tableStats;
-
-    const config = mergeConfig(fileConfig, cliOverrides);
-
     try {
+      // Load config file (.pgfence.toml or .pgfence.json)
+      const fileConfig = await loadConfigFile(process.cwd());
+
+      // Load stats file if provided (alternative to --db-url)
+      let tableStats: TableStats[] | undefined;
+      const statsFilePath = optionFromCli(command, 'statsFile') ? opts.statsFile : fileConfig?.['stats-file'];
+      if (statsFilePath) {
+        try {
+          const raw = await readFile(statsFilePath, 'utf8');
+          const parsed = JSON.parse(raw);
+          tableStats = Array.isArray(parsed) ? parsed : parsed.tables ?? parsed;
+          if (tableStats && tableStats.length > 0) {
+            const sample = tableStats[0];
+            if (typeof sample.tableName !== 'string' || typeof sample.rowCount !== 'number') {
+              throw new Error(
+                `Invalid stats file format. Expected objects with {schemaName, tableName, rowCount, totalBytes}. ` +
+                `Got keys: ${Object.keys(sample).join(', ')}`,
+              );
+            }
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(`Failed to load stats file "${statsFilePath}": ${message}`);
+        }
+      }
+
+      const cliOverrides: Partial<PgfenceConfig> = {};
+      applyAnalyzeOptionOverrides(command, opts, cliOverrides);
+      if (tableStats) cliOverrides.tableStats = tableStats;
+
+      const config = mergeConfig(fileConfig, cliOverrides);
+
       const results = await analyze(files, config);
 
       // Output
@@ -238,22 +238,22 @@ program
   .option('--pg-version <version>', 'PostgreSQL version for the Docker container', '17')
   .option('--docker-image <image>', 'Custom Docker image (overrides --pg-version)')
   .action(async (files: string[], opts, command: Command) => {
-    // 1. Check Docker availability (fail fast)
-    const { checkDockerAvailable, startContainer, waitForReady, stopContainer, traceStatement } = await import('./tracer.js');
-    if (!checkDockerAvailable()) {
-      process.stderr.write('pgfence trace: Docker is required. Install Docker or use "pgfence analyze" for static-only analysis.\n');
-      process.exit(2);
-    }
-
-    // 2. Load config (same as analyze, minus db-url/stats-file)
-    const fileConfig = await loadConfigFile(process.cwd());
-
-    const cliOverrides: Partial<PgfenceConfig> = {};
-    applyAnalyzeOptionOverrides(command, opts, cliOverrides);
-
-    const config = mergeConfig(fileConfig, cliOverrides);
-
     try {
+      // 1. Check Docker availability (fail fast)
+      const { checkDockerAvailable, startContainer, waitForReady, stopContainer, traceStatement } = await import('./tracer.js');
+      if (!checkDockerAvailable()) {
+        process.stderr.write('pgfence trace: Docker is required. Install Docker or use "pgfence analyze" for static-only analysis.\n');
+        process.exit(2);
+      }
+
+      // 2. Load config (same as analyze, minus db-url/stats-file)
+      const fileConfig = await loadConfigFile(process.cwd());
+
+      const cliOverrides: Partial<PgfenceConfig> = {};
+      applyAnalyzeOptionOverrides(command, opts, cliOverrides);
+
+      const config = mergeConfig(fileConfig, cliOverrides);
+
       // 3. Run static analysis first (reuse existing analyze())
       const staticResults = await analyze(files, config);
 

@@ -121,6 +121,27 @@ describe.skipIf(!hasBuiltCli())('CLI e2e (built binary)', () => {
         }
     });
 
+    it('exits 2 with a sanitized error when config loading fails', async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'pgfence-bad-config-cli-'));
+        await writeFile(path.join(root, '.pgfence.toml'), 'output = [\n', 'utf8');
+        await writeFile(path.join(root, 'migration.sql'), 'SELECT 1;\n', 'utf8');
+
+        try {
+            await execPromise(`node "${distCliPath}" analyze migration.sql`, { cwd: root });
+            throw new Error('expected analyze to fail');
+        } catch (err: unknown) {
+            const error = err as { code?: number; stderr?: string; stdout?: string };
+            expect(error.code).toBe(2);
+            expect(error.stderr).toContain('pgfence error:');
+            expect(error.stderr).toContain('Unterminated inline array');
+            expect(error.stderr).not.toContain('node_modules');
+            expect(error.stderr).not.toContain('Node.js');
+            expect(error.stdout).toBe('');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('exits 2 on system error (snapshot with bad db url)', async () => {
         try {
             await execPromise(cliCommand('snapshot --db-url postgres://bad:bad@localhost:0/noexist'));
@@ -221,8 +242,9 @@ printf '%s\\n' "\${FILES[@]}"
             await execPromise(cliCommand(`analyze "${fixture}" --max-risk TERROR`));
         } catch (err: unknown) {
             const error = err as { stderr?: string; code?: number };
+            expect(error.stderr).toContain('pgfence error:');
             expect(error.stderr).toContain('Invalid risk level: TERROR');
-            expect(error.code).toBe(1);
+            expect(error.code).toBe(2);
         }
     });
 
