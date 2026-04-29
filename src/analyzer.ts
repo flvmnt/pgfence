@@ -16,7 +16,7 @@ import type { ParsedStatement } from './parser.js';
 import { checkAddColumn } from './rules/add-column.js';
 import { checkCreateIndex } from './rules/create-index.js';
 import { checkAlterColumn } from './rules/alter-column.js';
-import { checkAddConstraint, checkDomainConstraint } from './rules/add-constraint.js';
+import { checkAddConstraint, checkCreateTableConstraints, checkDomainConstraint } from './rules/add-constraint.js';
 import { checkDestructive } from './rules/destructive.js';
 import { checkRenameColumn } from './rules/rename-column.js';
 import { checkBestPractices } from './rules/best-practices.js';
@@ -303,6 +303,7 @@ export function applyRules(
   results.push(...checkCreateIndex(stmt));
   results.push(...checkAlterColumn(stmt, config, schemaLookup));
   results.push(...checkAddConstraint(stmt));
+  results.push(...checkCreateTableConstraints(stmt));
   results.push(...checkDestructive(stmt));
   results.push(...checkRenameColumn(stmt, config));
   results.push(...checkBestPractices(stmt));

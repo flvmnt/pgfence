@@ -7,6 +7,7 @@
  * - UNIQUE constraint (SHARE ROW EXCLUSIVE, full table scan)
  * - PRIMARY KEY without USING INDEX (SHARE ROW EXCLUSIVE, full table scan)
  * - EXCLUDE constraint (SHARE ROW EXCLUSIVE)
+ * - Inline CREATE TABLE EXCLUDE constraint (SHARE ROW EXCLUSIVE during table creation)
  * - UNIQUE/PRIMARY KEY USING INDEX (SHARE UPDATE EXCLUSIVE, instant)
  * - ALTER DOMAIN ADD CONSTRAINT (blocks all queries using the domain)
  * - CREATE DOMAIN WITH CONSTRAINT (poor migration support)
@@ -35,6 +36,10 @@ interface ConstraintDef {
   pktable?: { relname: string };
   fk_attrs?: Array<{ String: { sval: string } }>;
   keys?: Array<{ String: { sval: string } }>;
+}
+
+interface CreateTableConstraint {
+  Constraint?: ConstraintDef;
 }
 
 interface AlterTableCmd {
@@ -289,6 +294,39 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
         break;
       }
     }
+  }
+
+  return results;
+}
+
+export function checkCreateTableConstraints(stmt: ParsedStatement): CheckResult[] {
+  if (stmt.nodeType !== 'CreateStmt') return [];
+
+  const node = stmt.node as {
+    relation?: { relname?: string };
+    tableElts?: Array<CreateTableConstraint | unknown>;
+  };
+
+  const tableName = node.relation?.relname ?? null;
+  const results: CheckResult[] = [];
+
+  for (const elt of node.tableElts ?? []) {
+    if (!elt || typeof elt !== 'object') continue;
+    const constraint = (elt as CreateTableConstraint).Constraint;
+    if (!constraint || constraint.contype !== 'CONSTR_EXCLUSION') continue;
+
+    const conName = constraint.conname ?? '<unnamed>';
+    results.push({
+      statement: stmt.sql,
+      statementPreview: makePreview(stmt.sql),
+      tableName,
+      lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
+      blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
+      risk: RiskLevel.LOW,
+      message: `CREATE TABLE "${tableName}" with inline EXCLUDE constraint "${conName}": builds the exclusion constraint during table creation`,
+      ruleId: 'create-table-exclude-constraint',
+      appliesToNewTables: true,
+    });
   }
 
   return results;

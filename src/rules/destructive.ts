@@ -243,12 +243,15 @@ export function checkDestructive(stmt: ParsedStatement): CheckResult[] {
 
     case 'VacuumStmt': {
       const node = stmt.node as {
-        options?: Array<{ DefElem: { defname: string } }>;
+        options?: Array<{ DefElem: { defname: string; arg?: { String?: { sval: string } } } }>;
         rels?: Array<{ VacuumRelation: { relation: { relname: string } } }>;
       };
-      const isFull = (node.options ?? []).some(
-        (opt) => opt.DefElem?.defname === 'full',
-      );
+      const isFull = (node.options ?? []).some((opt) => {
+        const option = opt.DefElem;
+        if (option?.defname !== 'full') return false;
+        const value = option.arg?.String?.sval;
+        return value === undefined || value.toLowerCase() === 'true' || value === '1' || value.toLowerCase() === 'on';
+      });
       if (!isFull) break;
 
       const tableNames = node.rels?.map((rel) => rel.VacuumRelation?.relation?.relname ?? null) ?? [null];

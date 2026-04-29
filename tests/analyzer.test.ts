@@ -417,6 +417,25 @@ export class AddCheck implements MigrationInterface {
     expect(excludeCheck!.safeRewrite!.steps.length).toBeGreaterThan(1);
   });
 
+  it('should detect inline CREATE TABLE EXCLUDE constraints as new-table risk', async () => {
+    const sql = `
+CREATE TABLE bookings (
+  room_id int NOT NULL,
+  during tstzrange NOT NULL,
+  EXCLUDE USING gist (room_id WITH =, during WITH &&)
+);`;
+    await withTempSqlFile('pgfence-create-table-exclude-test', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], defaultConfig);
+      const excludeCheck = results[0].checks.find((c) => c.ruleId === 'create-table-exclude-constraint');
+
+      expect(excludeCheck).toBeDefined();
+      expect(excludeCheck!.risk).toBe(RiskLevel.LOW);
+      expect(excludeCheck!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
+      expect(excludeCheck!.tableName).toBe('bookings');
+      expect(excludeCheck!.appliesToNewTables).toBe(true);
+    });
+  });
+
   it('should detect DELETE without WHERE as HIGH risk', async () => {
     const results = await analyze([fixture('dangerous-destructive.sql')], defaultConfig);
     const checks = results[0].checks;
@@ -446,6 +465,23 @@ export class AddCheck implements MigrationInterface {
     expect(vacuumCheck!.risk).toBe(RiskLevel.HIGH);
     expect(vacuumCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(vacuumCheck!.tableName).toBe('appointments');
+  });
+
+  it('should not treat regular VACUUM or VACUUM FULL false as VACUUM FULL', async () => {
+    const sql = `
+VACUUM jobs;
+VACUUM (FULL false) logs;
+VACUUM (FULL true) events;`;
+    await withTempSqlFile('pgfence-vacuum-full-option-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      const vacuumChecks = results[0].checks.filter((c) => c.ruleId === 'vacuum-full');
+
+      expect(vacuumChecks).toHaveLength(1);
+      expect(vacuumChecks[0].tableName).toBe('events');
+    });
   });
 
   it('should provide safe rewrite recipe for FK constraint', async () => {

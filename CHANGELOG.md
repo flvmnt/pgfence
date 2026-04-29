@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1 (2026-04-29)
+
+### Fixes
+
+- Replaced the VS Code Marketplace README badge with a stable Shields badge after the dynamic marketplace badge endpoint started returning a retired badge.
+- Fixed `VACUUM (FULL false)` parsing so pgfence only reports `vacuum-full` when FULL is enabled.
+- Added detection and tests for inline `CREATE TABLE ... EXCLUDE` constraints, marked as low risk because they apply to a new table.
+- Updated the lock safety documentation matrix to include inline `CREATE TABLE ... EXCLUDE` constraints.
+
 ## 0.5.0 (2026-04-29)
 
 ### Trust Contract

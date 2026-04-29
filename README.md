@@ -16,7 +16,7 @@
       <a href="https://www.npmjs.com/package/@flvmnt/pgfence"><img src="https://img.shields.io/npm/dw/@flvmnt/pgfence" alt="npm downloads" /></a>
       <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
       <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="Node.js" /></a>
-      <a href="https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence"><img src="https://img.shields.io/visual-studio-marketplace/v/flvmnt.pgfence?label=VS%20Code" alt="VS Code" /></a>
+      <a href="https://marketplace.visualstudio.com/items?itemName=flvmnt.pgfence"><img src="https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?logo=visualstudiocode&logoColor=white" alt="VS Code Marketplace" /></a>
       <a href="https://pgfence.com"><img src="https://img.shields.io/badge/website-pgfence.com-blue" alt="Website" /></a>
     </p>
   </td>
@@ -299,6 +299,7 @@ pgfence checks a broad set of DDL patterns against Postgres's lock mode semantic
 | 11 | `ADD CONSTRAINT ... UNIQUE` | SHARE ROW EXCLUSIVE | HIGH | CONCURRENTLY unique index + USING INDEX |
 | | `ADD CONSTRAINT ... UNIQUE USING INDEX` | SHARE UPDATE EXCLUSIVE | LOW | Instant, attaches pre-built index |
 | 12 | `ADD CONSTRAINT ... EXCLUDE` | SHARE ROW EXCLUSIVE | HIGH | No concurrent alternative; use lock_timeout |
+| | `CREATE TABLE ... EXCLUDE` | SHARE ROW EXCLUSIVE | LOW | New table only; safe to review as table creation |
 | 13 | `DROP TABLE` | ACCESS EXCLUSIVE | CRITICAL | Separate release |
 | 14 | `DROP COLUMN` | ACCESS EXCLUSIVE | HIGH | Remove app references first, then drop |
 | 15 | `TRUNCATE` | ACCESS EXCLUSIVE | CRITICAL | Batched DELETE |
