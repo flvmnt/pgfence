@@ -354,7 +354,7 @@ pgfence checks a broad set of DDL patterns against Postgres's lock mode semantic
 Beyond DDL analysis, pgfence enforces operational best practices:
 
 - **Missing `SET lock_timeout`**: prevents lock queue death spirals
-- **Missing `SET statement_timeout`**: safety net for long operations
+- **Missing `SET statement_timeout`**: aborts statements that run past the threshold instead of holding locks indefinitely
 - **Missing `SET application_name`**: enables `pg_stat_activity` visibility
 - **Missing `SET idle_in_transaction_session_timeout`**: prevents orphaned locks
 - **`CREATE INDEX CONCURRENTLY` inside transaction**: will fail at runtime
