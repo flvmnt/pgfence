@@ -82,15 +82,26 @@ Safe Rewrites:
 Analyzed: 2 statements  |  Unanalyzable: 0  |  Coverage: 100%
 ```
 
-## Try It
+## Try pgfence in 30 seconds
 
-The fastest way to evaluate pgfence:
+Clone the repo and run pgfence on a real-feeling migration that hides four production-grade footguns:
 
-1. `npm install -g @flvmnt/pgfence` (or run via `npx @flvmnt/pgfence`)
-2. `pgfence analyze path/to/your/migrations/*.sql`
-3. If pgfence missed something dangerous, or flagged something safe, [open an issue](https://github.com/flvmnt/pgfence/issues/new) with the SQL. Rule gaps are how this tool gets better.
+```bash
+git clone https://github.com/flvmnt/pgfence.git
+cd pgfence
+npx @flvmnt/pgfence analyze examples/try-this/dangerous-migration.sql
+```
 
-Every dangerous-migration pattern in the rules table below started as someone's incident. We want yours.
+You will see eight findings on three statements: lock modes, risk levels, the safe rewrite for each one, and four policy violations. See [`examples/try-this/`](examples/try-this/README.md) for the walkthrough.
+
+Want to try it on your own migrations?
+
+```bash
+npm install -g @flvmnt/pgfence
+pgfence analyze path/to/your/migrations/*.sql
+```
+
+If pgfence missed something dangerous, or flagged something safe, [open an issue](https://github.com/flvmnt/pgfence/issues/new/choose) with the SQL. Templates exist for false negatives, false positives, and unsupported ORM patterns. Every dangerous-migration pattern in the rules table below started as someone's incident, and we want yours.
 
 ## Postgres Version Support
 
