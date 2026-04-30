@@ -481,21 +481,13 @@ Each statement gets a verification status:
 
 Requires Docker. Use `pgfence analyze` for static-only analysis without Docker.
 
-## pgfence Cloud (Team Beta)
+## Exploring pgfence Cloud
 
-pgfence Cloud is currently in Team beta for production teams that need migration governance:
+The OSS analyzer is the product. We are also exploring a hosted control plane on top of it with a small group of design partners, production teams with painful migration review who need approvals, audit history, and shared policy. There is no public price, no self-serve signup, no waitlist UI. It is a conversation, not a product yet.
 
-- **Approval workflows** for higher-risk migrations before merge
-- **Exemptions with justification and expiry**
-- **Centralized policies** for shared safety rules
-- **Audit history** around analyses, approvals, and bypasses
-- **Schema drift and migration history views**
+If migration review is painful for your team and you want to help shape what governance should look like, [contact@pgfence.com](mailto:contact@pgfence.com).
 
-The planned governance layer is intended to avoid requiring production database credentials. Today, DB-size-aware scoring already works through a stats snapshot: your CI can query a read replica, output a JSON file, and pgfence consumes it locally.
-
-Learn more at **[pgfence.com](https://pgfence.com)**.
-
-The open-source CLI works on its own today, with no account, login, or API key required. Cloud features are additive rather than required for local analysis.
+The OSS CLI works on its own today, with no account, login, or API key. Anything in Cloud will be additive.
 
 ## Plugins
 
