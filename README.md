@@ -82,6 +82,16 @@ Safe Rewrites:
 Analyzed: 2 statements  |  Unanalyzable: 0  |  Coverage: 100%
 ```
 
+## Try It
+
+The fastest way to evaluate pgfence:
+
+1. `npm install -g @flvmnt/pgfence` (or run via `npx @flvmnt/pgfence`)
+2. `pgfence analyze path/to/your/migrations/*.sql`
+3. If pgfence missed something dangerous, or flagged something safe, [open an issue](https://github.com/flvmnt/pgfence/issues/new) with the SQL. Rule gaps are how this tool gets better.
+
+Every dangerous-migration pattern in the rules table below started as someone's incident. We want yours.
+
 ## Postgres Version Support
 
 pgfence defaults to **PostgreSQL 14+** assumptions, and several rules are version-aware for older and newer releases where PostgreSQL behavior differs. Use `--min-pg-version` to override if needed:
