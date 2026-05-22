@@ -49,6 +49,12 @@ Works with **raw SQL**, **TypeORM**, **Prisma**, **Knex**, **Drizzle**, and **Se
 - The public changelog records major shipped surfaces such as GitHub PR comments, SARIF, LSP, and trace mode.
 - The tracked rule-family reference lives in [checks-overview.md](checks-overview.md), and the concrete risky-migration walkthrough lives in [examples/pr-review-demo](examples/pr-review-demo/README.md).
 
+## External Mentions
+
+- Prisma documents pgfence as a pre-deploy migration safety check before `prisma migrate deploy`: [Prisma deployment docs](https://www.prisma.io/docs/orm/prisma-client/deployment/deploy-database-changes-with-prisma-migrate#pre-deploy-migration-safety-checks).
+- Prisma also maintains a dedicated pgfence setup page: [Prisma integration guide](https://www.prisma.io/docs/guides/integrations/pgfence).
+- pgfence is listed in the public [pglt Related Work](https://github.com/supabase-community/postgres-language-server/blob/main/docs/reference/related_work.md) page.
+
 ## Quick Demo
 
 ```
