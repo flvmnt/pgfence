@@ -48,6 +48,8 @@ Works with **raw SQL**, **TypeORM**, **Prisma**, **Knex**, **Drizzle**, and **Se
 - GitLab Code Quality output is shipped in the repo, with reporter tests covering repeated findings, extraction warnings, and coverage visibility.
 - The public changelog records major shipped surfaces such as GitHub PR comments, SARIF, LSP, and trace mode.
 - The tracked rule-family reference lives in [checks-overview.md](checks-overview.md), and the concrete risky-migration walkthrough lives in [examples/pr-review-demo](examples/pr-review-demo/README.md).
+- [RULES.md](RULES.md) is a curated single-file rule catalog. Drop it into your repo so your in-editor coding assistant learns pgfence conventions and suggests safe migrations from the first keystroke.
+- `pgfence explain "<statement>"` returns the lock mode, what it blocks, and the safe rewrite for a single SQL statement (handy in Slack/Discord threads).
 
 ## External Mentions
 
