@@ -506,6 +506,126 @@ program
     }
   });
 
+program
+  .command('explain')
+  .description('Explain the lock mode, risk, and safe rewrite for a single SQL statement (paste-and-run)')
+  .argument('[sql...]', 'SQL statement (omit to read from stdin)')
+  .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume', '14')
+  .option('--output <output>', 'Output format: cli, json', 'cli')
+  .action(async (sqlParts: string[], opts) => {
+    try {
+      let sql = (sqlParts ?? []).join(' ').trim();
+      if (!sql) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+        sql = Buffer.concat(chunks).toString('utf8').trim();
+      }
+      if (!sql) {
+        process.stderr.write(
+          'pgfence explain: no SQL provided. Pass as argument or pipe via stdin.\n' +
+          '  pgfence explain "ALTER TABLE t ADD COLUMN x text NOT NULL"\n' +
+          '  echo "CLUSTER big_table USING idx" | pgfence explain\n',
+        );
+        process.exit(2);
+      }
+      // Trailing semicolon optional in input. Normalize.
+      if (!sql.endsWith(';')) sql = sql + ';';
+
+      const { analyzeText } = await import('./lsp/analyze-text.js');
+      const fileConfig = await loadConfigFile(process.cwd());
+      const cliOverrides: Partial<PgfenceConfig> = {
+        minPostgresVersion: parsePositiveIntOption(opts.minPgVersion ?? '14', '--min-pg-version'),
+        format: 'sql',
+      };
+      const config = mergeConfig(fileConfig, cliOverrides);
+      const result = await analyzeText({
+        content: sql,
+        filePath: 'explain.sql',
+        config,
+      });
+
+      if (opts.output === 'json') {
+        process.stdout.write(JSON.stringify({
+          statement: sql,
+          maxRisk: result.maxRisk,
+          checks: result.checks,
+          policyViolations: result.policyViolations,
+          extractionWarnings: result.extractionWarnings,
+        }, null, 2) + '\n');
+        return;
+      }
+
+      // CLI output: focused single-statement explainer
+      const { default: chalk } = await import('chalk');
+      const riskColor = (r: RiskLevel): (s: string) => string => {
+        switch (r) {
+          case RiskLevel.CRITICAL: return chalk.red.bold;
+          case RiskLevel.HIGH: return chalk.red;
+          case RiskLevel.MEDIUM: return chalk.yellow;
+          case RiskLevel.LOW: return chalk.cyan;
+          case RiskLevel.SAFE:
+          default: return chalk.green;
+        }
+      };
+
+      const lines: string[] = [];
+      lines.push(chalk.bold('Statement:'));
+      lines.push('  ' + sql);
+      lines.push('');
+
+      if (result.parseError) {
+        lines.push(chalk.red('Parse error: ') + result.parseError);
+        process.stdout.write(lines.join('\n') + '\n');
+        process.exit(1);
+      }
+
+      if (result.checks.length === 0 && result.policyViolations.length === 0) {
+        lines.push(chalk.green('No issues found.') + ' This statement is safe at the analyzer\'s level of detail.');
+        lines.push('');
+        lines.push(chalk.dim('Note: pgfence policy rules (lock_timeout, statement_timeout, etc.) are not surfaced for a single bare statement. Use `pgfence analyze` on a full migration file to see them.'));
+        process.stdout.write(lines.join('\n') + '\n');
+        return;
+      }
+
+      for (const check of result.checks) {
+        const risk = check.adjustedRisk ?? check.risk;
+        lines.push(riskColor(risk)(`[${risk}]`) + ' ' + chalk.bold(check.ruleId));
+        lines.push('  ' + check.message);
+        lines.push(chalk.dim(`  Lock: ${check.lockMode}`));
+        const blocks: string[] = [];
+        if (check.blocks.reads) blocks.push('reads');
+        if (check.blocks.writes) blocks.push('writes');
+        if (check.blocks.otherDdl) blocks.push('other DDL');
+        if (blocks.length) {
+          lines.push(chalk.dim(`  Blocks: ${blocks.join(', ')}`));
+        }
+        if (check.safeRewrite) {
+          lines.push('');
+          lines.push(chalk.bold('  Safe rewrite:'));
+          lines.push(chalk.dim('  ' + check.safeRewrite.description));
+          for (const step of check.safeRewrite.steps) {
+            lines.push('    ' + step);
+          }
+        }
+        lines.push('');
+      }
+
+      for (const v of result.policyViolations) {
+        const sev = v.severity === 'error' ? chalk.red('[ERROR]') : chalk.yellow('[WARN]');
+        lines.push(`${sev} ${chalk.bold(v.ruleId)}`);
+        lines.push('  ' + v.message);
+        lines.push(chalk.dim('  ' + v.suggestion));
+        lines.push('');
+      }
+
+      process.stdout.write(lines.join('\n'));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`pgfence explain error: ${sanitizeError(message)}\n`);
+      process.exit(2);
+    }
+  });
+
 if (isMainModule) {
   program.parse();
 }
