@@ -260,6 +260,56 @@ describe('Extractor: Knex', () => {
         expect(result.sql).toContain('created_at');
         expect(result.sql).toContain('updated_at');
     });
+
+    it('should transpile standalone Knex table index and constraint builders', async () => {
+        await withTempFile('pgfence-knex-table-ops-', '.js', `exports.up = async function(knex) {
+  await knex.schema.alterTable('users', function(table) {
+    table.index(['last_name', 'first_name'], 'idx_users_name');
+    table.unique('email');
+    table.primary(['tenant_id', 'id'], { constraintName: 'users_tenant_id_pkey' });
+    table.foreign('account_id').references('accounts.id').onDelete('CASCADE');
+    table.dropIndex(['legacy_code']);
+    table.dropForeign('old_account_id');
+  });
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.warnings.filter((warning) => warning.unanalyzable)).toHaveLength(0);
+            expect(result.sql).toContain('CREATE INDEX "idx_users_name" ON "users" ("last_name", "first_name")');
+            expect(result.sql).toContain('ALTER TABLE "users" ADD CONSTRAINT "users_email_unique" UNIQUE ("email")');
+            expect(result.sql).toContain('ALTER TABLE "users" ADD CONSTRAINT "users_tenant_id_pkey" PRIMARY KEY ("tenant_id", "id")');
+            expect(result.sql).toContain('ALTER TABLE "users" ADD CONSTRAINT "users_account_id_foreign" FOREIGN KEY ("account_id") REFERENCES "accounts" ("id") ON DELETE CASCADE');
+            expect(result.sql).toContain('DROP INDEX "users_legacy_code_index"');
+            expect(result.sql).toContain('ALTER TABLE "users" DROP CONSTRAINT "users_old_account_id_foreign"');
+        });
+    });
+
+    it('should fail closed for unresolved standalone Knex table operations', async () => {
+        await withTempFile('pgfence-knex-dynamic-table-op-', '.js', `exports.up = async function(knex) {
+  const columns = ['email'];
+  await knex.schema.alterTable('users', function(table) {
+    table.unique(columns);
+  });
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.warnings.some((warning) => warning.unanalyzable)).toBe(true);
+            expect(result.sql).not.toContain('UNIQUE');
+        });
+    });
+
+    it('should handle standalone Knex table.foreign references().inTable()', async () => {
+        await withTempFile('pgfence-knex-table-foreign-intable-', '.js', `exports.up = async function(knex) {
+  await knex.schema.table('orders', function(table) {
+    table.foreign(['tenant_id', 'user_id'], 'orders_user_fk')
+      .references(['tenant_id', 'id'])
+      .inTable('users')
+      .onUpdate('CASCADE');
+  });
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.warnings.filter((warning) => warning.unanalyzable)).toHaveLength(0);
+            expect(result.sql).toContain('ALTER TABLE "orders" ADD CONSTRAINT "orders_user_fk" FOREIGN KEY ("tenant_id", "user_id") REFERENCES "users" ("tenant_id", "id") ON UPDATE CASCADE');
+        });
+    });
 });
 
 describe('Extractor: Drizzle', () => {

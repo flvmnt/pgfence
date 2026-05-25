@@ -262,6 +262,8 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
     }
   }
 
+  sql.push(...extractTableOperations(callback, paramName, tableName, filePath, warnings));
+
   // Look for dropColumn calls
   walkNode(callback, (node: TSNode) => {
     if (node.type !== 'CallExpression') return;
@@ -505,7 +507,7 @@ function parseColumnChain(
   const knexType = typeCall.method;
 
   // Skip methods that aren't column definitions (like dropColumn, renameColumn)
-  if (['dropColumn', 'dropColumns', 'renameColumn', 'setNullable', 'dropNullable', 'index', 'unique', 'primary', 'dropUnique', 'dropPrimary', 'dropIndex', 'dropForeign'].includes(knexType)) {
+  if (['dropColumn', 'dropColumns', 'renameColumn', 'setNullable', 'dropNullable', 'index', 'unique', 'primary', 'foreign', 'dropUnique', 'dropPrimary', 'dropIndex', 'dropForeign', 'dropForeignIfExists'].includes(knexType)) {
     return null;
   }
 
@@ -663,6 +665,272 @@ function parseInlineReference(reference: string): { table: string; column: strin
     table: parts.slice(0, -1).join('.'),
     column: parts[parts.length - 1],
   };
+}
+
+function extractTableOperations(
+  callback: TSNode,
+  paramName: string,
+  tableName: string,
+  filePath: string,
+  warnings: ExtractionWarning[],
+): string[] {
+  const sql: string[] = [];
+
+  walkNode(callback, (node: TSNode) => {
+    if (node.type !== 'ExpressionStatement') return;
+    const expression = node.expression as TSNode | undefined;
+    if (!expression) return;
+    const chain = collectTableCallChain(expression, paramName);
+    if (chain.length === 0) return;
+
+    const root = chain[0];
+    switch (root.method) {
+      case 'index': {
+        const columns = getColumnList(root.args[0]);
+        if (!columns) {
+          pushTableOperationWarning(warnings, filePath, 'index', root.args[0] ?? root.node);
+          return;
+        }
+        const options = root.args[2]?.type === 'ObjectExpression' ? root.args[2] : null;
+        const indexName = getStringArg(root.args[1] ?? { type: 'Literal', value: null }) ??
+          getObjectStringOption(options, 'indexName') ??
+          defaultIndexName(tableName, columns, 'index');
+        const using = getObjectStringOption(options, 'indexType');
+        const usingClause = using ? ` USING ${using}` : '';
+        sql.push(`CREATE INDEX "${indexName}" ON "${tableName}"${usingClause} (${quoteColumns(columns)})`);
+        break;
+      }
+      case 'unique': {
+        const columns = getColumnList(root.args[0]);
+        if (!columns) {
+          pushTableOperationWarning(warnings, filePath, 'unique', root.args[0] ?? root.node);
+          return;
+        }
+        const options = root.args[1]?.type === 'ObjectExpression' ? root.args[1] : null;
+        const constraintName = getStringArg(root.args[1] ?? { type: 'Literal', value: null }) ??
+          getObjectStringOption(options, 'indexName') ??
+          defaultIndexName(tableName, columns, 'unique');
+        const useConstraint = getObjectBooleanOption(options, 'useConstraint');
+        const hasPredicate = objectHasProperty(options, 'predicate');
+        if (useConstraint === false || hasPredicate) {
+          sql.push(`CREATE UNIQUE INDEX "${constraintName}" ON "${tableName}" (${quoteColumns(columns)})`);
+        } else {
+          sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" UNIQUE (${quoteColumns(columns)})`);
+        }
+        break;
+      }
+      case 'primary': {
+        const columns = getColumnList(root.args[0]);
+        if (!columns) {
+          pushTableOperationWarning(warnings, filePath, 'primary', root.args[0] ?? root.node);
+          return;
+        }
+        const options = root.args[1]?.type === 'ObjectExpression' ? root.args[1] : null;
+        const constraintName = getObjectStringOption(options, 'constraintName') ?? `${tableName}_pkey`;
+        sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" PRIMARY KEY (${quoteColumns(columns)})`);
+        break;
+      }
+      case 'foreign': {
+        const statement = buildForeignKeyStatement(chain, tableName, filePath, warnings);
+        if (statement) sql.push(statement);
+        break;
+      }
+      case 'dropIndex': {
+        const columns = getColumnList(root.args[0]);
+        const indexName = getStringArg(root.args[1] ?? { type: 'Literal', value: null }) ??
+          (columns ? defaultIndexName(tableName, columns, 'index') : null);
+        if (indexName) sql.push(`DROP INDEX "${indexName}"`);
+        else pushTableOperationWarning(warnings, filePath, 'dropIndex', root.args[0] ?? root.node);
+        break;
+      }
+      case 'dropUnique': {
+        const columns = getColumnList(root.args[0]);
+        const constraintName = getStringArg(root.args[1] ?? { type: 'Literal', value: null }) ??
+          (columns ? defaultIndexName(tableName, columns, 'unique') : null);
+        if (constraintName) sql.push(`ALTER TABLE "${tableName}" DROP CONSTRAINT "${constraintName}"`);
+        else pushTableOperationWarning(warnings, filePath, 'dropUnique', root.args[0] ?? root.node);
+        break;
+      }
+      case 'dropPrimary': {
+        const constraintName = getStringArg(root.args[0] ?? { type: 'Literal', value: null }) ?? `${tableName}_pkey`;
+        sql.push(`ALTER TABLE "${tableName}" DROP CONSTRAINT "${constraintName}"`);
+        break;
+      }
+      case 'dropForeign':
+      case 'dropForeignIfExists': {
+        const columns = getColumnList(root.args[0]);
+        const constraintName = getStringArg(root.args[1] ?? { type: 'Literal', value: null }) ??
+          (columns ? defaultIndexName(tableName, columns, 'foreign') : null);
+        if (constraintName) sql.push(`ALTER TABLE "${tableName}" DROP CONSTRAINT "${constraintName}"`);
+        else pushTableOperationWarning(warnings, filePath, root.method, root.args[0] ?? root.node);
+        break;
+      }
+    }
+  });
+
+  return sql;
+}
+
+function buildForeignKeyStatement(
+  chain: Array<{ method: string; args: TSNode[]; node: TSNode }>,
+  tableName: string,
+  filePath: string,
+  warnings: ExtractionWarning[],
+): string | null {
+  const root = chain[0];
+  const columns = getColumnList(root.args[0]);
+  if (!columns) {
+    pushTableOperationWarning(warnings, filePath, 'foreign', root.args[0] ?? root.node);
+    return null;
+  }
+
+  let constraintName = getStringArg(root.args[1] ?? { type: 'Literal', value: null }) ??
+    defaultIndexName(tableName, columns, 'foreign');
+  let refTable: string | null = null;
+  let refColumns: string[] | null = null;
+  const actions: string[] = [];
+
+  for (const call of chain.slice(1)) {
+    switch (call.method) {
+      case 'references': {
+        if (call.args.length === 0) break;
+        const inline = getStringArg(call.args[0]);
+        if (inline) {
+          const parsed = parseInlineReference(inline);
+          if (parsed) {
+            refTable = parsed.table;
+            refColumns = [parsed.column];
+          } else {
+            refColumns = [inline];
+          }
+        } else {
+          refColumns = getColumnList(call.args[0]);
+        }
+        break;
+      }
+      case 'inTable':
+        refTable = call.args.length > 0 ? getStringArg(call.args[0]) : null;
+        break;
+      case 'withKeyName': {
+        const name = call.args.length > 0 ? getStringArg(call.args[0]) : null;
+        if (name) constraintName = name;
+        break;
+      }
+      case 'onDelete':
+      case 'onUpdate': {
+        const action = call.args.length > 0 ? getStringArg(call.args[0]) : null;
+        if (action && FK_ACTIONS.has(action.toUpperCase())) {
+          const prefix = call.method === 'onDelete' ? 'ON DELETE' : 'ON UPDATE';
+          actions.push(`${prefix} ${action.toUpperCase()}`);
+        }
+        break;
+      }
+      case 'deferrable':
+        break;
+    }
+  }
+
+  if (!refTable || !refColumns || refColumns.length === 0) {
+    warnings.push({
+      filePath,
+      line: root.node.loc?.start?.line ?? 0,
+      column: root.node.loc?.start?.column ?? 0,
+      message: 'Knex table.foreign() chain could not be fully resolved: cannot transpile safely',
+      unanalyzable: true,
+    });
+    return null;
+  }
+
+  return `ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" FOREIGN KEY (${quoteColumns(columns)}) REFERENCES "${refTable}" (${quoteColumns(refColumns)})${actions.length > 0 ? ` ${actions.join(' ')}` : ''}`;
+}
+
+function collectTableCallChain(
+  node: TSNode,
+  paramName: string,
+): Array<{ method: string; args: TSNode[]; node: TSNode }> {
+  const chain: Array<{ method: string; args: TSNode[]; node: TSNode }> = [];
+  let current: TSNode | null = node;
+  while (current?.type === 'CallExpression') {
+    const callee = current.callee as TSNode;
+    if (callee?.type !== 'MemberExpression') return [];
+    const prop = callee.property as TSNode;
+    if (prop?.type !== 'Identifier') return [];
+    chain.unshift({ method: prop.name as string, args: current.arguments as TSNode[], node: current });
+    current = callee.object as TSNode;
+  }
+  const firstObject = current;
+  if (firstObject?.type !== 'Identifier' || (firstObject.name as string) !== paramName) return [];
+  return chain;
+}
+
+function getColumnList(node: TSNode | undefined): string[] | null {
+  if (!node) return null;
+  const single = getStringArg(node);
+  if (single) return [single];
+  if (node.type !== 'ArrayExpression') return null;
+  const columns = (node.elements as TSNode[] | undefined ?? []).map((element) => getStringArg(element));
+  if (columns.length === 0 || columns.some((column) => column === null)) return null;
+  return columns.filter((column): column is string => column !== null);
+}
+
+function quoteColumns(columns: string[]): string {
+  return columns.map((column) => `"${column}"`).join(', ');
+}
+
+function defaultIndexName(tableName: string, columns: string[], suffix: string): string {
+  return `${tableName}_${columns.join('_')}_${suffix}`;
+}
+
+function getObjectStringOption(node: TSNode | null, keyName: string): string | null {
+  if (!node || node.type !== 'ObjectExpression') return null;
+  for (const prop of node.properties as TSNode[] | undefined ?? []) {
+    if (prop.type !== 'Property') continue;
+    const key = prop.key as TSNode;
+    const value = prop.value as TSNode;
+    const name = key.type === 'Identifier' ? key.name as string : getStringArg(key);
+    if (name === keyName) return getStringArg(value);
+  }
+  return null;
+}
+
+function getObjectBooleanOption(node: TSNode | null, keyName: string): boolean | null {
+  if (!node || node.type !== 'ObjectExpression') return null;
+  for (const prop of node.properties as TSNode[] | undefined ?? []) {
+    if (prop.type !== 'Property') continue;
+    const key = prop.key as TSNode;
+    const value = prop.value as TSNode;
+    const name = key.type === 'Identifier' ? key.name as string : getStringArg(key);
+    if (name === keyName && value.type === 'Literal' && typeof value.value === 'boolean') {
+      return value.value;
+    }
+  }
+  return null;
+}
+
+function objectHasProperty(node: TSNode | null, keyName: string): boolean {
+  if (!node || node.type !== 'ObjectExpression') return false;
+  for (const prop of node.properties as TSNode[] | undefined ?? []) {
+    if (prop.type !== 'Property') continue;
+    const key = prop.key as TSNode;
+    const name = key.type === 'Identifier' ? key.name as string : getStringArg(key);
+    if (name === keyName) return true;
+  }
+  return false;
+}
+
+function pushTableOperationWarning(
+  warnings: ExtractionWarning[],
+  filePath: string,
+  methodName: string,
+  node: TSNode,
+): void {
+  warnings.push({
+    filePath,
+    line: node.loc?.start?.line ?? 0,
+    column: node.loc?.start?.column ?? 0,
+    message: `Dynamic or partially resolved Knex table.${methodName}() call: cannot transpile safely`,
+    unanalyzable: true,
+  });
 }
 
 function extractDefaultValue(node: TSNode): string {
