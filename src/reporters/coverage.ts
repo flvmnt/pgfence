@@ -9,6 +9,10 @@ export interface CoverageSummary {
   unanalyzableLines: number[];
 }
 
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return count === 1 ? singular : pluralForm;
+}
+
 export function countUnanalyzable(result: AnalysisResult): number {
   return result.extractionWarnings?.filter((warning) => warning.unanalyzable).length ?? 0;
 }
@@ -54,4 +58,10 @@ export function formatUnanalyzableLineSuffix(coverage: CoverageSummary, max = 8)
   }
   const shown = lines.slice(0, max).join(', ');
   return ` (lines ${shown}, +${lines.length - max} more)`;
+}
+
+export function formatCoverageLine(coverage: CoverageSummary): string {
+  return `Analyzed ${coverage.analyzedStatements} SQL ${plural(coverage.analyzedStatements, 'statement')}. ` +
+    `${coverage.unanalyzableStatements} dynamic ${plural(coverage.unanalyzableStatements, 'statement')} not analyzable${formatUnanalyzableLineSuffix(coverage)}. ` +
+    `Coverage: ${coverage.coveragePercent}%`;
 }

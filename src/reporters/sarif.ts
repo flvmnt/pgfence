@@ -174,6 +174,7 @@ export function reportSARIF(results: AnalysisResult[]): string {
             totalStatements: coverage.totalStatements,
             analyzedStatements: coverage.analyzedStatements,
             dynamicStatements: coverage.unanalyzableStatements,
+            dynamicStatementLines: coverage.unanalyzableLines,
             coveragePercent: coverage.coveragePercent,
           },
         },

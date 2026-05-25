@@ -6,7 +6,10 @@
 
 import type { AnalysisResult, CheckResult } from '../types.js';
 import { RiskLevel } from '../types.js';
-import { summarizeCoverage, formatUnanalyzableLineSuffix } from './coverage.js';
+import { summarizeCoverage, formatCoverageLine } from './coverage.js';
+
+const GITHUB_COMMENT_MAX_LENGTH = 65000;
+const TRUNCATION_NOTICE = '\n\n> :warning: Report truncated to stay below the GitHub PR comment size limit. Run `pgfence analyze --output json` locally for the full result.\n';
 
 function escapeHtml(text: string): string {
   return text
@@ -146,15 +149,14 @@ export function reportGitHub(results: AnalysisResult[]): string {
   const coverage = summarizeCoverage(results);
   lines.push('### Coverage');
   lines.push('');
-  lines.push(
-    `Analyzed **${coverage.analyzedStatements}** SQL statements. ` +
-    `**${coverage.unanalyzableStatements}** dynamic statements not analyzable${formatUnanalyzableLineSuffix(coverage)}. ` +
-    `Coverage: **${coverage.coveragePercent}%**`,
-  );
+  lines.push(formatCoverageLine(coverage));
   lines.push('');
 
   lines.push('---');
   lines.push('*[pgfence](https://pgfence.com) migration safety report*');
 
-  return lines.join('\n');
+  const output = lines.join('\n');
+  if (output.length <= GITHUB_COMMENT_MAX_LENGTH) return output;
+  const budget = GITHUB_COMMENT_MAX_LENGTH - TRUNCATION_NOTICE.length;
+  return output.slice(0, Math.max(0, budget)).trimEnd() + TRUNCATION_NOTICE;
 }

@@ -150,10 +150,10 @@ describe('Reporter: CLI', () => {
         expect(output).toContain('SELECT 1;');
     });
 
-    it('should include coverage summary line per Trust Contract (Analyzed N statements, Unanalyzable M, Coverage P%)', () => {
+    it('should include coverage summary line per Trust Contract', () => {
         const output = reportCLI(mockResults, mockConfig);
         expect(output).toContain('=== Coverage ===');
-        expect(output).toMatch(/Analyzed: 1 statements\s+\|\s+Unanalyzable: 0\s+\|\s+Coverage: 100%/);
+        expect(output).toContain('Analyzed 1 SQL statement. 0 dynamic statements not analyzable. Coverage: 100%');
     });
 
     it('should report unanalyzable count and reduced coverage when unanalyzable extraction warnings present', () => {
@@ -166,7 +166,7 @@ describe('Reporter: CLI', () => {
         }];
         const output = reportCLI(resultsWithWarnings, mockConfig);
         expect(output).toContain('=== Coverage ===');
-        expect(output).toMatch(/Unanalyzable: 1/);
+        expect(output).toContain('1 dynamic statement not analyzable (lines 10)');
         expect(output).toMatch(/Coverage: 75%/);
     });
 
@@ -180,7 +180,7 @@ describe('Reporter: CLI', () => {
         }];
         const output = reportCLI(resultsWithInfoWarnings, mockConfig);
         expect(output).toContain('=== Coverage ===');
-        expect(output).toMatch(/Unanalyzable: 0/);
+        expect(output).toContain('0 dynamic statements not analyzable');
         expect(output).toMatch(/Coverage: 100%/);
     });
 
@@ -277,7 +277,7 @@ describe('Reporter: GitHub PR', () => {
         expect(output).toContain('ACCESS EXCLUSIVE');
         expect(output).toContain(':red_circle: HIGH');
         expect(output).toContain('Missing lock_timeout');
-        expect(output).toContain('**1** SQL statements.');
+        expect(output).toContain('Analyzed 1 SQL statement.');
     });
 
     it('should output safe migrations notice', () => {
@@ -345,9 +345,7 @@ describe('Reporter: GitHub PR', () => {
     it('should include coverage summary per Trust Contract (Analyzed N SQL statements, M dynamic not analyzable, Coverage P%)', () => {
         const output = reportGitHub(mockResults);
         expect(output).toContain('### Coverage');
-        expect(output).toContain('Analyzed **1** SQL statements');
-        expect(output).toContain('**0** dynamic statements not analyzable');
-        expect(output).toContain('Coverage: **100%**');
+        expect(output).toContain('Analyzed 1 SQL statement. 0 dynamic statements not analyzable. Coverage: 100%');
     });
 
     it('should report dynamic statements not analyzable and coverage percent when unanalyzable extraction warnings present', () => {
@@ -360,8 +358,23 @@ describe('Reporter: GitHub PR', () => {
         }];
         const output = reportGitHub(resultsWithWarnings);
         expect(output).toContain('### Coverage');
-        expect(output).toMatch(/\*\*1\*\* dynamic statements not analyzable/);
-        expect(output).toMatch(/Coverage: \*\*67%\*\*/);
+        expect(output).toContain('1 dynamic statement not analyzable (lines 5)');
+        expect(output).toContain('Coverage: 67%');
+    });
+
+    it('should truncate GitHub comments before the platform limit', () => {
+        const manyChecks: AnalysisResult[] = [{
+            ...mockResults[0],
+            checks: Array.from({ length: 800 }, (_, i) => ({
+                ...mockCheck,
+                statement: `ALTER TABLE users ADD COLUMN col_${i} text NOT NULL;`,
+                statementPreview: `ALTER TABLE users ADD COLUMN col_${i} text NOT NULL`,
+                message: `Dangerous migration message ${i} `.repeat(8),
+            })),
+        }];
+        const output = reportGitHub(manyChecks);
+        expect(output.length).toBeLessThanOrEqual(65000);
+        expect(output).toContain('Report truncated');
     });
 
     it('should put LOW-risk safe rewrites in Notes section, not Safe Rewrite Recipes', () => {
@@ -443,6 +456,7 @@ describe('Reporter: SARIF', () => {
         expect(coverage.totalStatements).toBe(6);
         expect(coverage.analyzedStatements).toBe(4);
         expect(coverage.dynamicStatements).toBe(2);
+        expect(coverage.dynamicStatementLines).toEqual([1, 5]);
         expect(coverage.coveragePercent).toBe(67);
     });
 
@@ -664,7 +678,27 @@ describe('Reporter: GitLab CI', () => {
         expect(warning.severity).toBe('minor');
         expect(coverage).toBeDefined();
         expect(coverage.description).toContain('Analyzed 2 SQL statements');
-        expect(coverage.description).toContain('1 dynamic statements not analyzable');
+        expect(coverage.description).toContain('1 dynamic statement not analyzable');
+        expect(coverage.description).toContain('(lines 7)');
+    });
+
+    it('should emit one aggregate coverage summary for multiple files', () => {
+        const results: AnalysisResult[] = [
+            { ...mockResults[0], filePath: 'one.sql', statementCount: 2 },
+            {
+                ...mockResults[0],
+                filePath: 'two.sql',
+                statementCount: 1,
+                extractionWarnings: [
+                    { filePath: 'two.sql', line: 9, column: 0, message: 'Dynamic SQL', unanalyzable: true },
+                ],
+            },
+        ];
+        const parsed = JSON.parse(reportGitLab(results));
+        const coverageEntries = parsed.filter((v: { check_name: string }) => v.check_name === 'pgfence-coverage-summary');
+        expect(coverageEntries).toHaveLength(1);
+        expect(coverageEntries[0].description).toContain('Analyzed 3 SQL statements');
+        expect(coverageEntries[0].description).toContain('1 dynamic statement not analyzable (lines 9)');
     });
 });
 

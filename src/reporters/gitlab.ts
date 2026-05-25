@@ -15,7 +15,7 @@
 import { createHash } from 'node:crypto';
 import type { AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
-import { countUnanalyzable } from './coverage.js';
+import { formatCoverageLine, summarizeCoverage } from './coverage.js';
 
 type GitLabSeverity = 'info' | 'minor' | 'major' | 'critical' | 'blocker';
 
@@ -50,6 +50,7 @@ function normalizePath(filePath: string): string {
 
 export function reportGitLab(results: AnalysisResult[]): string {
   const violations: GitLabViolation[] = [];
+  let coverageLine = 1;
 
   for (const result of results) {
     const path = normalizePath(result.filePath);
@@ -102,29 +103,17 @@ export function reportGitLab(results: AnalysisResult[]): string {
         location: { path, lines: { begin: 1 } },
       }, checkName, syntheticLine++);
     }
-
-    const dynamicWarnings = countUnanalyzable(result);
-    const totalStatements = result.statementCount + dynamicWarnings;
-    const coveragePct = totalStatements > 0
-      ? Math.round((result.statementCount / totalStatements) * 100)
-      : 100;
-    const dynLines = Array.from(
-      new Set(
-        (result.extractionWarnings ?? [])
-          .filter((w) => w.unanalyzable && typeof w.line === 'number')
-          .map((w) => w.line as number),
-      ),
-    ).sort((a, b) => a - b);
-    const linesSuffix = dynLines.length > 0
-      ? ` (lines ${dynLines.length > 8 ? `${dynLines.slice(0, 8).join(', ')}, +${dynLines.length - 8} more` : dynLines.join(', ')})`
-      : '';
-    pushViolation({
-      description: `Analyzed ${result.statementCount} SQL statements. ${dynamicWarnings} dynamic statements not analyzable${linesSuffix}. Coverage: ${coveragePct}%.`,
-      check_name: 'pgfence-coverage-summary',
-      severity: 'info',
-      location: { path, lines: { begin: 1 } },
-    }, 'pgfence-coverage-summary', syntheticLine++);
+    coverageLine = Math.max(coverageLine, syntheticLine);
   }
+
+  const firstPath = normalizePath(results[0]?.filePath ?? 'pgfence-coverage');
+  violations.push({
+    description: formatCoverageLine(summarizeCoverage(results)),
+    check_name: 'pgfence-coverage-summary',
+    severity: 'info',
+    location: { path: firstPath, lines: { begin: coverageLine } },
+    fingerprint: fingerprint('pgfence-coverage-summary', firstPath, 'aggregate'),
+  });
 
   return JSON.stringify(violations, null, 2);
 }

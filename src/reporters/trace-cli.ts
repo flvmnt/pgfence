@@ -10,7 +10,7 @@ import Table from 'cli-table3';
 import type { TraceResult, TraceCheckResult, AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
 import { RISK_ORDER } from '../analyzer.js';
-import { summarizeCoverage, formatUnanalyzableLineSuffix } from './coverage.js';
+import { summarizeCoverage, formatCoverageLine } from './coverage.js';
 
 function riskIndex(risk: RiskLevel): number {
   return RISK_ORDER.indexOf(risk);
@@ -238,7 +238,6 @@ export function reportTraceCLI(results: TraceResult[]): string {
   }
 
   // Coverage summary
-  const totalStatements = results.reduce((sum, r) => sum + r.statementCount, 0);
   const allChecks = results.flatMap((r) => r.traceChecks ?? r.checks as TraceCheckResult[]);
   const verified = allChecks.filter(
     (c) => c.verification === 'confirmed' || c.verification === 'mismatch',
@@ -249,12 +248,11 @@ export function reportTraceCLI(results: TraceResult[]): string {
   const dockerImage = 'postgres:' + (results[0]?.pgVersion ?? 17) + '-alpine';
   const containerLifetime = results.reduce((max, r) => Math.max(max, r.containerLifetimeMs ?? 0), 0) / 1000;
 
-  // Trust Contract coverage line (matches CLI/GitHub/JSON/GitLab reporters)
+  // Trust Contract coverage line.
   const coverage = summarizeCoverage(results as unknown as AnalysisResult[]);
   lines.push(chalk.bold('=== Coverage ==='));
   lines.push(
-    `Analyzed: ${totalStatements} statements | ` +
-      `Unanalyzable: ${coverage.unanalyzableStatements}${formatUnanalyzableLineSuffix(coverage)} | ` +
+    `${formatCoverageLine(coverage)} | ` +
       `Verified: ${verified}/${allChecks.length} | ` +
       `Mismatches: ${mismatches} | ` +
       `Trace-only: ${traceOnly}`,

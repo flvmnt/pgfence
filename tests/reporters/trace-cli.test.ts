@@ -154,9 +154,23 @@ describe('Reporter: Trace CLI', () => {
       traceChecks: checks2,
     });
     const output = reportTraceCLI([result1, result2]);
-    expect(output).toContain('Analyzed: 5 statements');
+    expect(output).toContain('Analyzed 5 SQL statements');
+    expect(output).toContain('Coverage: 100%');
     expect(output).toContain('Verified: 2/3');
     expect(output).toContain('Trace-only: 1');
+  });
+
+  it('should include unanalyzable count, lines, and coverage percent', () => {
+    const result = makeResult({
+      statementCount: 2,
+      extractionWarnings: [
+        { filePath: 'migration.sql', line: 8, column: 0, message: 'Dynamic SQL', unanalyzable: true },
+      ],
+    });
+    const output = reportTraceCLI([result]);
+    expect(output).toContain('2 SQL statements');
+    expect(output).toContain('1 dynamic statement not analyzable (lines 8)');
+    expect(output).toContain('Coverage: 67%');
   });
 
   it('should show no dangerous statements for empty checks', () => {
