@@ -2058,3 +2058,68 @@ describe('Plugin system', () => {
     expect(results[0].policyViolations.find((v) => v.ruleId === 'pg14-index-concurrent-bug')).toBeUndefined();
   });
 });
+
+describe('production footguns no other linter catches', () => {
+  it('should flag CLUSTER as HIGH with ACCESS EXCLUSIVE', async () => {
+    const results = await analyze([fixture('prod-footguns.sql')], defaultConfig);
+    const check = results[0].checks.find((c) => c.ruleId === 'cluster');
+    expect(check).toBeDefined();
+    expect(check!.risk).toBe(RiskLevel.HIGH);
+    expect(check!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    expect(check!.message).toMatch(/CLUSTER/);
+    expect(check!.safeRewrite).toBeDefined();
+    expect(check!.safeRewrite!.description).toMatch(/pg_repack/);
+  });
+
+  it('should flag REPLICA IDENTITY FULL as HIGH (WAL amplification)', async () => {
+    const results = await analyze([fixture('prod-footguns.sql')], defaultConfig);
+    const full = results[0].checks.filter((c) => c.ruleId === 'replica-identity-full');
+    expect(full).toHaveLength(1);
+    expect(full[0].risk).toBe(RiskLevel.HIGH);
+    expect(full[0].message).toMatch(/WAL/);
+  });
+
+  it('should NOT flag REPLICA IDENTITY DEFAULT or USING INDEX', async () => {
+    const results = await analyze([fixture('prod-footguns.sql')], defaultConfig);
+    const allReplica = results[0].checks.filter((c) => c.ruleId === 'replica-identity-full');
+    expect(allReplica).toHaveLength(1); // only the FULL one
+  });
+
+  it('should flag both ENABLE and DISABLE row level security as HIGH', async () => {
+    const results = await analyze([fixture('prod-footguns.sql')], defaultConfig);
+    const enable = results[0].checks.find((c) => c.ruleId === 'enable-rls');
+    const disable = results[0].checks.find((c) => c.ruleId === 'disable-rls');
+    expect(enable).toBeDefined();
+    expect(enable!.risk).toBe(RiskLevel.HIGH);
+    expect(enable!.message).toMatch(/deny|denies/);
+    expect(disable).toBeDefined();
+    expect(disable!.risk).toBe(RiskLevel.HIGH);
+    expect(disable!.message).toMatch(/expose/);
+  });
+
+  it('should flag ALTER TABLE INHERIT and NO INHERIT as HIGH', async () => {
+    const results = await analyze([fixture('prod-footguns.sql')], defaultConfig);
+    const inherit = results[0].checks.find((c) => c.ruleId === 'inherit');
+    const noInherit = results[0].checks.find((c) => c.ruleId === 'no-inherit');
+    expect(inherit).toBeDefined();
+    expect(inherit!.risk).toBe(RiskLevel.HIGH);
+    expect(noInherit).toBeDefined();
+    expect(noInherit!.risk).toBe(RiskLevel.HIGH);
+  });
+
+  it('should flag CREATE POLICY as LOW informational', async () => {
+    const results = await analyze([fixture('prod-footguns.sql')], defaultConfig);
+    const check = results[0].checks.find((c) => c.ruleId === 'create-policy');
+    expect(check).toBeDefined();
+    expect(check!.risk).toBe(RiskLevel.LOW);
+    expect(check!.message).toMatch(/ENABLE ROW LEVEL SECURITY/i);
+  });
+
+  it('should flag CREATE TYPE AS ENUM as LOW with DROP VALUE caveat', async () => {
+    const results = await analyze([fixture('prod-footguns.sql')], defaultConfig);
+    const check = results[0].checks.find((c) => c.ruleId === 'create-enum-type');
+    expect(check).toBeDefined();
+    expect(check!.risk).toBe(RiskLevel.LOW);
+    expect(check!.message).toMatch(/cannot have values removed/);
+  });
+});

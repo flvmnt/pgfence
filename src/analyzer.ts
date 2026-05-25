@@ -26,6 +26,7 @@ import { checkReindex } from './rules/reindex.js';
 import { checkRefreshMatView } from './rules/refresh-matview.js';
 import { checkTrigger } from './rules/trigger.js';
 import { checkPartition } from './rules/partition.js';
+import { checkProdFootguns } from './rules/prod-footguns.js';
 import { checkPolicies } from './rules/policy.js';
 import { fetchTableStats } from './db-stats.js';
 import { getAnalysisHooks } from './analysis-hooks.js';
@@ -313,6 +314,7 @@ export function applyRules(
   results.push(...checkRefreshMatView(stmt));
   results.push(...checkTrigger(stmt));
   results.push(...checkPartition(stmt, config));
+  results.push(...checkProdFootguns(stmt));
   results.push(...checkDomainConstraint(stmt));
   return results;
 }
