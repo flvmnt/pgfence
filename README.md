@@ -385,6 +385,20 @@ pgfence checks a broad set of DDL patterns against Postgres's lock mode semantic
 | 37 | `ALTER DOMAIN ADD CONSTRAINT` | SHARE | HIGH | Validates against all tables using domain |
 | 38 | `CREATE DOMAIN` with constraint | ACCESS SHARE | LOW | Use table-level CHECK constraints instead |
 
+### Production footguns no other linter catches today
+
+These ship in v0.6 and are not flagged by Eugene, Squawk, pgrubic, or strong_migrations:
+
+| # | Pattern | Lock Mode | Risk | Safe Alternative |
+|---|---------|-----------|------|------------------|
+| 43 | `CLUSTER table USING idx` | ACCESS EXCLUSIVE | HIGH | Use `pg_repack` for online reclustering |
+| 44 | `REPLICA IDENTITY FULL` | ACCESS EXCLUSIVE (brief) | HIGH | Use primary key (default) or unique non-null index; FULL amplifies WAL 10x-100x |
+| 45 | `ENABLE ROW LEVEL SECURITY` | ACCESS EXCLUSIVE | HIGH | Create policies BEFORE enabling RLS or app loses access to all rows |
+| 46 | `DISABLE ROW LEVEL SECURITY` | ACCESS EXCLUSIVE | HIGH | Audit which rows were gated by policies before disabling |
+| 47 | `ALTER TABLE ... INHERIT/NO INHERIT` | ACCESS EXCLUSIVE (both tables) | HIGH | Validation scan; schedule in maintenance window with lock_timeout |
+| 48 | `CREATE POLICY` | informational | LOW | Inert until RLS is enabled; verify ordering with `ALTER TABLE ENABLE ROW LEVEL SECURITY` |
+| 49 | `CREATE TYPE ... AS ENUM` | n/a | LOW | Postgres has no `ALTER TYPE ... DROP VALUE`; prefer lookup table or CHECK constraint for evolving sets |
+
 ### Transaction & Policy Checks
 
 | # | Pattern | Severity |

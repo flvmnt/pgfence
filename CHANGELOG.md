@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.6.0 (2026-05-25)
+
+### New surfaces
+
+- **`pgfence explain "<statement>"`**: paste-and-run single-statement explainer. Returns lock mode, blocked operations, risk level, and safe rewrite recipe for any DDL you paste in. Reads from positional arg or stdin. `--output json` for machine consumption.
+- **`RULES.md`** at the repo root: a curated single-file rule catalog distilled from `src/rules/*` into ~250 readable lines. Drop it into your repo so your in-editor coding assistant learns pgfence conventions and suggests safe migrations from the first keystroke.
+- **`pgfence init --prisma-github-action`**: scaffolds `.github/workflows/pgfence-prisma.yml` so projects on Prisma get a one-command CI integration.
+
+### New rules: production footguns no other linter catches
+
+Verified against the PostgreSQL source and explicit-locking.html:
+
+- **`cluster`** HIGH, ACCESS EXCLUSIVE. CLUSTER rewrites the entire table. Recommends `pg_repack`.
+- **`replica-identity-full`** HIGH. Catches the silent 10x to 100x WAL amplification that saturates Debezium / pglogical consumers. `DEFAULT` and `USING INDEX` are not flagged.
+- **`enable-rls`** / **`disable-rls`** HIGH. Enabling RLS without a prior `CREATE POLICY` denies all rows. Disabling silently exposes them.
+- **`inherit`** / **`no-inherit`** HIGH. Validation scan under ACCESS EXCLUSIVE on both parent and child.
+- **`create-policy`** LOW informational. Calls out that the policy is inert until ROW LEVEL SECURITY is enabled on the table.
+- **`create-enum-type`** LOW. Postgres has no `ALTER TYPE ... DROP VALUE`. Suggests a lookup table or `CHECK` constraint for evolving categorical data.
+
+Eugene, Squawk, pgrubic, and strong_migrations together cover none of REPLICA IDENTITY FULL, RLS toggle, CLUSTER, or INHERIT.
+
+### Trust Contract polish
+
+- Coverage line across all five reporters (CLI, JSON, GitHub PR, GitLab, trace CLI) now includes a `(lines A, B, ...)` suffix that identifies WHERE the unanalyzable statements live. The JSON envelope exposes `coverage.dynamicStatementLines` for machine consumers. Trace CLI now also emits the Unanalyzable count (previously only Verified / Mismatches / Trace-only).
+- LSP now respects `unknownHandling=block` in editor diagnostics: unanalyzable statements surface as Error severity in block mode, matching the CLI block-mode exit code.
+
+### Lock mode correctness
+
+- `ALTER COLUMN DROP NOT NULL`: bumped from LOW to MEDIUM. The operation is metadata-only and instant on PG9+, but the brief ACCESS EXCLUSIVE lock still risks lock-queue stalls under any concurrent long-running transaction.
+
+### Dependencies
+
+- `libpg-query` 16.7.3 to 17.7.3 (PG17 grammar parity; all 534 tests still green).
+- `commander` 13.1.0 to 14.0.3.
+- Patch sweep for prettier, tsx, @types/pg, pg, typescript-eslint, @typescript-eslint/typescript-estree.
+- Local `PgClient.connect()` now typed as `Promise<unknown>` so pg 8.20+'s `connect() => Promise<Client>` is assignable without casts.
+
+### Packaging
+
+- Tarball drops from 173 KB to 110 KB (-36%) by excluding `dist/**/*.map`.
+- Added `homepage`, `bugs`, and `repository` fields to package.json for npm SEO.
+
+### Fixes
+
+- `examples/try-this/README.md`: replaced em dashes with colons (CLAUDE.md rule 3).
+- `tests/cli.test.ts`: `wouldCiFail` helper now mirrors production `shouldFailCI`, including the `unknownHandling=block` branch. Previously a regression in that branch would have passed CI.
+- `tests/cli.test.ts`: `--stats-file` test now writes to a tmpdir instead of the project CWD (parallel-safe).
+- `src/index.ts`: clear trace pg clients after explicit `.end()` so the finally cleanup is a no-op (avoids `stderr` noise on slow network flush).
+
+### Documentation
+
+- Per-rule severity, lock mode, and safe rewrite pattern documented in `RULES.md`.
+- README highlights `RULES.md` and `pgfence explain` under "Shipped Surfaces".
+
 ## 0.5.1 (2026-04-29)
 
 ### Fixes
