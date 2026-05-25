@@ -198,6 +198,22 @@ mv .git/hooks/pre-commit .git/hooks/pre-push
 mv .husky/pre-commit .husky/pre-push
 ```
 
+### Add Prisma migration safety to GitHub Actions
+
+For Prisma projects, generate a ready workflow that runs pgfence before production migrations are deployed:
+
+```bash
+pgfence init --prisma-github-action
+```
+
+This writes `.github/workflows/pgfence-prisma.yml`. The workflow runs on pull requests that touch `prisma/migrations/**/migration.sql`, finds every Prisma `migration.sql` file, and checks them with:
+
+```bash
+npx --yes @flvmnt/pgfence@latest analyze --format prisma --ci --max-risk medium
+```
+
+The command refuses to overwrite an existing `pgfence-prisma.yml`, so you can review or rename your current workflow first.
+
 ### Analyze SQL migrations
 
 ```bash

@@ -1855,7 +1855,7 @@ describe('Plugin system', () => {
 
   // --- drop-not-null ---
 
-  it('should detect ALTER COLUMN DROP NOT NULL as LOW risk with ACCESS EXCLUSIVE', async () => {
+  it('should detect ALTER COLUMN DROP NOT NULL as MEDIUM risk with ACCESS EXCLUSIVE', async () => {
     const results = await analyze(
       [fixture('drop-not-null.sql')],
       { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
@@ -1863,7 +1863,7 @@ describe('Plugin system', () => {
     expect(results).toHaveLength(1);
     const check = results[0].checks.find((c) => c.ruleId === 'drop-not-null');
     expect(check).toBeDefined();
-    expect(check!.risk).toBe(RiskLevel.LOW);
+    expect(check!.risk).toBe(RiskLevel.MEDIUM);
     expect(check!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(check!.tableName).toBe('appointments');
     expect(check!.blocks.reads).toBe(true);

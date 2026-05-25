@@ -312,14 +312,13 @@ export function checkAlterColumn(
         tableName,
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-        risk: RiskLevel.LOW,
-        message: `ALTER COLUMN "${colName}" DROP NOT NULL: takes ACCESS EXCLUSIVE lock but is instant (metadata-only on Postgres 9+, no table scan or rewrite)`,
+        risk: RiskLevel.MEDIUM,
+        message: `ALTER COLUMN "${colName}" DROP NOT NULL: instant (metadata-only on Postgres 9+, no table scan or rewrite) but takes ACCESS EXCLUSIVE briefly. Set lock_timeout to avoid lock-queue death-spiral if a long-running transaction holds any lock on the table.`,
         ruleId: 'drop-not-null',
         safeRewrite: {
-          description: 'Instant on Postgres 9+. The ACCESS EXCLUSIVE lock is brief (metadata-only). No table rewrite occurs.',
+          description: 'Instant on Postgres 9+. The ACCESS EXCLUSIVE lock is brief (metadata-only). No table rewrite occurs. Lock queue risk remains.',
           steps: [
-            `-- This operation is already as safe as it can be.`,
-            `-- Set lock_timeout to bound worst-case wait time.`,
+            `-- Set lock_timeout to bound worst-case wait time and avoid blocking concurrent traffic behind a stalled DDL.`,
             `SET lock_timeout = '2s';`,
             `ALTER TABLE ${tableName} ALTER COLUMN ${colName} DROP NOT NULL;`,
           ],

@@ -402,7 +402,9 @@ program
         }
 
         await observerClient.end();
+        observerClient = undefined;
         await traceClient.end();
+        traceClient = undefined;
         const containerLifetimeMs = Date.now() - containerStart;
         // Update all results with final container lifetime
         for (const r of traceResults) {
@@ -472,11 +474,16 @@ program
 
 program
   .command('init')
-  .description('Install pgfence git hooks (pre-commit)')
-  .action(async () => {
-    const { installHooks } = await import('./init.js');
+  .description('Install pgfence local hooks or CI workflow templates')
+  .option('--prisma-github-action', 'Write a GitHub Actions workflow for Prisma migrations')
+  .action(async (opts) => {
+    const { installHooks, installPrismaGitHubAction } = await import('./init.js');
     try {
-      await installHooks();
+      if (opts.prismaGithubAction) {
+        await installPrismaGitHubAction();
+      } else {
+        await installHooks();
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence init error: ${message}\n`);

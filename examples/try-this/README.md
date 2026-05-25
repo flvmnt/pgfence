@@ -17,10 +17,10 @@ npx @flvmnt/pgfence analyze examples/try-this/dangerous-migration.sql
 
 The migration looks normal. pgfence flags:
 
-1. **`ADD COLUMN ... NOT NULL DEFAULT now()`** — `ACCESS EXCLUSIVE` lock for the duration of a full table rewrite. Volatile defaults force a rewrite even on PG11+.
-2. **`ADD CONSTRAINT ... FOREIGN KEY` without `NOT VALID`** — `SHARE ROW EXCLUSIVE` on both tables, full scan to validate existing rows.
-3. **`CREATE INDEX` without `CONCURRENTLY`** — `SHARE` lock blocks all writes for the duration of the build.
-4. **Missing `SET lock_timeout`** — policy violation. Any of the above can sit in the lock queue forever, behind another transaction holding a row lock.
+1. **`ADD COLUMN ... NOT NULL DEFAULT now()`**: `ACCESS EXCLUSIVE` lock for the duration of a full table rewrite. Volatile defaults force a rewrite even on PG11+.
+2. **`ADD CONSTRAINT ... FOREIGN KEY` without `NOT VALID`**: `SHARE ROW EXCLUSIVE` on both tables, full scan to validate existing rows.
+3. **`CREATE INDEX` without `CONCURRENTLY`**: `SHARE` lock blocks all writes for the duration of the build.
+4. **Missing `SET lock_timeout`**: policy violation. Any of the above can sit in the lock queue forever, behind another transaction holding a row lock.
 
 Each finding includes the safe rewrite recipe pgfence recommends, ready to paste into the next migration.
 

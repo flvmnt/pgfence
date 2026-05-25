@@ -28,6 +28,42 @@ if [ $? -ne 0 ]; then
 fi
 `;
 
+const PRISMA_GITHUB_ACTION_WORKFLOW = `name: Prisma Migration Safety
+
+on:
+  pull_request:
+    paths:
+      - 'prisma/migrations/**/migration.sql'
+  workflow_dispatch:
+
+jobs:
+  pgfence:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check Prisma migration safety
+        shell: bash
+        run: |
+          if [ ! -d prisma/migrations ]; then
+            echo "No prisma/migrations directory found."
+            exit 0
+          fi
+
+          files=()
+          while IFS= read -r -d '' file; do
+            files+=("$file")
+          done < <(find prisma/migrations -path '*/migration.sql' -type f -print0)
+
+          if [ "\${#files[@]}" -eq 0 ]; then
+            echo "No Prisma migration files found."
+            exit 0
+          fi
+
+          npx --yes @flvmnt/pgfence@latest analyze --format prisma --ci --max-risk medium "\${files[@]}"
+`;
+
 export async function installHooks(): Promise<void> {
   const cwd = process.cwd();
   const huskyPath = join(cwd, '.husky');
@@ -79,4 +115,19 @@ export async function installHooks(): Promise<void> {
   if (usingHusky) {
     console.log('💡 Note: You are using husky. Ensure husky is installed and enabled.');
   }
+}
+
+export async function installPrismaGitHubAction(): Promise<void> {
+  const cwd = process.cwd();
+  const workflowDir = join(cwd, '.github', 'workflows');
+  const workflowFile = join(workflowDir, 'pgfence-prisma.yml');
+
+  if (existsSync(workflowFile)) {
+    throw new Error(`${workflowFile} already exists. Remove it first if you want pgfence to recreate it.`);
+  }
+
+  await mkdir(workflowDir, { recursive: true });
+  await writeFile(workflowFile, PRISMA_GITHUB_ACTION_WORKFLOW, 'utf8');
+
+  console.log(`✅ pgfence Prisma GitHub Actions workflow written to ${workflowFile}`);
 }

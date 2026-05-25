@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { analyze, RISK_ORDER } from '../src/analyzer.js';
 import type { PgfenceConfig } from '../src/types.js';
 import { RiskLevel } from '../src/types.js';
-import { installHooks } from '../src/init.js';
+import { installHooks, installPrismaGitHubAction } from '../src/init.js';
 
 const execPromise = util.promisify(exec);
 const execFilePromise = util.promisify(execFile);
@@ -39,17 +39,22 @@ const defaultConfig: PgfenceConfig = {
 };
 
 /**
- * Same CI failure logic as src/index.ts,used to test exit code behavior without subprocess.
+ * Mirror of shouldFailCI in src/index.ts. Used to test exit code behavior without subprocess.
+ * Must stay in sync, including the unknownHandling=block branch.
  */
-function wouldCiFail(results: Awaited<ReturnType<typeof analyze>>, maxAllowedRisk: RiskLevel): boolean {
+function wouldCiFail(
+    results: Awaited<ReturnType<typeof analyze>>,
+    maxAllowedRisk: RiskLevel,
+    unknownHandling: 'warn' | 'block' = 'warn',
+): boolean {
     const maxAllowedIdx = RISK_ORDER.indexOf(maxAllowedRisk);
-    let shouldFail = false;
     for (const result of results) {
         const maxIdx = RISK_ORDER.indexOf(result.maxRisk);
-        if (maxIdx > maxAllowedIdx) shouldFail = true;
-        if (result.policyViolations.some((v) => v.severity === 'error')) shouldFail = true;
+        if (maxIdx > maxAllowedIdx) return true;
+        if (result.policyViolations.some((v) => v.severity === 'error')) return true;
     }
-    return shouldFail;
+    const hasUnanalyzable = results.some((r) => r.extractionWarnings?.some((w) => w.unanalyzable));
+    return unknownHandling === 'block' && hasUnanalyzable;
 }
 
 describe('CI exit code logic', () => {
@@ -213,6 +218,30 @@ printf '%s\\n' "\${FILES[@]}"
         }
     });
 
+    it('writes a Prisma GitHub Actions workflow without overwriting an existing file', async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'pgfence-prisma-action-'));
+        const previousCwd = process.cwd();
+        const workflowPath = path.join(root, '.github', 'workflows', 'pgfence-prisma.yml');
+
+        try {
+            process.chdir(root);
+            await installPrismaGitHubAction();
+
+            const workflow = await readFile(workflowPath, 'utf8');
+            expect(workflow).toContain('name: Prisma Migration Safety');
+            expect(workflow).toContain('prisma/migrations/**/migration.sql');
+            expect(workflow).toContain('if [ ! -d prisma/migrations ]; then');
+            expect(workflow).toContain('files=()');
+            expect(workflow).toContain("find prisma/migrations -path '*/migration.sql' -type f -print0");
+            expect(workflow).toContain('npx --yes @flvmnt/pgfence@latest analyze --format prisma --ci --max-risk medium "${files[@]}"');
+
+            await expect(installPrismaGitHubAction()).rejects.toThrow(/already exists/);
+        } finally {
+            process.chdir(previousCwd);
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('runs default cli analysis', async () => {
         const fixture = path.join(fixturesDir, 'safe-migration.sql');
         const { stdout } = await execPromise(cliCommand(`analyze "${fixture}"`));
@@ -251,13 +280,15 @@ printf '%s\\n' "\${FILES[@]}"
     it('parses --stats-file for size-aware risk scoring', async () => {
         const fs = await import('node:fs/promises');
         const fixture = path.join(fixturesDir, 'safe-migration.sql');
-        await fs.writeFile('test-stats.json', JSON.stringify([{ schemaName: 'public', tableName: 'test', rowCount: 1, totalBytes: 1 }]));
+        const statsDir = await mkdtemp(path.join(tmpdir(), 'pgfence-stats-'));
+        const statsPath = path.join(statsDir, 'stats.json');
+        await fs.writeFile(statsPath, JSON.stringify([{ schemaName: 'public', tableName: 'test', rowCount: 1, totalBytes: 1 }]));
 
         try {
-            const { stdout } = await execPromise(cliCommand(`analyze "${fixture}" --stats-file test-stats.json`));
+            const { stdout } = await execPromise(cliCommand(`analyze "${fixture}" --stats-file "${statsPath}"`));
             expect(stdout).toContain('[LOW]');
         } finally {
-            await fs.unlink('test-stats.json').catch(() => {});
+            await rm(statsDir, { recursive: true, force: true });
         }
     });
 });
