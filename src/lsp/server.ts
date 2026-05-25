@@ -173,7 +173,7 @@ export function createServer(conn: Connection) {
       }
 
       for (const warning of result.extractionWarnings) {
-        diagnostics.push(extractionWarningToDiagnostic(warning));
+        diagnostics.push(extractionWarningToDiagnostic(warning, serverConfig.unknownHandling));
       }
 
       for (let i = 0; i < result.checks.length; i++) {

@@ -110,9 +110,14 @@ export function policyViolationToDiagnostic(
 
 /**
  * Convert an ExtractionWarning to an LSP Diagnostic.
+ *
+ * When unknownHandling=block, statements that could not be statically analyzed
+ * surface as Error so editor users see the same blocking behavior as CLI users.
+ * Non-unanalyzable warnings stay as Warning regardless.
  */
 export function extractionWarningToDiagnostic(
   warning: ExtractionWarning,
+  unknownHandling: 'warn' | 'block' = 'warn',
 ): Diagnostic {
   const line = Math.max(0, (warning.line ?? 1) - 1); // LSP is 0-indexed; line is 1-based
   const col = Math.max(0, warning.column ?? 0); // column is already 0-based from AST
@@ -120,10 +125,14 @@ export function extractionWarningToDiagnostic(
     Position.create(line, col),
     Position.create(line, col),
   );
+  const severity =
+    warning.unanalyzable && unknownHandling === 'block'
+      ? DiagnosticSeverity.Error
+      : DiagnosticSeverity.Warning;
   return Diagnostic.create(
     range,
     warning.message,
-    DiagnosticSeverity.Warning,
+    severity,
     undefined,
     'pgfence',
   );

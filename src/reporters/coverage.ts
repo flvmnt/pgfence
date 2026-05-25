@@ -5,6 +5,8 @@ export interface CoverageSummary {
   unanalyzableStatements: number;
   totalStatements: number;
   coveragePercent: number;
+  /** Sorted, deduplicated list of source lines where unanalyzable statements were found. */
+  unanalyzableLines: number[];
 }
 
 export function countUnanalyzable(result: AnalysisResult): number {
@@ -19,10 +21,37 @@ export function summarizeCoverage(results: AnalysisResult[]): CoverageSummary {
     ? Math.round((analyzedStatements / totalStatements) * 100)
     : 100;
 
+  const lineSet = new Set<number>();
+  for (const result of results) {
+    for (const warning of result.extractionWarnings ?? []) {
+      if (warning.unanalyzable && typeof warning.line === 'number') {
+        lineSet.add(warning.line);
+      }
+    }
+  }
+  const unanalyzableLines = Array.from(lineSet).sort((a, b) => a - b);
+
   return {
     analyzedStatements,
     unanalyzableStatements,
     totalStatements,
     coveragePercent,
+    unanalyzableLines,
   };
+}
+
+/**
+ * Render the (lines A, B, ...) suffix per the Trust Contract spec.
+ * Returns an empty string if there are no unanalyzable statements, or if none of them
+ * carry a line number. Truncates after MAX lines and appends "+N more".
+ */
+export function formatUnanalyzableLineSuffix(coverage: CoverageSummary, max = 8): string {
+  if (coverage.unanalyzableStatements === 0) return '';
+  const lines = coverage.unanalyzableLines;
+  if (lines.length === 0) return '';
+  if (lines.length <= max) {
+    return ` (lines ${lines.join(', ')})`;
+  }
+  const shown = lines.slice(0, max).join(', ');
+  return ` (lines ${shown}, +${lines.length - max} more)`;
 }

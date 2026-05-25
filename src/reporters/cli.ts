@@ -9,7 +9,7 @@ import Table from 'cli-table3';
 import type { AnalysisResult, CheckResult, PgfenceConfig } from '../types.js';
 import { RiskLevel } from '../types.js';
 import { RISK_ORDER } from '../analyzer.js';
-import { summarizeCoverage } from './coverage.js';
+import { summarizeCoverage, formatUnanalyzableLineSuffix } from './coverage.js';
 
 function riskIndex(risk: RiskLevel): number {
   return RISK_ORDER.indexOf(risk);
@@ -211,7 +211,7 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
   lines.push(`Postgres ruleset: PG${config.minPostgresVersion}+ (configurable)`);
   lines.push(
     `Analyzed: ${coverage.analyzedStatements} statements  |  ` +
-    `Unanalyzable: ${coverage.unanalyzableStatements}  |  ` +
+    `Unanalyzable: ${coverage.unanalyzableStatements}${formatUnanalyzableLineSuffix(coverage)}  |  ` +
     `Coverage: ${coverage.coveragePercent}%`,
   );
   lines.push('');

@@ -7,9 +7,10 @@
 
 import chalk from 'chalk';
 import Table from 'cli-table3';
-import type { TraceResult, TraceCheckResult } from '../types.js';
+import type { TraceResult, TraceCheckResult, AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
 import { RISK_ORDER } from '../analyzer.js';
+import { summarizeCoverage, formatUnanalyzableLineSuffix } from './coverage.js';
 
 function riskIndex(risk: RiskLevel): number {
   return RISK_ORDER.indexOf(risk);
@@ -248,9 +249,12 @@ export function reportTraceCLI(results: TraceResult[]): string {
   const dockerImage = 'postgres:' + (results[0]?.pgVersion ?? 17) + '-alpine';
   const containerLifetime = results.reduce((max, r) => Math.max(max, r.containerLifetimeMs ?? 0), 0) / 1000;
 
+  // Trust Contract coverage line (matches CLI/GitHub/JSON/GitLab reporters)
+  const coverage = summarizeCoverage(results as unknown as AnalysisResult[]);
   lines.push(chalk.bold('=== Coverage ==='));
   lines.push(
     `Analyzed: ${totalStatements} statements | ` +
+      `Unanalyzable: ${coverage.unanalyzableStatements}${formatUnanalyzableLineSuffix(coverage)} | ` +
       `Verified: ${verified}/${allChecks.length} | ` +
       `Mismatches: ${mismatches} | ` +
       `Trace-only: ${traceOnly}`,

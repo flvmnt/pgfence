@@ -6,7 +6,7 @@
 
 import type { AnalysisResult, CheckResult } from '../types.js';
 import { RiskLevel } from '../types.js';
-import { summarizeCoverage } from './coverage.js';
+import { summarizeCoverage, formatUnanalyzableLineSuffix } from './coverage.js';
 
 function escapeHtml(text: string): string {
   return text
@@ -148,7 +148,7 @@ export function reportGitHub(results: AnalysisResult[]): string {
   lines.push('');
   lines.push(
     `Analyzed **${coverage.analyzedStatements}** SQL statements. ` +
-    `**${coverage.unanalyzableStatements}** dynamic statements not analyzable. ` +
+    `**${coverage.unanalyzableStatements}** dynamic statements not analyzable${formatUnanalyzableLineSuffix(coverage)}. ` +
     `Coverage: **${coverage.coveragePercent}%**`,
   );
   lines.push('');

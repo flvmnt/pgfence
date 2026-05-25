@@ -108,8 +108,18 @@ export function reportGitLab(results: AnalysisResult[]): string {
     const coveragePct = totalStatements > 0
       ? Math.round((result.statementCount / totalStatements) * 100)
       : 100;
+    const dynLines = Array.from(
+      new Set(
+        (result.extractionWarnings ?? [])
+          .filter((w) => w.unanalyzable && typeof w.line === 'number')
+          .map((w) => w.line as number),
+      ),
+    ).sort((a, b) => a - b);
+    const linesSuffix = dynLines.length > 0
+      ? ` (lines ${dynLines.length > 8 ? `${dynLines.slice(0, 8).join(', ')}, +${dynLines.length - 8} more` : dynLines.join(', ')})`
+      : '';
     pushViolation({
-      description: `Analyzed ${result.statementCount} SQL statements. ${dynamicWarnings} dynamic statements not analyzable. Coverage: ${coveragePct}%.`,
+      description: `Analyzed ${result.statementCount} SQL statements. ${dynamicWarnings} dynamic statements not analyzable${linesSuffix}. Coverage: ${coveragePct}%.`,
       check_name: 'pgfence-coverage-summary',
       severity: 'info',
       location: { path, lines: { begin: 1 } },
