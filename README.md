@@ -87,7 +87,7 @@ Safe Rewrites:
      • CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_email ON users(email);
 
 === Coverage ===
-Analyzed: 2 statements  |  Unanalyzable: 0  |  Coverage: 100%
+Analyzed 2 SQL statements. 0 dynamic statements not analyzable. Coverage: 100%
 ```
 
 ## Try pgfence in 30 seconds
@@ -211,7 +211,7 @@ pgfence init --prisma-github-action
 This writes `.github/workflows/pgfence-prisma.yml`. The workflow runs on pull requests that touch `prisma/migrations/**/migration.sql`, finds every Prisma `migration.sql` file, and checks them with:
 
 ```bash
-npx --yes @flvmnt/pgfence@latest analyze --format prisma --ci --max-risk medium
+npx --yes @flvmnt/pgfence@0.6.0 analyze --format prisma --ci --max-risk medium
 ```
 
 The command refuses to overwrite an existing `pgfence-prisma.yml`, so you can review or rename your current workflow first.
@@ -338,10 +338,10 @@ pgfence checks a broad set of DDL patterns against Postgres's lock mode semantic
 | | `ALTER COLUMN TYPE` (cross-family) | ACCESS EXCLUSIVE | HIGH | Expand/contract pattern |
 | 8 | `ALTER COLUMN SET NOT NULL` | ACCESS EXCLUSIVE | MEDIUM | CHECK constraint NOT VALID + validate |
 | 9 | `ADD CONSTRAINT ... FOREIGN KEY` | SHARE ROW EXCLUSIVE | HIGH | NOT VALID + VALIDATE CONSTRAINT |
-| 10 | `ADD CONSTRAINT ... CHECK` | SHARE ROW EXCLUSIVE | MEDIUM | NOT VALID + VALIDATE CONSTRAINT |
-| 11 | `ADD CONSTRAINT ... UNIQUE` | SHARE ROW EXCLUSIVE | HIGH | CONCURRENTLY unique index + USING INDEX |
-| | `ADD CONSTRAINT ... UNIQUE USING INDEX` | SHARE UPDATE EXCLUSIVE | LOW | Instant, attaches pre-built index |
-| 12 | `ADD CONSTRAINT ... EXCLUDE` | SHARE ROW EXCLUSIVE | HIGH | No concurrent alternative; use lock_timeout |
+| 10 | `ADD CONSTRAINT ... CHECK` | ACCESS EXCLUSIVE | MEDIUM | NOT VALID + VALIDATE CONSTRAINT |
+| 11 | `ADD CONSTRAINT ... UNIQUE` | ACCESS EXCLUSIVE | HIGH | CONCURRENTLY unique index + USING INDEX |
+| | `ADD CONSTRAINT ... UNIQUE USING INDEX` | ACCESS EXCLUSIVE | LOW | Brief metadata operation, attaches pre-built index |
+| 12 | `ADD CONSTRAINT ... EXCLUDE` | ACCESS EXCLUSIVE | HIGH | No concurrent alternative; use lock_timeout |
 | | `CREATE TABLE ... EXCLUDE` | SHARE ROW EXCLUSIVE | LOW | New table only; safe to review as table creation |
 | 13 | `DROP TABLE` | ACCESS EXCLUSIVE | CRITICAL | Separate release |
 | 14 | `DROP COLUMN` | ACCESS EXCLUSIVE | HIGH | Remove app references first, then drop |
@@ -393,10 +393,10 @@ These ship in v0.6 and are not flagged by Eugene, Squawk, pgrubic, or strong_mig
 |---|---------|-----------|------|------------------|
 | 43 | `CLUSTER table USING idx` | ACCESS EXCLUSIVE | HIGH | Use `pg_repack` for online reclustering |
 | 44 | `REPLICA IDENTITY FULL` | ACCESS EXCLUSIVE (brief) | HIGH | Use primary key (default) or unique non-null index; FULL amplifies WAL 10x-100x |
-| 45 | `ENABLE ROW LEVEL SECURITY` | ACCESS EXCLUSIVE | HIGH | Create policies BEFORE enabling RLS or app loses access to all rows |
+| 45 | `ENABLE ROW LEVEL SECURITY` | ACCESS EXCLUSIVE | HIGH | Create policies BEFORE enabling RLS or affected non-owner roles lose access |
 | 46 | `DISABLE ROW LEVEL SECURITY` | ACCESS EXCLUSIVE | HIGH | Audit which rows were gated by policies before disabling |
-| 47 | `ALTER TABLE ... INHERIT/NO INHERIT` | ACCESS EXCLUSIVE (both tables) | HIGH | Validation scan; schedule in maintenance window with lock_timeout |
-| 48 | `CREATE POLICY` | informational | LOW | Inert until RLS is enabled; verify ordering with `ALTER TABLE ENABLE ROW LEVEL SECURITY` |
+| 47 | `ALTER TABLE ... INHERIT/NO INHERIT` | ACCESS EXCLUSIVE (both tables) | HIGH | Catalog-bound change; schedule in maintenance window with lock_timeout |
+| 48 | `CREATE POLICY` | ACCESS EXCLUSIVE (brief) | MEDIUM | Inert until RLS is enabled; verify ordering with `ALTER TABLE ENABLE ROW LEVEL SECURITY` |
 | 49 | `CREATE TYPE ... AS ENUM` | n/a | LOW | Postgres has no `ALTER TYPE ... DROP VALUE`; prefer lookup table or CHECK constraint for evolving sets |
 
 ### Transaction & Policy Checks
@@ -464,7 +464,7 @@ Use a concrete migration path or a glob here. The composite action expands `path
 
 ```yaml
 - name: Check migration safety
-  uses: flvmnt/pgfence@v1
+  uses: flvmnt/pgfence@v0.6.0
   with:
     path: migrations/add-users.sql
     max-risk: medium

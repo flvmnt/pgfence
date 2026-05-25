@@ -21,7 +21,7 @@ ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
 -- disable-rls: exposure risk
 ALTER TABLE customers DISABLE ROW LEVEL SECURITY;
 
--- inherit: validation scan under ACCESS EXCLUSIVE both
+-- inherit: catalog-bound ACCESS EXCLUSIVE change on both tables
 ALTER TABLE measurements_2026_05 INHERIT measurements;
 
 -- no inherit: brief but blocking

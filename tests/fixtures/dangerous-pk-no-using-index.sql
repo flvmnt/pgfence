@@ -1,5 +1,5 @@
 -- Fixture: ADD PRIMARY KEY without USING INDEX
--- Expected: HIGH risk, SHARE ROW EXCLUSIVE lock
+-- Expected: HIGH risk, ACCESS EXCLUSIVE lock
 
 SET lock_timeout = '2s';
 SET statement_timeout = '5min';

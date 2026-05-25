@@ -391,7 +391,7 @@ export class AddCheck implements MigrationInterface {
     const checkConstraint = checks.find((c) => c.ruleId === 'add-constraint-check-no-not-valid');
     expect(checkConstraint).toBeDefined();
     expect(checkConstraint!.risk).toBe(RiskLevel.MEDIUM);
-    expect(checkConstraint!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
+    expect(checkConstraint!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
   });
 
   it('should detect ADD UNIQUE constraint as HIGH risk', async () => {
@@ -401,7 +401,7 @@ export class AddCheck implements MigrationInterface {
     const uniqueCheck = checks.find((c) => c.ruleId === 'add-constraint-unique');
     expect(uniqueCheck).toBeDefined();
     expect(uniqueCheck!.risk).toBe(RiskLevel.HIGH);
-    expect(uniqueCheck!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
+    expect(uniqueCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
   });
 
   it('should detect ADD EXCLUDE constraint as HIGH risk', async () => {
@@ -411,7 +411,7 @@ export class AddCheck implements MigrationInterface {
     const excludeCheck = checks.find((c) => c.ruleId === 'add-constraint-exclude');
     expect(excludeCheck).toBeDefined();
     expect(excludeCheck!.risk).toBe(RiskLevel.HIGH);
-    expect(excludeCheck!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
+    expect(excludeCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(excludeCheck!.tableName).toBe('reservations');
     expect(excludeCheck!.safeRewrite).toBeDefined();
     expect(excludeCheck!.safeRewrite!.steps.length).toBeGreaterThan(1);
@@ -949,7 +949,7 @@ DROP TABLE old_data;`;
     const uniqueCheck = checks.find((c) => c.ruleId === 'add-constraint-unique-using-index');
     expect(uniqueCheck).toBeDefined();
     expect(uniqueCheck!.risk).toBe(RiskLevel.LOW);
-    expect(uniqueCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
+    expect(uniqueCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(uniqueCheck!.tableName).toBe('businesses');
     expect(uniqueCheck!.safeRewrite).toBeUndefined();
   });
@@ -961,7 +961,7 @@ DROP TABLE old_data;`;
     const pkCheck = checks.find((c) => c.ruleId === 'add-pk-using-index');
     expect(pkCheck).toBeDefined();
     expect(pkCheck!.risk).toBe(RiskLevel.LOW);
-    expect(pkCheck!.lockMode).toBe(LockMode.SHARE_UPDATE_EXCLUSIVE);
+    expect(pkCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(pkCheck!.tableName).toBe('users');
     expect(pkCheck!.safeRewrite).toBeUndefined();
   });
@@ -1730,10 +1730,53 @@ describe('Plugin system', () => {
     const checks = results[0].checks;
     const pkCheck = checks.find((c) => c.ruleId === 'add-pk-without-using-index');
     expect(pkCheck).toBeDefined();
-    expect(pkCheck!.lockMode).toBe(LockMode.SHARE_ROW_EXCLUSIVE);
+    expect(pkCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(pkCheck!.risk).toBe(RiskLevel.HIGH);
     expect(pkCheck!.tableName).toBe('orders');
     expect(pkCheck!.safeRewrite).toBeDefined();
+  });
+
+  it('should report ADD CHECK NOT VALID as brief ACCESS EXCLUSIVE', async () => {
+    const sql = `ALTER TABLE users ADD CONSTRAINT users_email_nn CHECK (email IS NOT NULL) NOT VALID;`;
+    await withTempSqlFile('pgfence-check-not-valid-lock', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false });
+      const check = results[0].checks.find((c) => c.ruleId === 'add-constraint-check-not-valid');
+      expect(check).toBeDefined();
+      expect(check!.risk).toBe(RiskLevel.LOW);
+      expect(check!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+      expect(check!.message).toContain('validation is deferred');
+    });
+  });
+
+  it('should treat non-FK ADD CONSTRAINT as ACCESS EXCLUSIVE for policy ordering', async () => {
+    const sql = `
+ALTER TABLE users ADD CONSTRAINT users_email_uq UNIQUE (email);
+SET lock_timeout = '2s';
+`;
+    await withTempSqlFile('pgfence-constraint-policy-ordering', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], { ...defaultConfig, requireStatementTimeout: false });
+      const violation = results[0].policyViolations.find((v) => v.ruleId === 'lock-timeout-after-dangerous-statement');
+      expect(violation).toBeDefined();
+      expect(violation!.severity).toBe('error');
+    });
+  });
+
+  it('should detect wide lock windows across ACCESS EXCLUSIVE constraints', async () => {
+    const sql = `
+SET lock_timeout = '2s';
+SET statement_timeout = '5min';
+SET application_name = 'migrate:test';
+SET idle_in_transaction_session_timeout = '30s';
+BEGIN;
+ALTER TABLE users ADD CONSTRAINT users_email_uq UNIQUE (email);
+ALTER TABLE orders ADD CONSTRAINT orders_code_uq UNIQUE (code);
+COMMIT;
+`;
+    await withTempSqlFile('pgfence-constraint-wide-lock', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], defaultConfig);
+      expect(results[0].policyViolations.some((v) => v.ruleId === 'wide-lock-window')).toBe(true);
+      expect(results[0].policyViolations.some((v) => v.ruleId === 'statement-after-access-exclusive')).toBe(true);
+    });
   });
 
   it('should detect missing idle_in_transaction_session_timeout policy violation', async () => {
@@ -2091,10 +2134,27 @@ describe('production footguns no other linter catches', () => {
     const disable = results[0].checks.find((c) => c.ruleId === 'disable-rls');
     expect(enable).toBeDefined();
     expect(enable!.risk).toBe(RiskLevel.HIGH);
-    expect(enable!.message).toMatch(/deny|denies/);
+    expect(enable!.message).toMatch(/affected non-owner roles/);
     expect(disable).toBeDefined();
     expect(disable!.risk).toBe(RiskLevel.HIGH);
     expect(disable!.message).toMatch(/expose/);
+  });
+
+  it('should flag FORCE and NO FORCE row level security as HIGH', async () => {
+    const sql = `
+ALTER TABLE accounts FORCE ROW LEVEL SECURITY;
+ALTER TABLE accounts NO FORCE ROW LEVEL SECURITY;
+`;
+    await withTempSqlFile('pgfence-force-rls', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false });
+      const force = results[0].checks.find((c) => c.ruleId === 'force-rls');
+      const noForce = results[0].checks.find((c) => c.ruleId === 'no-force-rls');
+      expect(force).toBeDefined();
+      expect(force!.risk).toBe(RiskLevel.HIGH);
+      expect(force!.message).toContain('table owners');
+      expect(noForce).toBeDefined();
+      expect(noForce!.risk).toBe(RiskLevel.HIGH);
+    });
   });
 
   it('should flag ALTER TABLE INHERIT and NO INHERIT as HIGH', async () => {
@@ -2107,12 +2167,29 @@ describe('production footguns no other linter catches', () => {
     expect(noInherit!.risk).toBe(RiskLevel.HIGH);
   });
 
-  it('should flag CREATE POLICY as LOW informational', async () => {
+  it('should flag CREATE POLICY as MEDIUM informational', async () => {
     const results = await analyze([fixture('prod-footguns.sql')], defaultConfig);
     const check = results[0].checks.find((c) => c.ruleId === 'create-policy');
     expect(check).toBeDefined();
-    expect(check!.risk).toBe(RiskLevel.LOW);
+    expect(check!.risk).toBe(RiskLevel.MEDIUM);
+    expect(check!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(check!.message).toMatch(/ENABLE ROW LEVEL SECURITY/i);
+  });
+
+  it('should flag ALTER POLICY and DROP POLICY changes', async () => {
+    const sql = `
+ALTER POLICY tenant_isolation ON accounts USING (tenant_id = current_setting('app.tenant_id')::int);
+DROP POLICY tenant_isolation ON accounts;
+`;
+    await withTempSqlFile('pgfence-policy-changes', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false });
+      const alterPolicy = results[0].checks.find((c) => c.ruleId === 'alter-policy');
+      const dropPolicy = results[0].checks.find((c) => c.ruleId === 'drop-policy');
+      expect(alterPolicy).toBeDefined();
+      expect(alterPolicy!.risk).toBe(RiskLevel.MEDIUM);
+      expect(dropPolicy).toBeDefined();
+      expect(dropPolicy!.risk).toBe(RiskLevel.HIGH);
+    });
   });
 
   it('should flag CREATE TYPE AS ENUM as LOW with DROP VALUE caveat', async () => {

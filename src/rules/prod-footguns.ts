@@ -3,9 +3,9 @@
  *
  * - CLUSTER: rewrites entire table holding ACCESS EXCLUSIVE; same blast radius as VACUUM FULL.
  * - ALTER TABLE ... REPLICA IDENTITY FULL: 10-100x amplifies logical-replication WAL volume.
- * - CREATE POLICY / ALTER TABLE ENABLE | DISABLE ROW LEVEL SECURITY: toggling RLS without a
+ * - CREATE POLICY / ALTER POLICY / DROP POLICY / ALTER TABLE ENABLE | DISABLE | FORCE | NO FORCE ROW LEVEL SECURITY: toggling RLS without a
  *   policy locks users out of their own data; disabling silently exposes data.
- * - ALTER TABLE ... INHERIT | NO INHERIT: validation scan under ACCESS EXCLUSIVE on both tables.
+ * - ALTER TABLE ... INHERIT | NO INHERIT: ACCESS EXCLUSIVE catalog changes on inherited tables.
  * - CREATE TYPE AS ENUM: future ALTER TYPE DROP VALUE is impossible in Postgres, warn early.
  *
  * Every assignment here is justified against the PostgreSQL source (tablecmds.c, cluster.c,
@@ -22,6 +22,14 @@ type TableRef = { relname?: string; schemaname?: string };
 function tableNameOf(rel: TableRef | undefined | null): string | null {
   if (!rel?.relname) return null;
   return rel.schemaname ? `${rel.schemaname}.${rel.relname}` : rel.relname;
+}
+
+function extractPolicyTableName(objects: unknown[] | undefined): string | null {
+  const first = objects?.[0] as { List?: { items?: Array<{ String?: { sval?: string } }> } } | undefined;
+  const items = first?.List?.items ?? [];
+  const names = items.map((item) => item.String?.sval).filter((name): name is string => Boolean(name));
+  if (names.length < 2) return null;
+  return names.slice(1).join('.');
 }
 
 export function checkProdFootguns(stmt: ParsedStatement): CheckResult[] {
@@ -96,8 +104,15 @@ export function checkProdFootguns(stmt: ParsedStatement): CheckResult[] {
         }
 
         // RLS toggle on the table itself.
-        if (sub === 'AT_EnableRowSecurity' || sub === 'AT_DisableRowSecurity') {
+        if (
+          sub === 'AT_EnableRowSecurity' ||
+          sub === 'AT_DisableRowSecurity' ||
+          sub === 'AT_ForceRowSecurity' ||
+          sub === 'AT_NoForceRowSecurity'
+        ) {
           const enabling = sub === 'AT_EnableRowSecurity';
+          const forcing = sub === 'AT_ForceRowSecurity';
+          const noForcing = sub === 'AT_NoForceRowSecurity';
           results.push({
             statement: stmt.sql,
             statementPreview: makePreview(stmt.sql),
@@ -105,15 +120,35 @@ export function checkProdFootguns(stmt: ParsedStatement): CheckResult[] {
             lockMode: LockMode.ACCESS_EXCLUSIVE,
             blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
             risk: RiskLevel.HIGH,
-            message: enabling
-              ? `ALTER TABLE "${tableName}" ENABLE ROW LEVEL SECURITY: without a CREATE POLICY for the current role, this denies access to every row of "${tableName}". Reads return empty, writes fail.`
-              : `ALTER TABLE "${tableName}" DISABLE ROW LEVEL SECURITY: silently exposes every row that was previously gated by policies. Any role with table-level SELECT will see all rows, including those a policy was hiding.`,
-            ruleId: enabling ? 'enable-rls' : 'disable-rls',
+            message: forcing
+              ? `ALTER TABLE "${tableName}" FORCE ROW LEVEL SECURITY: table owners are now subject to policies too. If no applicable policy exists for the owner path, owner-backed maintenance and application flows can stop seeing or changing rows.`
+              : noForcing
+                ? `ALTER TABLE "${tableName}" NO FORCE ROW LEVEL SECURITY: table owners bypass policies again. Verify owner-backed application connections are not relying on policy enforcement.`
+                : enabling
+                  ? `ALTER TABLE "${tableName}" ENABLE ROW LEVEL SECURITY: affected non-owner roles need matching policies. Without an applicable policy, reads return no rows and writes fail.`
+                  : `ALTER TABLE "${tableName}" DISABLE ROW LEVEL SECURITY: silently exposes every row that was previously gated by policies. Any role with table-level SELECT can see rows a policy was hiding.`,
+            ruleId: forcing ? 'force-rls' : noForcing ? 'no-force-rls' : enabling ? 'enable-rls' : 'disable-rls',
             safeRewrite: {
-              description: enabling
-                ? 'Define policies BEFORE enabling RLS. The order matters: with RLS on and no policy, the default is deny-all.'
-                : 'Verify no policy on this table is hiding data that should remain hidden. If RLS is being removed because the policies are wrong, fix the policies instead.',
-              steps: enabling
+              description: forcing
+                ? 'Audit all owner-backed access before forcing RLS, then test as the owner and target roles.'
+                : noForcing
+                  ? 'Verify owner bypass is intended before removing forced RLS.'
+                  : enabling
+                    ? 'Define policies before enabling RLS. The order matters: with RLS on and no matching policy, affected roles are denied.'
+                    : 'Verify no policy on this table is hiding data that should remain hidden. If RLS is being removed because the policies are wrong, fix the policies instead.',
+              steps: forcing
+                ? [
+                    `-- Audit policies and owner-backed access first`,
+                    `SELECT polname, polcmd, polqual FROM pg_policy WHERE polrelid = '${tableName}'::regclass;`,
+                    `ALTER TABLE ${tableName} FORCE ROW LEVEL SECURITY;`,
+                    `SET ROLE <owner_or_app_role>; SELECT count(*) FROM ${tableName};`,
+                  ]
+                : noForcing
+                  ? [
+                      `-- Confirm owner bypass is intended`,
+                      `ALTER TABLE ${tableName} NO FORCE ROW LEVEL SECURITY;`,
+                    ]
+                  : enabling
                 ? [
                     `-- 1. Create the policies first`,
                     `CREATE POLICY <name> ON ${tableName} FOR SELECT USING (<condition>);`,
@@ -121,19 +156,19 @@ export function checkProdFootguns(stmt: ParsedStatement): CheckResult[] {
                     `ALTER TABLE ${tableName} ENABLE ROW LEVEL SECURITY;`,
                     `-- 3. Test as the target role`,
                     `SET ROLE <app_role>; SELECT count(*) FROM ${tableName};`,
-                  ]
-                : [
-                    `-- Audit before disabling`,
-                    `SELECT polname, polcmd, polqual FROM pg_policy WHERE polrelid = '${tableName}'::regclass;`,
-                    `-- Only then`,
-                    `ALTER TABLE ${tableName} DISABLE ROW LEVEL SECURITY;`,
-                  ],
+                    ]
+                  : [
+                      `-- Audit before disabling`,
+                      `SELECT polname, polcmd, polqual FROM pg_policy WHERE polrelid = '${tableName}'::regclass;`,
+                      `-- Only then`,
+                      `ALTER TABLE ${tableName} DISABLE ROW LEVEL SECURITY;`,
+                    ],
             },
           });
           continue;
         }
 
-        // INHERIT / NO INHERIT: validation scan of child under ACCESS EXCLUSIVE on both tables.
+        // INHERIT / NO INHERIT: catalog-bound ACCESS EXCLUSIVE changes on inherited tables.
         if (sub === 'AT_AddInherit' || sub === 'AT_DropInherit') {
           const adding = sub === 'AT_AddInherit';
           results.push({
@@ -144,7 +179,7 @@ export function checkProdFootguns(stmt: ParsedStatement): CheckResult[] {
             blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
             risk: RiskLevel.HIGH,
             message: adding
-              ? `ALTER TABLE "${tableName}" INHERIT: scans the child to validate column shape and CHECK constraints against the parent, holding ACCESS EXCLUSIVE on both tables for the duration of the scan.`
+              ? `ALTER TABLE "${tableName}" INHERIT: catalog-bound inheritance change that takes ACCESS EXCLUSIVE on the child and parent while validating inherited table metadata.`
               : `ALTER TABLE "${tableName}" NO INHERIT: brief but ACCESS EXCLUSIVE on both parent and child; verify no application code expects the inheritance relationship.`,
             ruleId: adding ? 'inherit' : 'no-inherit',
             safeRewrite: {
@@ -160,9 +195,25 @@ export function checkProdFootguns(stmt: ParsedStatement): CheckResult[] {
       break;
     }
 
+    case 'AlterPolicyStmt': {
+      const node = stmt.node as { table?: TableRef; policy_name?: string };
+      const tableName = tableNameOf(node.table);
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.MEDIUM,
+        message: `ALTER POLICY "${node.policy_name ?? '<unnamed>'}" on "${tableName}": changes who can see or modify rows under RLS. Test as every affected role before shipping.`,
+        ruleId: 'alter-policy',
+      });
+      break;
+    }
+
     case 'CreatePolicyStmt': {
       // CREATE POLICY itself is informational. The HIGH-risk pairing is "policy + enable RLS"
-      // which we already flag on AT_EnableRowSecurity. Surface a LOW informational so reviewers
+      // which we already flag on AT_EnableRowSecurity. Surface a MEDIUM note so reviewers
       // see the full picture.
       const node = stmt.node as { table?: TableRef; policy_name?: string };
       const tableName = tableNameOf(node.table);
@@ -172,9 +223,26 @@ export function checkProdFootguns(stmt: ParsedStatement): CheckResult[] {
         tableName,
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-        risk: RiskLevel.LOW,
-        message: `CREATE POLICY "${node.policy_name ?? '<unnamed>'}" on "${tableName}": no effect until ROW LEVEL SECURITY is enabled on the table. Verify the corresponding ALTER TABLE ... ENABLE ROW LEVEL SECURITY exists and runs AFTER all policies are created.`,
+        risk: RiskLevel.MEDIUM,
+        message: `CREATE POLICY "${node.policy_name ?? '<unnamed>'}" on "${tableName}": brief ACCESS EXCLUSIVE catalog change. It has no effect until ROW LEVEL SECURITY is enabled on the table. Verify the corresponding ALTER TABLE ... ENABLE ROW LEVEL SECURITY exists and runs after all policies are created.`,
         ruleId: 'create-policy',
+      });
+      break;
+    }
+
+    case 'DropStmt': {
+      const node = stmt.node as { removeType?: string; objects?: unknown[] };
+      if (node.removeType !== 'OBJECT_POLICY') break;
+      const tableName = extractPolicyTableName(node.objects);
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.HIGH,
+        message: `DROP POLICY on "${tableName ?? '<unknown>'}": removes an RLS rule and can immediately expose or deny rows for affected roles.`,
+        ruleId: 'drop-policy',
       });
       break;
     }

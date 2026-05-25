@@ -265,7 +265,7 @@ export function checkPolicies(
             if (!isIgnored(stmt, 'not-valid-validate-same-tx')) {
               violations.push({
                 ruleId: 'not-valid-validate-same-tx',
-                message: `NOT VALID + VALIDATE CONSTRAINT "${c.name}" in same transaction: this defeats the purpose of NOT VALID because the table scan runs while the SHARE ROW EXCLUSIVE lock from ADD CONSTRAINT is still held`,
+                message: `NOT VALID + VALIDATE CONSTRAINT "${c.name}" in same transaction: this defeats the purpose of NOT VALID because the table scan runs while the ADD CONSTRAINT lock is still held`,
                 suggestion: `Split into separate migrations: add the constraint with NOT VALID in one migration, then VALIDATE CONSTRAINT in a follow-up migration`,
                 severity: 'error',
                 statementIndex: i,
@@ -387,6 +387,23 @@ export function checkPolicies(
  * Determines whether a statement takes an ACCESS EXCLUSIVE lock.
  * Used for compounding danger detection (Eugene's E4 pattern).
  */
+function addConstraintAccessExclusive(cmd: {
+  subtype?: string;
+  def?: {
+    Constraint?: {
+      contype?: string;
+      skip_validation?: boolean;
+      indexname?: string;
+    };
+  };
+}): boolean {
+  if (cmd.subtype === 'AT_AddIndexConstraint') return true;
+  if (cmd.subtype !== 'AT_AddConstraint') return false;
+  const constraint = cmd.def?.Constraint;
+  if (!constraint) return true;
+  return constraint.contype !== 'CONSTR_FOREIGN';
+}
+
 function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
   switch (stmt.nodeType) {
     case 'AlterTableStmt': {
@@ -405,7 +422,7 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
                   };
                 }>;
               };
-              Constraint?: { skip_validation?: boolean };
+              Constraint?: { contype?: string; skip_validation?: boolean; indexname?: string };
               PartitionCmd?: { concurrent?: boolean };
             };
           };
@@ -421,16 +438,14 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
         }
         // DROP NOT NULL is instant (metadata-only on Postgres 9+) - skip
         if (sub === 'AT_DropNotNull') continue;
-        // ADD CONSTRAINT with NOT VALID is brief (metadata only) - skip
-        if (sub === 'AT_AddConstraint' && cmd.AlterTableCmd.def?.Constraint?.skip_validation === true) continue;
+        if (addConstraintAccessExclusive(cmd.AlterTableCmd)) return true;
+        if (sub === 'AT_AddConstraint') continue;
         // ENABLE/DISABLE TRIGGER takes SHARE ROW EXCLUSIVE - skip
         if (sub === 'AT_EnableTrig' || sub === 'AT_DisableTrig' ||
           sub === 'AT_EnableTrigAll' || sub === 'AT_DisableTrigAll' ||
           sub === 'AT_EnableTrigUser' || sub === 'AT_DisableTrigUser') continue;
         // DETACH PARTITION CONCURRENTLY takes SHARE UPDATE EXCLUSIVE - skip
         if (sub === 'AT_DetachPartition' && cmd.AlterTableCmd.def?.PartitionCmd?.concurrent === true) continue;
-        // ADD CONSTRAINT takes SHARE ROW EXCLUSIVE (PG 9.3+), not ACCESS EXCLUSIVE
-        if (sub === 'AT_AddConstraint') continue;
         // These subtypes hold ACCESS EXCLUSIVE for significant duration
         if (sub === 'AT_DropColumn' ||
           sub === 'AT_AlterColumnType' || sub === 'AT_SetNotNull' ||

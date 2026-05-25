@@ -50,22 +50,31 @@ Safe rewrite for all of these: split into expand + backfill + contract migration
 Add the column nullable, backfill in batches with `FOR UPDATE SKIP LOCKED`, then
 add the NOT NULL via `CHECK ... NOT VALID` + `VALIDATE CONSTRAINT`.
 
+Some widening type changes are metadata-only in pgfence when schema context proves
+they do not rewrite the table, for example `varchar(50)` to `varchar(255)` or
+`varchar` to `text`. Use `pgfence explain` or a schema snapshot before rewriting
+every `ALTER COLUMN ... TYPE` as expand/contract.
+
 ### Brief but blocking (ACCESS EXCLUSIVE, instant)
 
 - `RENAME COLUMN` (instant on PG14+)
 - `RENAME TABLE`
 - `ALTER COLUMN DROP NOT NULL`
-- Adding constraints `USING INDEX` (only ShareUpdateExclusive, not access exclusive)
+- Adding constraints `USING INDEX` (brief ACCESS EXCLUSIVE metadata change)
 
 The lock is brief but ACCESS EXCLUSIVE still queues behind every running
 transaction on the table. Always set `lock_timeout` before issuing them.
 
-### Constraint adds (SHARE ROW EXCLUSIVE on the target table)
+### Constraint adds
+
+Most `ADD CONSTRAINT` forms take ACCESS EXCLUSIVE on the target table. The main
+exception is `FOREIGN KEY`, which takes SHARE ROW EXCLUSIVE on both tables.
 
 - `ADD CONSTRAINT ... FOREIGN KEY` (locks BOTH tables in this mode)
-- `ADD CONSTRAINT ... CHECK` (writes blocked during full scan to validate)
-- `ADD CONSTRAINT ... UNIQUE` without `USING INDEX` (full scan)
-- `ADD CONSTRAINT ... EXCLUDE`
+- `ADD CONSTRAINT ... CHECK` without `NOT VALID` (ACCESS EXCLUSIVE during validation scan)
+- `ADD CONSTRAINT ... UNIQUE` without `USING INDEX` (ACCESS EXCLUSIVE during full scan)
+- `ADD CONSTRAINT ... EXCLUDE` (ACCESS EXCLUSIVE)
+- `ADD CONSTRAINT ... UNIQUE/PRIMARY KEY USING INDEX` (brief ACCESS EXCLUSIVE metadata change)
 
 Safe rewrite: add the constraint with `NOT VALID`, then `VALIDATE CONSTRAINT` in a
 separate transaction. The `NOT VALID` step takes the brief lock; the validation
@@ -93,11 +102,13 @@ Most Postgres migration linters miss these, but pgfence flags them:
 
 - **`CLUSTER table USING idx`**: full table rewrite under ACCESS EXCLUSIVE. Use `pg_repack` instead.
 - **`ALTER TABLE t REPLICA IDENTITY FULL`**: every UPDATE/DELETE now writes the full old row image to WAL. 10x to 100x amplification. Saturates Debezium / pglogical. Use the primary key (default) or a unique non-null index instead.
-- **`ALTER TABLE t ENABLE ROW LEVEL SECURITY`** without prior policies: denies all rows by default. The application appears to lose its data.
+- **`ALTER TABLE t ENABLE ROW LEVEL SECURITY`** without prior policies: affected non-owner roles see no rows and writes fail. The application may appear to lose its data.
 - **`ALTER TABLE t DISABLE ROW LEVEL SECURITY`**: silently exposes every row that was previously gated by policies.
+- **`ALTER TABLE t FORCE ROW LEVEL SECURITY`** / `NO FORCE`: changes whether table owners are subject to policies.
 - **`DROP SCHEMA s CASCADE`**: silently drops every table, view, function, type, and sequence in the schema. CRITICAL, irreversible.
 - **`DROP DATABASE`**: irreversible. Move this to a separate ops procedure, never put it in a migration file.
-- **`ALTER TABLE child INHERIT parent`** / `NO INHERIT`: validation scan under ACCESS EXCLUSIVE on both tables.
+- **`ALTER TABLE child INHERIT parent`**: catalog-bound inheritance change under ACCESS EXCLUSIVE on child and parent.
+- **`ALTER TABLE child NO INHERIT parent`**: brief ACCESS EXCLUSIVE on child and parent.
 - **`CREATE TYPE x AS ENUM (...)`**: Postgres has no `ALTER TYPE x DROP VALUE`. If you may ever need to remove a value, prefer a lookup table or a `CHECK` constraint.
 
 ### Enum changes
@@ -108,7 +119,7 @@ Most Postgres migration linters miss these, but pgfence flags them:
 
 ### Partitioning
 
-- `ATTACH PARTITION` on PG12+: SHARE UPDATE EXCLUSIVE on the parent (does not block reads on parent or sibling partitions). PG<12: ACCESS EXCLUSIVE on parent.
+- `ATTACH PARTITION` on PG12+: SHARE UPDATE EXCLUSIVE on the parent and ACCESS EXCLUSIVE on the partition. PG<12: ACCESS EXCLUSIVE on parent.
 - `DETACH PARTITION CONCURRENTLY` (PG14+): SHARE UPDATE EXCLUSIVE. Safe.
 - `DETACH PARTITION` (blocking): ACCESS EXCLUSIVE.
 

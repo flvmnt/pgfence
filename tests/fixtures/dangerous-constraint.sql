@@ -1,5 +1,5 @@
 -- Fixture: Dangerous constraint patterns
--- Expected: HIGH risk, SHARE ROW EXCLUSIVE lock (PG 9.3+)
+-- Expected: FK uses SHARE ROW EXCLUSIVE, other ADD CONSTRAINT forms use ACCESS EXCLUSIVE
 
 -- 1) Foreign key without NOT VALID (locks both tables)
 ALTER TABLE appointments
@@ -15,7 +15,7 @@ ALTER TABLE users
 ALTER TABLE users
   ADD CONSTRAINT uq_users_email UNIQUE (email);
 
--- 4) EXCLUDE constraint (SHARE ROW EXCLUSIVE)
+-- 4) EXCLUDE constraint (ACCESS EXCLUSIVE)
 
 ALTER TABLE reservations
   ADD CONSTRAINT excl_no_overlap

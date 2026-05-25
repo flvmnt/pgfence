@@ -14,9 +14,10 @@ Verified against the PostgreSQL source and explicit-locking.html:
 
 - **`cluster`** HIGH, ACCESS EXCLUSIVE. CLUSTER rewrites the entire table. Recommends `pg_repack`.
 - **`replica-identity-full`** HIGH. Catches the silent 10x to 100x WAL amplification that saturates Debezium / pglogical consumers. `DEFAULT` and `USING INDEX` are not flagged.
-- **`enable-rls`** / **`disable-rls`** HIGH. Enabling RLS without a prior `CREATE POLICY` denies all rows. Disabling silently exposes them.
-- **`inherit`** / **`no-inherit`** HIGH. Validation scan under ACCESS EXCLUSIVE on both parent and child.
-- **`create-policy`** LOW informational. Calls out that the policy is inert until ROW LEVEL SECURITY is enabled on the table.
+- **`enable-rls`** / **`disable-rls`** HIGH. Enabling RLS without a matching `CREATE POLICY` denies rows for affected non-owner roles. Disabling silently exposes rows that policies gated.
+- **`force-rls`** / **`no-force-rls`** HIGH. Changes whether table owners are subject to row security policies.
+- **`inherit`** / **`no-inherit`** HIGH. Catalog-bound inheritance changes under ACCESS EXCLUSIVE on both parent and child.
+- **`create-policy`** MEDIUM. Calls out the brief ACCESS EXCLUSIVE catalog change and that the policy is inert until ROW LEVEL SECURITY is enabled on the table.
 - **`create-enum-type`** LOW. Postgres has no `ALTER TYPE ... DROP VALUE`. Suggests a lookup table or `CHECK` constraint for evolving categorical data.
 
 Eugene, Squawk, pgrubic, and strong_migrations together cover none of REPLICA IDENTITY FULL, RLS toggle, CLUSTER, or INHERIT.
@@ -44,7 +45,7 @@ Eugene, Squawk, pgrubic, and strong_migrations together cover none of REPLICA ID
 
 ### Fixes
 
-- `examples/try-this/README.md`: replaced em dashes with colons (CLAUDE.md rule 3).
+- `examples/try-this/README.md`: replaced em dashes with colons to satisfy repo copy rules.
 - `tests/cli.test.ts`: `wouldCiFail` helper now mirrors production `shouldFailCI`, including the `unknownHandling=block` branch. Previously a regression in that branch would have passed CI.
 - `tests/cli.test.ts`: `--stats-file` test now writes to a tmpdir instead of the project CWD (parallel-safe).
 - `src/index.ts`: clear trace pg clients after explicit `.end()` so the finally cleanup is a no-op (avoids `stderr` noise on slow network flush).
@@ -224,8 +225,7 @@ pgfence trace migrations/*.sql
 
 ## 0.3.2 (2026-03-08)
 
-- Fixed ADD CONSTRAINT lock modes (SHARE ROW EXCLUSIVE, was ACCESS EXCLUSIVE)
-- Fixed USING INDEX variants (SHARE UPDATE EXCLUSIVE)
+- Added ADD CONSTRAINT lock-mode coverage for foreign keys, primary keys, and pre-built index attachment.
 - Added validate-constraint, add-pk-without-using-index, missing-idle-timeout tests
 
 ## 0.3.1 (2026-03-07)
