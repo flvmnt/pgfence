@@ -30,8 +30,15 @@
   "files": [
     "dist",
     "!dist/cloud",
-    "!dist/agent"
+    "!dist/agent",
+    "!dist/**/*.map"
   ],
+  "homepage": "https://pgfence.com",
+  "bugs": "https://github.com/flvmnt/pgfence/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/flvmnt/pgfence.git"
+  },
   "keywords": [
     "postgres",
     "postgresql",
@@ -49,26 +56,26 @@
   "dependencies": {
     "chalk": "^5.4.0",
     "cli-table3": "^0.6.5",
-    "commander": "^13.0.0",
-    "libpg-query": "^16.0.0",
+    "commander": "^14.0.3",
+    "libpg-query": "^17.7.3",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12"
   },
   "optionalDependencies": {
     "@iarna/toml": "^2.2.5",
-    "@typescript-eslint/typescript-estree": "^8.0.0",
-    "pg": "^8.13.0"
+    "@typescript-eslint/typescript-estree": "^8.59.4",
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.1",
     "@types/node": "^20.0.0",
-    "@types/pg": "^8.11.0",
+    "@types/pg": "^8.20.0",
     "@vitest/coverage-v8": "^3.2.4",
     "eslint": "^9.0.0",
-    "prettier": "^3.0.0",
-    "tsx": "^4.0.0",
+    "prettier": "^3.8.3",
+    "tsx": "^4.22.3",
     "typescript": "^5.7.0",
-    "typescript-eslint": "^8.56.0",
+    "typescript-eslint": "^8.59.4",
     "vitest": "^3.0.0"
   },
   "pnpm": {

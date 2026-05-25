@@ -176,9 +176,9 @@ export async function waitForReady(
   container: ContainerInfo,
   timeoutMs: number = 30_000,
 ): Promise<void> {
-  // Dynamic import: pg is optional
+  // Dynamic import: pg is optional. connect() return shape changed from Promise<void> to Promise<Client> in pg 8.20+; accept either.
   type PgClient = {
-    connect(): Promise<void>;
+    connect(): Promise<unknown>;
     query(sql: string): Promise<{ rows: Array<Record<string, unknown>> }>;
     end(): Promise<void>;
   };

@@ -12,7 +12,7 @@ import type { TableStats } from './types.js';
 export async function fetchTableStats(dbUrl: string): Promise<TableStats[]> {
   // Dynamic import - pg is optional, only needed with --db-url
   let Client: new (config: { connectionString: string; connectionTimeoutMillis?: number }) => {
-    connect(): Promise<void>;
+    connect(): Promise<unknown>;
     query(sql: string): Promise<{ rows: Array<Record<string, unknown>> }>;
     end(): Promise<void>;
   };

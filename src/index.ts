@@ -264,10 +264,11 @@ program
         dockerImage: opts.dockerImage,
       });
 
-      // Declare DB clients outside try so they're accessible in finally for cleanup
+      // Declare DB clients outside try so they're accessible in finally for cleanup.
+      // connect() returns Promise<Client> in pg 8.20+ (was Promise<void>); accept either via unknown.
       type PgClient = {
         end(): Promise<void>;
-        connect(): Promise<void>;
+        connect(): Promise<unknown>;
         query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
       };
       let traceClient: PgClient | undefined;
@@ -287,7 +288,7 @@ program
           password: string;
           database: string;
         }) => {
-          connect(): Promise<void>;
+          connect(): Promise<unknown>;
           query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
           end(): Promise<void>;
         };
