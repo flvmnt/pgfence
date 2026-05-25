@@ -56,6 +56,7 @@ describe('package surface', () => {
     expect(orphanArtifacts).toEqual([]);
     expect(files.some((file) => file.startsWith('src/'))).toBe(false);
     expect(files.some((file) => file.startsWith('packages/vscode-pgfence/'))).toBe(false);
+    expect(files).toContain('RULES.md');
   });
 
   it('exports the documented LSP subpath', async () => {

@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
-    exclude: ['website/**', 'node_modules/**', 'dist/**', '.git/**', '.idea/**', 'tests/cloud/**'],
+    exclude: ['website/**', 'node_modules/**', 'dist/**', '.git/**', '.idea/**', 'tests/cloud/**', 'tests/agent/**'],
     testTimeout: 15000,
   },
 });

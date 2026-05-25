@@ -39,4 +39,5 @@ docs/
 src/cloud/
 src/agent/
 tests/cloud/
+tests/agent/
 packages/vscode-pgfence/

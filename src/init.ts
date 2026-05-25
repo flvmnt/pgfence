@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { join, resolve } from 'node:path';
 
 const execFileAsync = promisify(execFile);
+const PACKAGE_VERSION = '0.6.0';
 
 const PRE_COMMIT_HOOK_CONTENT = `#!/bin/sh
 # pgfence pre-commit hook
@@ -61,7 +62,7 @@ jobs:
             exit 0
           fi
 
-          npx --yes @flvmnt/pgfence@latest analyze --format prisma --ci --max-risk medium "\${files[@]}"
+          npx --yes @flvmnt/pgfence@${PACKAGE_VERSION} analyze --format prisma --ci --max-risk medium "\${files[@]}"
 `;
 
 export async function installHooks(): Promise<void> {

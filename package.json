@@ -29,6 +29,7 @@
   },
   "files": [
     "dist",
+    "RULES.md",
     "!dist/cloud",
     "!dist/agent",
     "!dist/**/*.map"

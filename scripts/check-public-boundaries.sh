@@ -12,7 +12,7 @@ filter_paths() {
   fi
 }
 
-FORBIDDEN_TRACKED=$(git ls-files | filter_paths '^(src/cloud/|src/agent/|tests/cloud/|packages/vscode-pgfence/)')
+FORBIDDEN_TRACKED=$(git ls-files | filter_paths '^(src/cloud/|src/agent/|tests/cloud/|tests/agent/|packages/vscode-pgfence/)')
 if [ -n "$FORBIDDEN_TRACKED" ]; then
   echo "ERROR: tracked cloud or agent files were found:"
   echo "$FORBIDDEN_TRACKED"
@@ -49,14 +49,14 @@ function parsePackJson(raw) {
 
 const pack = parsePackJson(process.env.PACK_JSON ?? '[]');
 const files = pack.flatMap((entry) => entry.files ?? []).map((file) => file.path);
-const forbidden = files.filter((file) => /^(src\/cloud\/|src\/agent\/|dist\/cloud\/|dist\/agent\/|tests\/cloud\/|packages\/vscode-pgfence\/)/.test(file));
+const forbidden = files.filter((file) => /^(src\/cloud\/|src\/agent\/|dist\/cloud\/|dist\/agent\/|tests\/cloud\/|tests\/agent\/|packages\/vscode-pgfence\/)/.test(file));
 if (forbidden.length > 0) {
   console.error('ERROR: npm package contains forbidden cloud or agent files:');
   for (const file of forbidden) console.error(file);
   process.exit(1);
 }
 
-const required = ['dist/index.js', 'dist/lsp/server.js'];
+const required = ['dist/index.js', 'dist/lsp/server.js', 'RULES.md'];
 const missing = required.filter((file) => !files.includes(file));
 if (missing.length > 0) {
   console.error('ERROR: npm package is missing required release files:');

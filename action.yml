@@ -37,6 +37,7 @@ runs:
         INPUT_MAX_RISK: ${{ inputs.max-risk }}
         INPUT_DB_URL: ${{ inputs.db-url }}
         INPUT_STATS_FILE: ${{ inputs.stats-file }}
+        PGFENCE_ACTION_PATH: ${{ github.action_path }}
       run: |
         shopt -s nullglob
         FILES=()
@@ -65,5 +66,5 @@ runs:
         fi
         ARGS+=("--" "${FILES[@]}")
 
-        PACKAGE_VERSION=$(node -p "require('./package.json').version")
+        PACKAGE_VERSION=$(node -p "require(process.env.PGFENCE_ACTION_PATH + '/package.json').version")
         npx --yes "@flvmnt/pgfence@$PACKAGE_VERSION" analyze "${ARGS[@]}"
