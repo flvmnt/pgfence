@@ -5,7 +5,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ['dist/', 'scripts/', 'tests/fixtures/', 'tests/cloud/', 'src/cloud/', 'src/agent/'],
+    ignores: ['dist/', 'scripts/', 'tests/fixtures/', 'tests/cloud/', 'tests/agent/', 'src/cloud/', 'src/agent/', 'packages/vscode-pgfence/'],
   },
   {
     files: ['src/**/*.ts'],

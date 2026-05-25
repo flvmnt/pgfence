@@ -145,18 +145,20 @@ export function reportGitHub(results: AnalysisResult[]): string {
     }
   }
 
-  // Coverage summary (Trust Contract requirement)
   const coverage = summarizeCoverage(results);
-  lines.push('### Coverage');
-  lines.push('');
-  lines.push(formatCoverageLine(coverage));
-  lines.push('');
-
-  lines.push('---');
-  lines.push('*[pgfence](https://pgfence.com) migration safety report*');
-
-  const output = lines.join('\n');
+  const footerLines = [
+    '### Coverage',
+    '',
+    formatCoverageLine(coverage),
+    '',
+    '---',
+    '*[pgfence](https://pgfence.com) migration safety report*',
+  ];
+  const body = lines.join('\n');
+  const footer = footerLines.join('\n');
+  const output = `${body}\n${footer}`;
   if (output.length <= GITHUB_COMMENT_MAX_LENGTH) return output;
-  const budget = GITHUB_COMMENT_MAX_LENGTH - TRUNCATION_NOTICE.length;
-  return output.slice(0, Math.max(0, budget)).trimEnd() + TRUNCATION_NOTICE;
+  const reservedFooter = `${TRUNCATION_NOTICE}${footer}`;
+  const budget = GITHUB_COMMENT_MAX_LENGTH - reservedFooter.length;
+  return body.slice(0, Math.max(0, budget)).trimEnd() + reservedFooter;
 }

@@ -375,6 +375,8 @@ describe('Reporter: GitHub PR', () => {
         const output = reportGitHub(manyChecks);
         expect(output.length).toBeLessThanOrEqual(65000);
         expect(output).toContain('Report truncated');
+        expect(output).toContain('### Coverage');
+        expect(output).toContain('Analyzed 1 SQL statement. 0 dynamic statements not analyzable. Coverage: 100%');
     });
 
     it('should put LOW-risk safe rewrites in Notes section, not Safe Rewrite Recipes', () => {

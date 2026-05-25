@@ -46,9 +46,13 @@ SET application_name = 'migrate:<short-name>';    -- pg_stat_activity visibility
 - `VACUUM FULL`, `CLUSTER` (full rewrite to compact)
 - `ALTER TABLE ... SET LOGGED` or `SET UNLOGGED`
 
-Safe rewrite for all of these: split into expand + backfill + contract migrations.
+Safe rewrite for column rewrites: split into expand + backfill + contract migrations.
 Add the column nullable, backfill in batches with `FOR UPDATE SKIP LOCKED`, then
 add the NOT NULL via `CHECK ... NOT VALID` + `VALIDATE CONSTRAINT`.
+
+For maintenance rewrites such as `VACUUM FULL` and `CLUSTER`, use online
+maintenance tooling such as `pg_repack` where possible. For `SET LOGGED` or
+`SET UNLOGGED`, schedule a maintenance window with a low `lock_timeout`.
 
 Some widening type changes are metadata-only in pgfence when schema context proves
 they do not rewrite the table, for example `varchar(50)` to `varchar(255)` or
@@ -114,7 +118,7 @@ Most Postgres migration linters miss these, but pgfence flags them:
 ### Enum changes
 
 - `ALTER TYPE ... ADD VALUE` on PG12+: instant; EXCLUSIVE lock on the type object only (not the table). Safe.
-- `ALTER TYPE ... ADD VALUE` on PG<12: SHARE UPDATE EXCLUSIVE and inside-transaction restrictions. Migrate to PG12+ before using.
+- `ALTER TYPE ... ADD VALUE` on PG<12: ACCESS EXCLUSIVE on the type object and inside-transaction restrictions. Migrate to PG12+ before using.
 - `ALTER TYPE ... DROP VALUE`: does not exist in Postgres. Plan accordingly.
 
 ### Partitioning

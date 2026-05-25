@@ -347,6 +347,7 @@ function parseSequelizeColumnDef(
       line: node.loc?.start?.line ?? 0,
       column: node.loc?.start?.column ?? 0,
       message: 'Could not resolve Sequelize column type: cannot transpile',
+      unanalyzable: true,
     });
   }
 

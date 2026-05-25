@@ -89,6 +89,8 @@ describe('pgfence analyzer', () => {
     const notNullCheck = checks.find((c) => c.ruleId === 'alter-column-set-not-null');
     expect(notNullCheck).toBeDefined();
     expect(notNullCheck!.risk).toBe(RiskLevel.MEDIUM);
+    expect(notNullCheck!.safeRewrite!.steps[0]).toContain('brief ACCESS EXCLUSIVE lock');
+    expect(notNullCheck!.safeRewrite!.steps[2]).toContain('SHARE UPDATE EXCLUSIVE');
   });
 
   it('should detect DROP TABLE as CRITICAL risk', async () => {

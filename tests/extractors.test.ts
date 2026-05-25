@@ -135,6 +135,23 @@ export class ConditionalDrop implements MigrationInterface {
         expect(result.sql).toContain('ALTER TABLE foo ADD CONSTRAINT fk_bar');
     });
 
+    it('should not inherit transaction = false from unrelated trailing classes', async () => {
+        await withTempFile('pgfence-typeorm-trailing-helper-', '.ts', `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class AddUsersIndex implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query('CREATE INDEX CONCURRENTLY idx_users_email ON users(email)');
+  }
+}
+
+class Helper {
+  transaction = false;
+}`, async (filePath) => {
+            const result = await extractTypeORMSQL(filePath);
+            expect(result.autoCommit).toBe(false);
+            expect(result.sql).toContain('CREATE INDEX CONCURRENTLY');
+        });
+    });
+
     it('should not set autoCommit when transaction property is absent', async () => {
         const filePath = path.join(fixturesDir, 'dangerous-typeorm.ts');
         const result = await extractTypeORMSQL(filePath);
@@ -292,6 +309,35 @@ describe('Extractor: Knex', () => {
 };`, async (filePath) => {
             const result = await extractKnexSQL(filePath);
             expect(result.warnings.some((warning) => warning.unanalyzable)).toBe(true);
+            expect(result.sql).not.toContain('UNIQUE');
+        });
+    });
+
+    it('should fail closed for Knex table index predicates', async () => {
+        await withTempFile('pgfence-knex-table-predicate-', '.js', `exports.up = async function(knex) {
+  await knex.schema.alterTable('users', function(table) {
+    table.index(['email'], 'idx_users_email_active', { predicate: knex.whereNotNull('email') });
+    table.unique(['slug'], { indexName: 'uq_users_slug_active', predicate: knex.whereNotNull('slug') });
+  });
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.warnings.filter((warning) => warning.unanalyzable)).toHaveLength(2);
+            expect(result.sql).not.toContain('idx_users_email_active');
+            expect(result.sql).not.toContain('uq_users_slug_active');
+        });
+    });
+
+    it('should fail closed for dynamic Knex table index option values', async () => {
+        await withTempFile('pgfence-knex-dynamic-table-option-', '.js', `exports.up = async function(knex) {
+  const indexName = 'idx_users_email';
+  await knex.schema.alterTable('users', function(table) {
+    table.index(['email'], indexName);
+    table.unique(['slug'], { indexName });
+  });
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.warnings.filter((warning) => warning.unanalyzable)).toHaveLength(2);
+            expect(result.sql).not.toContain('CREATE INDEX');
             expect(result.sql).not.toContain('UNIQUE');
         });
     });
@@ -489,6 +535,39 @@ describe('Extractor: Sequelize addIndex with options', () => {
         const result = await extractSequelizeSQL(filePath);
         expect(result.sql).toContain('CREATE UNIQUE INDEX CONCURRENTLY');
         expect(result.sql).toContain('idx_users_email_unique');
+    });
+});
+
+describe('Extractor: Sequelize unresolved column types', () => {
+    it('should fail closed for unsupported addColumn column types', async () => {
+        await withTempFile('pgfence-sequelize-unsupported-add-column-', '.js', `module.exports = {
+  async up(queryInterface, Sequelize) {
+    await queryInterface.addColumn('users', 'shape', {
+      type: Sequelize.GEOMETRY,
+      allowNull: false,
+    });
+  }
+};`, async (filePath) => {
+            const result = await extractSequelizeSQL(filePath);
+            expect(result.sql).toBe('');
+            expect(result.warnings.some((warning) => warning.unanalyzable)).toBe(true);
+            expect(result.warnings[0].message).toContain('Could not resolve Sequelize column type');
+        });
+    });
+
+    it('should fail closed instead of emitting partial createTable SQL', async () => {
+        await withTempFile('pgfence-sequelize-partial-create-table-', '.js', `module.exports = {
+  async up(queryInterface, Sequelize) {
+    await queryInterface.createTable('places', {
+      id: { type: Sequelize.INTEGER, allowNull: false },
+      shape: { type: Sequelize.GEOMETRY, allowNull: false },
+    });
+  }
+};`, async (filePath) => {
+            const result = await extractSequelizeSQL(filePath);
+            expect(result.sql).toBe('');
+            expect(result.warnings.some((warning) => warning.unanalyzable)).toBe(true);
+        });
     });
 });
 

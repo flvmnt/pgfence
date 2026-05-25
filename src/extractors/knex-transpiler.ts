@@ -691,8 +691,17 @@ function extractTableOperations(
           pushTableOperationWarning(warnings, filePath, 'index', root.args[0] ?? root.node);
           return;
         }
+        const explicitIndexNameArg = root.args[1];
+        if (explicitIndexNameArg && getStringArg(explicitIndexNameArg) === null) {
+          pushTableOperationWarning(warnings, filePath, 'index', explicitIndexNameArg);
+          return;
+        }
         const options = root.args[2]?.type === 'ObjectExpression' ? root.args[2] : null;
-        const indexName = getStringArg(root.args[1] ?? { type: 'Literal', value: null }) ??
+        if (hasUnsupportedObjectOptions(options, new Set(['indexName', 'indexType']))) {
+          pushTableOperationWarning(warnings, filePath, 'index', options ?? root.node);
+          return;
+        }
+        const indexName = (explicitIndexNameArg ? getStringArg(explicitIndexNameArg) : null) ??
           getObjectStringOption(options, 'indexName') ??
           defaultIndexName(tableName, columns, 'index');
         const using = getObjectStringOption(options, 'indexType');
@@ -706,13 +715,21 @@ function extractTableOperations(
           pushTableOperationWarning(warnings, filePath, 'unique', root.args[0] ?? root.node);
           return;
         }
-        const options = root.args[1]?.type === 'ObjectExpression' ? root.args[1] : null;
-        const constraintName = getStringArg(root.args[1] ?? { type: 'Literal', value: null }) ??
+        const uniqueNameOrOptionsArg = root.args[1];
+        const options = uniqueNameOrOptionsArg?.type === 'ObjectExpression' ? uniqueNameOrOptionsArg : null;
+        if (uniqueNameOrOptionsArg && !options && getStringArg(uniqueNameOrOptionsArg) === null) {
+          pushTableOperationWarning(warnings, filePath, 'unique', uniqueNameOrOptionsArg);
+          return;
+        }
+        if (hasUnsupportedObjectOptions(options, new Set(['indexName', 'useConstraint']))) {
+          pushTableOperationWarning(warnings, filePath, 'unique', options ?? root.node);
+          return;
+        }
+        const constraintName = (uniqueNameOrOptionsArg && !options ? getStringArg(uniqueNameOrOptionsArg) : null) ??
           getObjectStringOption(options, 'indexName') ??
           defaultIndexName(tableName, columns, 'unique');
         const useConstraint = getObjectBooleanOption(options, 'useConstraint');
-        const hasPredicate = objectHasProperty(options, 'predicate');
-        if (useConstraint === false || hasPredicate) {
+        if (useConstraint === false) {
           sql.push(`CREATE UNIQUE INDEX "${constraintName}" ON "${tableName}" (${quoteColumns(columns)})`);
         } else {
           sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" UNIQUE (${quoteColumns(columns)})`);
@@ -726,6 +743,10 @@ function extractTableOperations(
           return;
         }
         const options = root.args[1]?.type === 'ObjectExpression' ? root.args[1] : null;
+        if (hasUnsupportedObjectOptions(options, new Set(['constraintName']))) {
+          pushTableOperationWarning(warnings, filePath, 'primary', options ?? root.node);
+          return;
+        }
         const constraintName = getObjectStringOption(options, 'constraintName') ?? `${tableName}_pkey`;
         sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT "${constraintName}" PRIMARY KEY (${quoteColumns(columns)})`);
         break;
@@ -907,13 +928,20 @@ function getObjectBooleanOption(node: TSNode | null, keyName: string): boolean |
   return null;
 }
 
-function objectHasProperty(node: TSNode | null, keyName: string): boolean {
+function hasUnsupportedObjectOptions(node: TSNode | null, allowedKeys: Set<string>): boolean {
   if (!node || node.type !== 'ObjectExpression') return false;
   for (const prop of node.properties as TSNode[] | undefined ?? []) {
-    if (prop.type !== 'Property') continue;
+    if (prop.type !== 'Property') return true;
     const key = prop.key as TSNode;
+    const value = prop.value as TSNode;
     const name = key.type === 'Identifier' ? key.name as string : getStringArg(key);
-    if (name === keyName) return true;
+    if (!name || !allowedKeys.has(name)) return true;
+    if ((name === 'indexName' || name === 'indexType' || name === 'constraintName') && getStringArg(value) === null) {
+      return true;
+    }
+    if (name === 'useConstraint' && (value.type !== 'Literal' || typeof value.value !== 'boolean')) {
+      return true;
+    }
   }
   return false;
 }

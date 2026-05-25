@@ -173,19 +173,22 @@ function findUpMethod(ast: TSNode): UpMethodInfo | null {
   let classBody: TSNode | null = null;
 
   walkNode(ast, (node: TSNode) => {
-    // Track the class body so we can check for `transaction = false`
-    if (node.type === 'ClassBody') {
-      classBody = node;
-    }
-
     if (body) return;
-    if (
-      node.type === 'MethodDefinition' &&
-      (node.key as TSNode)?.type === 'Identifier' &&
-      ((node.key as TSNode).name as string) === 'up'
-    ) {
-      const method = node.value as TSNode;
+    if (node.type !== 'ClassBody') return;
+
+    const members = node.body as TSNode[] | undefined;
+    for (const member of members ?? []) {
+      if (
+        member.type !== 'MethodDefinition' ||
+        (member.key as TSNode)?.type !== 'Identifier' ||
+        ((member.key as TSNode).name as string) !== 'up'
+      ) {
+        continue;
+      }
+
+      const method = member.value as TSNode;
       body = method;
+      classBody = node;
 
       // Extract the first parameter name (e.g. `qr` from `up(qr: QueryRunner)`)
       const params = method.params as TSNode[] | undefined;
@@ -195,6 +198,7 @@ function findUpMethod(ast: TSNode): UpMethodInfo | null {
           paramName = firstParam.name as string;
         }
       }
+      break;
     }
   });
 
