@@ -5,6 +5,7 @@ import {
   riskToSeverity,
   checkResultToDiagnostic,
   policyViolationToDiagnostic,
+  extractionWarningToDiagnostic,
   parseErrorToDiagnostic,
 } from '../../src/lsp/diagnostics.js';
 import { RiskLevel, LockMode } from '../../src/types.js';
@@ -153,6 +154,42 @@ describe('policyViolationToDiagnostic', () => {
       severity: 'warning',
     };
     expect(policyViolationToDiagnostic(violation, null, sampleText).severity).toBe(DiagnosticSeverity.Warning);
+  });
+});
+
+describe('extractionWarningToDiagnostic', () => {
+  it('should set a stable code for unanalyzable warnings', () => {
+    const diag = extractionWarningToDiagnostic({
+      filePath: 'migration.ts',
+      line: 3,
+      column: 2,
+      message: 'Dynamic SQL',
+      unanalyzable: true,
+    });
+    expect(diag.code).toBe('unknown-sql');
+    expect(diag.severity).toBe(DiagnosticSeverity.Warning);
+  });
+
+  it('should map unanalyzable warnings to Error when unknownHandling blocks', () => {
+    const diag = extractionWarningToDiagnostic({
+      filePath: 'migration.ts',
+      line: 3,
+      column: 2,
+      message: 'Dynamic SQL',
+      unanalyzable: true,
+    }, 'block');
+    expect(diag.code).toBe('unknown-sql');
+    expect(diag.severity).toBe(DiagnosticSeverity.Error);
+  });
+
+  it('should set a stable code for non-blocking extraction warnings', () => {
+    const diag = extractionWarningToDiagnostic({
+      filePath: 'migration.ts',
+      line: 3,
+      column: 2,
+      message: 'Builder API reconstructed',
+    });
+    expect(diag.code).toBe('extraction-warning');
   });
 });
 

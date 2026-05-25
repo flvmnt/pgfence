@@ -25,6 +25,8 @@ export async function fetchTableStats(dbUrl: string): Promise<TableStats[]> {
   }
 
   const client = new Client({ connectionString: dbUrl, connectionTimeoutMillis: 5000 });
+  let primaryError: unknown;
+  let rows: Array<Record<string, unknown>> = [];
   try {
     try {
       await client.connect();
@@ -48,14 +50,25 @@ export async function fetchTableStats(dbUrl: string): Promise<TableStats[]> {
       FROM pg_stat_user_tables
       ORDER BY n_live_tup DESC
     `);
-
-    return result.rows.map((row) => ({
-      schemaName: row.schemaname as string,
-      tableName: row.relname as string,
-      rowCount: Number(row.n_live_tup),
-      totalBytes: Number(row.total_bytes),
-    }));
-  } finally {
-    await client.end();
+    rows = result.rows;
+  } catch (err) {
+    primaryError = err;
   }
+
+  let cleanupError: unknown;
+  try {
+    await client.end();
+  } catch (err) {
+    cleanupError = err;
+  }
+
+  if (primaryError != null) throw primaryError;
+  if (cleanupError != null) throw cleanupError;
+
+  return rows.map((row) => ({
+    schemaName: row.schemaname as string,
+    tableName: row.relname as string,
+    rowCount: Number(row.n_live_tup),
+    totalBytes: Number(row.total_bytes),
+  }));
 }

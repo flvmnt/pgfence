@@ -107,6 +107,46 @@ describe.skipIf(!hasBuiltCli())('CLI e2e (built binary)', () => {
         ).rejects.toMatchObject({ code: 1 });
     });
 
+    it('explains a single statement without full migration policy noise', async () => {
+        const { stdout, stderr } = await execPromise(`node "${distCliPath}" explain "SELECT 1"`);
+        expect(stdout).toContain('Statement:');
+        expect(stdout).toContain('No issues found.');
+        expect(stdout).not.toContain('missing-lock-timeout');
+        expect(stdout).not.toContain('missing-application-name');
+        expect(stderr).toBe('');
+
+        const { stdout: jsonStdout } = await execPromise(`node "${distCliPath}" explain --output json "SELECT 1"`);
+        const parsed = JSON.parse(jsonStdout) as { maxRisk: string; policyViolations: unknown[] };
+        expect(parsed.maxRisk).toBe('SAFE');
+        expect(parsed.policyViolations).toEqual([]);
+    });
+
+    it('rejects unsupported explain output formats', async () => {
+        await expect(
+            execPromise(`node "${distCliPath}" explain --output yaml "SELECT 1"`),
+        ).rejects.toMatchObject({ code: 2 });
+    });
+
+    it('lets explain use config min-pg-version when the flag is omitted', async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'pgfence-explain-config-'));
+        await writeFile(path.join(root, '.pgfence.json'), JSON.stringify({
+            'min-pg-version': 10,
+            'require-lock-timeout': false,
+            'require-statement-timeout': false,
+        }), 'utf8');
+
+        try {
+            const { stdout } = await execPromise(
+                `node "${distCliPath}" explain --output json "ALTER TABLE users ADD COLUMN flags int DEFAULT 0"`,
+                { cwd: root },
+            );
+            const parsed = JSON.parse(stdout) as { checks: Array<{ ruleId: string; risk: string }> };
+            expect(parsed.checks.some((check) => check.ruleId === 'add-column-default-pre-pg11' && check.risk === 'HIGH')).toBe(true);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('respects config file values when CLI flags are omitted', async () => {
         const root = await mkdtemp(path.join(tmpdir(), 'pgfence-config-cli-'));
         await writeFile(path.join(root, '.pgfence.json'), JSON.stringify({
@@ -222,6 +262,7 @@ printf '%s\\n' "\${FILES[@]}"
         const root = await mkdtemp(path.join(tmpdir(), 'pgfence-prisma-action-'));
         const previousCwd = process.cwd();
         const workflowPath = path.join(root, '.github', 'workflows', 'pgfence-prisma.yml');
+        const packageJson = JSON.parse(await readFile(path.join(previousCwd, 'package.json'), 'utf8')) as { version: string };
 
         try {
             process.chdir(root);
@@ -233,7 +274,7 @@ printf '%s\\n' "\${FILES[@]}"
             expect(workflow).toContain('if [ ! -d prisma/migrations ]; then');
             expect(workflow).toContain('files=()');
             expect(workflow).toContain("find prisma/migrations -path '*/migration.sql' -type f -print0");
-            expect(workflow).toContain('npx --yes @flvmnt/pgfence@latest analyze --format prisma --ci --max-risk medium "${files[@]}"');
+            expect(workflow).toContain(`npx --yes @flvmnt/pgfence@${packageJson.version} analyze --format prisma --ci --max-risk medium "\${files[@]}"`);
 
             await expect(installPrismaGitHubAction()).rejects.toThrow(/already exists/);
         } finally {

@@ -173,6 +173,7 @@ export function createServer(conn: Connection) {
       }
 
       for (const warning of result.extractionWarnings) {
+        if (result.parseError && warning.unanalyzable && warning.message.startsWith('SQL parse error:')) continue;
         diagnostics.push(extractionWarningToDiagnostic(warning, serverConfig.unknownHandling));
       }
 

@@ -510,10 +510,13 @@ program
   .command('explain')
   .description('Explain the lock mode, risk, and safe rewrite for a single SQL statement (paste-and-run)')
   .argument('[sql...]', 'SQL statement (omit to read from stdin)')
-  .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume', '14')
+  .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume')
   .option('--output <output>', 'Output format: cli, json', 'cli')
-  .action(async (sqlParts: string[], opts) => {
+  .action(async (sqlParts: string[], opts, command: Command) => {
     try {
+      if (opts.output !== 'cli' && opts.output !== 'json') {
+        throw new Error(`Invalid --output value: "${opts.output}" (must be cli or json)`);
+      }
       let sql = (sqlParts ?? []).join(' ').trim();
       if (!sql) {
         const chunks: Buffer[] = [];
@@ -534,15 +537,24 @@ program
       const { analyzeText } = await import('./lsp/analyze-text.js');
       const fileConfig = await loadConfigFile(process.cwd());
       const cliOverrides: Partial<PgfenceConfig> = {
-        minPostgresVersion: parsePositiveIntOption(opts.minPgVersion ?? '14', '--min-pg-version'),
+        requireLockTimeout: false,
+        requireStatementTimeout: false,
         format: 'sql',
       };
+      if (optionFromCli(command, 'minPgVersion') && opts.minPgVersion) {
+        cliOverrides.minPostgresVersion = parsePositiveIntOption(opts.minPgVersion, '--min-pg-version');
+      }
       const config = mergeConfig(fileConfig, cliOverrides);
       const result = await analyzeText({
         content: sql,
         filePath: 'explain.sql',
         config,
       });
+      result.policyViolations = [];
+      result.maxRisk = result.checks.reduce<RiskLevel>((max, check) => {
+        const risk = check.adjustedRisk ?? check.risk;
+        return RISK_ORDER.indexOf(risk) > RISK_ORDER.indexOf(max) ? risk : max;
+      }, RiskLevel.SAFE);
 
       if (opts.output === 'json') {
         process.stdout.write(JSON.stringify({

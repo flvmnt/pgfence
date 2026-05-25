@@ -133,7 +133,7 @@ export function extractionWarningToDiagnostic(
     range,
     warning.message,
     severity,
-    undefined,
+    warning.unanalyzable ? 'unknown-sql' : 'extraction-warning',
     'pgfence',
   );
 }

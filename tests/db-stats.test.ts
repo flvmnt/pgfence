@@ -90,4 +90,12 @@ describe('DB Stats Fetcher', () => {
         await expect(fetchTableStats('postgres://dummy')).rejects.toThrow('Connection Failed');
         expect(mClient.end).toHaveBeenCalled();
     });
+
+    it('should preserve the primary connection error if cleanup also fails', async () => {
+        mClient.connect.mockRejectedValue(new Error('connect failed'));
+        mClient.end.mockRejectedValue(new Error('cleanup failed'));
+
+        await expect(fetchTableStats('postgres://dummy')).rejects.toThrow('connect failed');
+        expect(mClient.end).toHaveBeenCalled();
+    });
 });
