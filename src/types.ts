@@ -93,6 +93,13 @@ export interface ExtractionResult {
   warnings: ExtractionWarning[];
   autoCommit?: boolean;
   sourceRanges?: Array<{ startOffset: number; endOffset: number }>;
+  /**
+   * Individual SQL statements before they were joined into `sql`.
+   * ORM extractors populate this so the analyzer can re-parse statements in
+   * isolation when the joined batch fails to parse, preventing one malformed
+   * generated statement from voiding analysis of the whole file.
+   */
+  statements?: string[];
 }
 
 export interface AnalysisResult {

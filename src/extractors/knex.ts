@@ -40,11 +40,25 @@ export async function extractKnexSQLFromSource(
   const sourceRanges: Array<{ startOffset: number; endOffset: number }> = [];
 
   const { parse } = await import('@typescript-eslint/typescript-estree');
-  const ast = parse(source, {
-    loc: true,
-    range: true,
-    jsx: false,
-  }) as unknown as TSNode;
+  let ast: TSNode;
+  try {
+    ast = parse(source, {
+      loc: true,
+      range: true,
+      jsx: false,
+    }) as unknown as TSNode;
+  } catch (err) {
+    // A syntax error in the migration source must not abort the whole batch.
+    const message = err instanceof Error ? err.message : String(err);
+    warnings.push({
+      filePath,
+      line: 1,
+      column: 0,
+      message: `Could not parse Knex migration source: ${message}; this file could not be analyzed`,
+      unanalyzable: true,
+    });
+    return { sql: '', warnings };
+  }
 
   const autoCommit = detectAutoCommit(ast);
   const upFn = findUpFunction(ast);
@@ -127,7 +141,7 @@ export async function extractKnexSQLFromSource(
     },
   });
 
-  return { sql: queries.join(';\n'), warnings, autoCommit, sourceRanges };
+  return { sql: queries.join(';\n'), warnings, autoCommit, sourceRanges, statements: queries };
 }
 
 function findUpFunction(ast: TSNode): TSNode | null {

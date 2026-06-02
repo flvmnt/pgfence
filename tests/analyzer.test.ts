@@ -2202,3 +2202,60 @@ DROP POLICY tenant_isolation ON accounts;
     expect(check!.message).toMatch(/cannot have values removed/);
   });
 });
+
+describe('analyze() resilience: one bad input must not void the rest', () => {
+  async function withTempFileExt(ext: string, content: string, run: (file: string) => Promise<void>): Promise<void> {
+    const tmpFile = `/tmp/pgfence-resilience-${randomUUID()}${ext}`;
+    await writeFile(tmpFile, content, 'utf8');
+    try {
+      await run(tmpFile);
+    } finally {
+      await rm(tmpFile, { force: true });
+    }
+  }
+
+  it('isolates a single unparseable generated statement so co-located DDL is still analyzed', async () => {
+    // A TypeORM migration where one query() literal is invalid SQL and the next
+    // is a DROP TABLE. The joined batch fails to parse; the analyzer must
+    // re-parse each statement in isolation so the DROP TABLE is still flagged.
+    const source = `import { MigrationInterface, QueryRunner } from "typeorm";
+export class Mig implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query("THIS IS NOT VALID SQL AT ALL");
+    await queryRunner.query("DROP TABLE users");
+  }
+  async down(queryRunner: QueryRunner): Promise<void> {}
+}
+`;
+    await withTempFileExt('.ts', source, async (file) => {
+      const results = await analyze([file], defaultConfig);
+      const r = results[0];
+      // The DROP TABLE survived the bad sibling statement.
+      const drop = r.checks.find((c) => c.statement.includes('DROP TABLE'));
+      expect(drop).toBeDefined();
+      expect(r.maxRisk).toBe(RiskLevel.CRITICAL);
+      // The invalid statement is surfaced, not silently dropped.
+      expect(r.extractionWarnings?.some((w) => w.unanalyzable)).toBe(true);
+    });
+  });
+
+  it('does not abort the whole batch when one file fails to extract (syntax error in source)', async () => {
+    const brokenTs = `import { MigrationInterface, QueryRunner } from "typeorm";
+export class Broken implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query("DROP TABLE users  // unterminated string and call
+  }
+}
+`;
+    await withTempFileExt('.ts', brokenTs, async (brokenFile) => {
+      const results = await analyze([brokenFile, fixture('dangerous-destructive.sql')], defaultConfig);
+      expect(results).toHaveLength(2);
+      // Broken file is surfaced as unanalyzable rather than throwing.
+      const broken = results.find((r) => r.filePath === brokenFile)!;
+      expect(broken.extractionWarnings?.some((w) => w.unanalyzable)).toBe(true);
+      // The other, valid file is still analyzed.
+      const good = results.find((r) => r.filePath.endsWith('dangerous-destructive.sql'))!;
+      expect(good.checks.length).toBeGreaterThan(0);
+    });
+  });
+});

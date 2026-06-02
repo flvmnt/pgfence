@@ -33,11 +33,25 @@ export async function extractSequelizeSQLFromSource(
 
     // Dynamic import to keep typescript-estree as devDependency
     const { parse } = await import('@typescript-eslint/typescript-estree');
-    const ast = parse(source, {
-        loc: true,
-        range: true,
-        jsx: false,
-    }) as unknown as TSNode;
+    let ast: TSNode;
+    try {
+        ast = parse(source, {
+            loc: true,
+            range: true,
+            jsx: false,
+        }) as unknown as TSNode;
+    } catch (err) {
+        // A syntax error in the migration source must not abort the whole batch.
+        const message = err instanceof Error ? err.message : String(err);
+        warnings.push({
+            filePath,
+            line: 1,
+            column: 0,
+            message: `Could not parse Sequelize migration source: ${message}; this file could not be analyzed`,
+            unanalyzable: true,
+        });
+        return { sql: '', warnings };
+    }
 
     const upFn = findUpFunction(ast);
     if (!upFn) {
@@ -131,7 +145,7 @@ export async function extractSequelizeSQLFromSource(
         });
     }
 
-    return { sql: queries.join(';\n'), warnings, sourceRanges };
+    return { sql: queries.join(';\n'), warnings, sourceRanges, statements: queries };
 }
 
 function isSequelizeQuery(node: TSNode): boolean {

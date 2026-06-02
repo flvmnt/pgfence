@@ -69,11 +69,26 @@ export async function extractTypeORMSQLFromSource(
 
   // Dynamic import to keep typescript-estree as devDependency
   const { parse } = await import('@typescript-eslint/typescript-estree');
-  const ast = parse(source, {
-    loc: true,
-    range: true,
-    jsx: false,
-  }) as unknown as TSNode;
+  let ast: TSNode;
+  try {
+    ast = parse(source, {
+      loc: true,
+      range: true,
+      jsx: false,
+    }) as unknown as TSNode;
+  } catch (err) {
+    // A syntax error in the migration source must not abort the whole batch.
+    // Surface this single file as unanalyzable and let analysis continue.
+    const message = err instanceof Error ? err.message : String(err);
+    warnings.push({
+      filePath,
+      line: 1,
+      column: 0,
+      message: `Could not parse TypeORM migration source: ${message}; this file could not be analyzed`,
+      unanalyzable: true,
+    });
+    return { sql: '', warnings };
+  }
 
   // Find the up() method in the class
   const upInfo = findUpMethod(ast);
@@ -163,7 +178,7 @@ export async function extractTypeORMSQLFromSource(
     },
   });
 
-  return { sql: queries.join(';\n'), warnings, autoCommit: upInfo.autoCommit, sourceRanges };
+  return { sql: queries.join(';\n'), warnings, autoCommit: upInfo.autoCommit, sourceRanges, statements: queries };
 }
 
 function findUpMethod(ast: TSNode): UpMethodInfo | null {
