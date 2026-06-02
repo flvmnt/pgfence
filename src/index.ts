@@ -158,10 +158,12 @@ program
 
       // Load stats file if provided (alternative to --db-url)
       let tableStats: TableStats[] | undefined;
-      const dbUrl = optionFromCli(command, 'dbUrl') ? opts.dbUrl : fileConfig?.['db-url'];
+      const cliDbUrl = optionFromCli(command, 'dbUrl') ? opts.dbUrl : undefined;
+      const cliStatsFilePath = optionFromCli(command, 'statsFile') ? opts.statsFile : undefined;
+      const dbUrl = cliDbUrl ?? (cliStatsFilePath ? undefined : fileConfig?.['db-url']);
       const statsFilePath = dbUrl
         ? undefined
-        : optionFromCli(command, 'statsFile') ? opts.statsFile : fileConfig?.['stats-file'];
+        : cliStatsFilePath ?? fileConfig?.['stats-file'];
       if (statsFilePath) {
         try {
           const raw = await readFile(statsFilePath, 'utf8');
@@ -203,6 +205,7 @@ program
 
       const cliOverrides: Partial<PgfenceConfig> = {};
       applyAnalyzeOptionOverrides(command, opts, cliOverrides);
+      if (cliStatsFilePath && !cliDbUrl) cliOverrides.dbUrl = undefined;
       if (tableStats) cliOverrides.tableStats = tableStats;
 
       const config = mergeConfig(fileConfig, cliOverrides);

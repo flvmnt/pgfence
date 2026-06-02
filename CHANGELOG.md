@@ -18,6 +18,12 @@
 - Fixed LSP fallback analysis for mixed parseable and unparseable statements.
 - Fixed trace-mode parsing so one malformed extracted ORM statement does not discard valid traced statements from the same file.
 - Added fail-closed Sequelize handling for computed `createTable` column keys.
+- Fixed destructured TypeORM manager aliases and Knex schema aliases so SQL does not disappear from coverage.
+- Fixed inline foreign key risk scoring so referenced table stats participate in size-aware escalation.
+- Fixed late `lock_timeout` ordering for rule-emitted ACCESS EXCLUSIVE checks such as CLUSTER, VACUUM FULL, inline foreign keys, and constrained-domain additions.
+- Added schema snapshot domain metadata and unresolved custom-type caveats for ADD COLUMN.
+- Fixed CLI stats-source precedence so explicit `--stats-file` can override a configured DB URL.
+- Tightened lint boundary patterns for bare imports into excluded implementation areas.
 - Fixed Knex auto-increment `.alter()` warnings so coverage points to an actionable source line.
 - Generated Prisma workflow package pins now derive from package metadata.
 - Clarified generated Prisma workflow and GitHub Actions examples for version 0.6.1.

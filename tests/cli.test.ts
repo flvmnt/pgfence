@@ -398,4 +398,28 @@ printf '%s\\n' "\${FILES[@]}"
             expect(error.stderr ?? '').not.toContain(missingStats);
         }
     });
+
+    it('lets CLI --stats-file override a configured db-url', async () => {
+        const fs = await import('node:fs/promises');
+        const root = await mkdtemp(path.join(tmpdir(), 'pgfence-config-db-cli-stats-'));
+        const fixture = path.join(fixturesDir, 'safe-migration.sql');
+        const statsPath = path.join(root, 'stats.json');
+        await fs.writeFile(path.join(root, '.pgfence.json'), JSON.stringify({
+            'db-url': 'postgres://bad:bad@localhost:0/noexist',
+        }));
+        await fs.writeFile(statsPath, JSON.stringify([
+            { schemaName: 'public', tableName: 'appointments', rowCount: 1, totalBytes: 1 },
+        ]));
+
+        try {
+            const { stdout, stderr } = await execPromise(
+                cliCommand(`analyze "${fixture}" --stats-file "${statsPath}"`),
+                { cwd: root },
+            );
+            expect(stdout).toContain('[LOW]');
+            expect(stderr).not.toContain('postgres://');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
 });

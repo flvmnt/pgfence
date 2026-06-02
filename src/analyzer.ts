@@ -179,6 +179,7 @@ export async function analyze(
     ? loadSnapshotFile(config.snapshotFile).then((snapshot) => loadSnapshot(snapshot))
     : Promise.resolve(undefined);
   const schemaLookup = await schemaLookupPromise;
+  const snapshotDomainInfo = schemaLookup ? collectSnapshotDomainInfo(schemaLookup) : null;
 
   const results: AnalysisResult[] = [];
 
@@ -195,8 +196,12 @@ export async function analyze(
     const extraction = await extractSQL(filePath, config);
     const stmts = await parseExtractedStatements(extraction, filePath);
     const constrainedDomains = collectConstrainedDomains(stmts);
-    const ruleConfig: PgfenceConfig = constrainedDomains.size > 0
-      ? { ...config, constrainedDomains }
+    for (const domain of snapshotDomainInfo?.constrainedDomains ?? []) {
+      constrainedDomains.add(domain);
+    }
+    const knownCustomTypes = snapshotDomainInfo?.knownCustomTypes;
+    const ruleConfig: PgfenceConfig = (constrainedDomains.size > 0 || knownCustomTypes)
+      ? { ...config, constrainedDomains, knownCustomTypes }
       : config;
     let unanalyzableParsedStatementCount = 0;
 
@@ -264,7 +269,15 @@ export async function analyze(
     // Apply policy checks
     let policyViolations: PolicyViolation[] = [];
     if (stmts.length > 0) {
-      const builtInPolicies = checkPolicies(stmts, config, { autoCommit: extraction.autoCommit });
+      const accessExclusiveStatements = new Set(
+        checks
+          .filter((check) => check.lockMode === 'ACCESS EXCLUSIVE')
+          .map((check) => check.statement),
+      );
+      const builtInPolicies = checkPolicies(stmts, config, {
+        autoCommit: extraction.autoCommit,
+        accessExclusiveStatements,
+      });
       // Gap 14: Run plugin policies alongside built-in policies
       if (plugins.policies.length > 0) {
         builtInPolicies.push(...runPluginPolicies(plugins.policies, stmts, config, extraction.warnings, filePath));
@@ -339,6 +352,27 @@ function collectConstrainedDomains(stmts: ParsedStatement[]): Set<string> {
     domains.add(names[names.length - 1].toLowerCase());
   }
   return domains;
+}
+
+function collectSnapshotDomainInfo(schemaLookup: SchemaLookup): {
+  constrainedDomains: Set<string>;
+  knownCustomTypes: Set<string>;
+} {
+  const constrainedDomains = new Set<string>();
+  const knownCustomTypes = new Set<string>();
+
+  for (const domain of schemaLookup.getDomains()) {
+    const exact = `${domain.schemaName}.${domain.domainName}`.toLowerCase();
+    const bare = domain.domainName.toLowerCase();
+    knownCustomTypes.add(exact);
+    knownCustomTypes.add(bare);
+    if (domain.hasConstraint) {
+      constrainedDomains.add(exact);
+      constrainedDomains.add(bare);
+    }
+  }
+
+  return { constrainedDomains, knownCustomTypes };
 }
 
 /**

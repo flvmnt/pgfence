@@ -150,6 +150,8 @@ export interface PgfenceConfig {
   snapshotFile?: string;
   /** Constrained domains declared in the same SQL batch */
   constrainedDomains?: Set<string>;
+  /** Custom types known from schema snapshots, used to avoid unknown custom-type caveats */
+  knownCustomTypes?: Set<string>;
   /** How CI treats statements that could not be statically analyzed */
   unknownHandling?: 'warn' | 'block';
 }

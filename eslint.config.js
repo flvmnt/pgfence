@@ -15,8 +15,8 @@ export default tseslint.config(
         'error',
         {
           patterns: [
-            { group: ['**/cloud/*', '**/cloud/**'], message: 'Cloud modules must not be imported from public code.' },
-            { group: ['**/agent/*', '**/agent/**'], message: 'Agent modules must not be imported from public code.' },
+            { group: ['**/cloud', '**/cloud/*', '**/cloud/**'], message: 'Cloud modules must not be imported from public code.' },
+            { group: ['**/agent', '**/agent/*', '**/agent/**'], message: 'Agent modules must not be imported from public code.' },
           ],
         },
       ],

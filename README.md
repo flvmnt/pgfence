@@ -120,7 +120,7 @@ pgfence analyze --min-pg-version 12 migrations/*.sql
 ```
 
 Version-sensitive behavior:
-- `ADD COLUMN ... DEFAULT <constant>` is instant (metadata-only) on PG 11+
+- `ADD COLUMN ... DEFAULT <constant or stable expression>` is instant (metadata-only) on PG 11+
 - `ALTER TYPE ADD VALUE` is instant on PG 12+
 - `REINDEX CONCURRENTLY` available on PG 12+
 - `RENAME COLUMN` is instant on PG 14+
@@ -329,7 +329,7 @@ pgfence checks a broad set of DDL patterns against Postgres's lock mode semantic
 |---|---------|-----------|------|------------------|
 | 1 | `ADD COLUMN ... NOT NULL` (no DEFAULT) | ACCESS EXCLUSIVE | HIGH | Add nullable, backfill, SET NOT NULL |
 | 2 | `ADD COLUMN ... DEFAULT <volatile>` | ACCESS EXCLUSIVE | HIGH | Add without default, backfill in batches |
-| 3 | `ADD COLUMN ... DEFAULT <constant>` | ACCESS EXCLUSIVE (instant) | LOW | Safe on PG11+ (metadata-only) |
+| 3 | `ADD COLUMN ... DEFAULT <constant or stable expression>` | ACCESS EXCLUSIVE (instant) | LOW | Safe on PG11+ (metadata-only) |
 | 4 | `ADD COLUMN ... GENERATED STORED` | ACCESS EXCLUSIVE | HIGH | Add regular column + trigger + backfill |
 | 5 | `CREATE INDEX` (non-concurrent) | SHARE | MEDIUM | `CREATE INDEX CONCURRENTLY` |
 | 6 | `DROP INDEX` (non-concurrent) | ACCESS EXCLUSIVE | MEDIUM | `DROP INDEX CONCURRENTLY` |

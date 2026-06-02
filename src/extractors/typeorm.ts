@@ -303,6 +303,21 @@ function trackTypeORMAlias(
       if (key?.type === 'Identifier' && key.name === 'query' && value?.type === 'Identifier') {
         queryFunctionNames.add(value.name as string);
       }
+      if (key?.type === 'Identifier' && key.name === 'manager' && value?.type === 'Identifier') {
+        managerNames.add(value.name as string);
+      }
+    }
+  }
+
+  if (id.type === 'ObjectPattern' && isManagerMember(init, queryRunnerNames)) {
+    const properties = id.properties as TSNode[] | undefined;
+    for (const prop of properties ?? []) {
+      if (prop.type !== 'Property') continue;
+      const key = prop.key as TSNode;
+      const value = prop.value as TSNode;
+      if (key?.type === 'Identifier' && key.name === 'query' && value?.type === 'Identifier') {
+        queryFunctionNames.add(value.name as string);
+      }
     }
   }
 }

@@ -3,16 +3,16 @@
  *
  * Detects:
  * - ADD COLUMN ... NOT NULL without DEFAULT (fails on non-empty table)
- * - ADD COLUMN with non-constant DEFAULT (potential table rewrite, flagged as HIGH risk)
- * - ADD COLUMN with constant DEFAULT (instant metadata-only, LOW risk)
+ * - ADD COLUMN with volatile DEFAULT (potential table rewrite, flagged as HIGH risk)
+ * - ADD COLUMN with constant or stable DEFAULT (instant metadata-only on PG11+, LOW risk)
  * - ADD COLUMN with type json instead of jsonb (common mistake)
  * - ADD COLUMN with serial/bigserial instead of IDENTITY (deprecated pseudo-type)
  * - ADD COLUMN with GENERATED ALWAYS AS ... STORED (table rewrite)
  *
- * Default detection strategy (per user feedback):
- * - Only A_Const and TypeCast(A_Const) are treated as "constant" (instant metadata-only)
- * - Everything else (FuncCall, SQLValueFunction, expressions) = non-constant = unsafe
- * - No hardcoded "volatile list", we don't pretend to know function immutability
+ * Default detection strategy:
+ * - A_Const and TypeCast(A_Const) are constant fast defaults
+ * - Known stable functions and SQL value functions are stable fast defaults
+ * - Everything else is volatile and rewrite-causing
  */
 
 import type { ParsedStatement } from '../parser.js';
@@ -80,6 +80,20 @@ function formatQualifiedRelation(relation?: { schemaname?: string; relname?: str
   return qualified.map(quoteIdentifier).join('.');
 }
 
+function formatTypeName(typeName?: TypeName): string {
+  const parts = (typeName?.names ?? [])
+    .map((part) => part.String?.sval)
+    .filter((part): part is string => Boolean(part));
+  return parts.join('.') || '<type>';
+}
+
+function relationStatsKey(relation?: { schemaname?: string; relname?: string }): string | null {
+  if (!relation?.relname) return null;
+  return relation.schemaname
+    ? `${relation.schemaname}.${relation.relname}`
+    : relation.relname;
+}
+
 function sanitizeIdentifierFragment(fragment: string): string {
   const cleaned = fragment.trim().replace(/[^a-zA-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
   return cleaned || 'fk';
@@ -124,6 +138,7 @@ export function checkAddColumn(
 
     if (foreignKeyConstraint) {
       const refTable = formatQualifiedRelation(foreignKeyConstraint.pktable);
+      const refStatsKey = relationStatsKey(foreignKeyConstraint.pktable);
       const fkCols = (foreignKeyConstraint.fk_attrs ?? [])
         .map((attr) => attr.String?.sval ?? '?')
         .filter((col) => col.length > 0)
@@ -147,6 +162,7 @@ export function checkAddColumn(
         statement: stmt.sql,
         statementPreview: makePreview(stmt.sql),
         tableName,
+        affectedTableNames: refStatsKey ? [refStatsKey] : undefined,
         lockMode: LockMode.ACCESS_EXCLUSIVE,
         blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
         risk: foreignKeyConstraint.skip_validation === true ? RiskLevel.LOW : RiskLevel.HIGH,
@@ -315,7 +331,9 @@ export function checkAddColumn(
     // Type-specific checks on ADD COLUMN
     const typeName = getTypeName(colDef.typeName);
 
-    if (config.constrainedDomains?.has(typeName.toLowerCase())) {
+    const typeKeys = typeLookupKeys(colDef.typeName);
+    const isConstrainedDomain = typeKeys.some((key) => config.constrainedDomains?.has(key));
+    if (isConstrainedDomain) {
       results.push({
         statement: stmt.sql,
         statementPreview: makePreview(stmt.sql),
@@ -330,6 +348,24 @@ export function checkAddColumn(
           steps: [
             `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${colDef.colname} <base_type>;`,
             `-- Backfill and validate in a follow-up migration before switching to the constrained domain.`,
+          ],
+        },
+      });
+    } else if (isPotentialCustomType(colDef.typeName) && !typeKeys.some((key) => config.knownCustomTypes?.has(key))) {
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.MEDIUM,
+        message: `ADD COLUMN "${colDef.colname}" uses unresolved custom type "${formatTypeName(colDef.typeName)}": pgfence cannot rule out a constrained domain without a schema snapshot`,
+        ruleId: 'add-column-unresolved-custom-type',
+        safeRewrite: {
+          description: 'Provide a schema snapshot or review the custom type before treating this migration as fully analyzed',
+          steps: [
+            `pgfence snapshot --db-url <readonly-url> --output pgfence-snapshot.json`,
+            `pgfence analyze --snapshot pgfence-snapshot.json migrations/*.sql`,
           ],
         },
       });
@@ -411,6 +447,61 @@ function getTypeName(tn?: TypeName): string {
   // Last name entry is the actual type (first may be schema like pg_catalog)
   return tn.names[tn.names.length - 1]?.String?.sval ?? '';
 }
+
+function typeLookupKeys(tn?: TypeName): string[] {
+  const parts = (tn?.names ?? [])
+    .map((part) => part.String?.sval)
+    .filter((part): part is string => Boolean(part));
+  if (parts.length === 0) return [];
+  const exact = parts.join('.').toLowerCase();
+  const bare = parts[parts.length - 1].toLowerCase();
+  return exact === bare ? [bare] : [exact, bare];
+}
+
+function isPotentialCustomType(tn?: TypeName): boolean {
+  const parts = (tn?.names ?? [])
+    .map((part) => part.String?.sval)
+    .filter((part): part is string => Boolean(part));
+  if (parts.length === 0) return false;
+  if (parts.length > 1 && (parts[0] === 'pg_catalog' || parts[0] === 'information_schema')) return false;
+  return !BUILTIN_TYPE_NAMES.has(parts[parts.length - 1].toLowerCase());
+}
+
+const BUILTIN_TYPE_NAMES = new Set([
+  'bool',
+  'boolean',
+  'bpchar',
+  'bytea',
+  'char',
+  'date',
+  'float4',
+  'float8',
+  'inet',
+  'int',
+  'int2',
+  'int4',
+  'int8',
+  'integer',
+  'json',
+  'jsonb',
+  'numeric',
+  'serial',
+  'serial2',
+  'serial4',
+  'serial8',
+  'bigserial',
+  'smallserial',
+  'smallint',
+  'bigint',
+  'text',
+  'time',
+  'timetz',
+  'timestamp',
+  'timestamptz',
+  'uuid',
+  'varbit',
+  'varchar',
+]);
 
 /**
  * Classify default expressions for PG11+ fast-default behavior.

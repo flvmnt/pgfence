@@ -346,13 +346,17 @@ function trackKnexAliases(node: TSNode, rawFunctionNames: Set<string>, schemaNam
   }
 
   if (id.type === 'ObjectPattern') {
+    const initIsKnexLike = init.type === 'Identifier';
     const properties = id.properties as TSNode[] | undefined;
     for (const prop of properties ?? []) {
       if (prop.type !== 'Property') continue;
       const key = prop.key as TSNode;
       const value = prop.value as TSNode;
-      if (key?.type === 'Identifier' && key.name === 'raw' && value?.type === 'Identifier') {
+      if (key?.type === 'Identifier' && key.name === 'raw' && value?.type === 'Identifier' && initIsKnexLike) {
         rawFunctionNames.add(value.name as string);
+      }
+      if (key?.type === 'Identifier' && key.name === 'schema' && value?.type === 'Identifier' && initIsKnexLike) {
+        schemaNames.add(value.name as string);
       }
     }
   }

@@ -42,6 +42,7 @@ SET application_name = 'migrate:<short-name>';    -- pg_stat_activity visibility
 
 - `ALTER COLUMN ... TYPE` (most type changes rewrite the table)
 - `ADD COLUMN ... DEFAULT <volatile>` (e.g. `DEFAULT clock_timestamp()`, `DEFAULT uuid_generate_v4()`)
+- `ADD COLUMN ... DEFAULT now()` and `DEFAULT CURRENT_TIMESTAMP` are stable fast defaults on PG11+
 - `ADD COLUMN ... NOT NULL` without a `DEFAULT` (on a non-empty table)
 - `VACUUM FULL`, `CLUSTER` (full rewrite to compact)
 - `ALTER TABLE ... SET LOGGED` or `SET UNLOGGED`

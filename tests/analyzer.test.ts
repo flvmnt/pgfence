@@ -251,12 +251,66 @@ export class DropUsers implements MigrationInterface {
     });
   });
 
+  it('should analyze SQL from destructured TypeORM manager aliases', async () => {
+    const sql = `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class DropUsers implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    const { manager } = queryRunner;
+    await manager.query('DROP TABLE users');
+  }
+}`;
+    await withTempSqlFile('pgfence-typeorm-manager-destructure-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, format: 'typeorm', requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      expect(results[0].checks.some((check) => check.ruleId === 'drop-table')).toBe(true);
+      expect(results[0].maxRisk).toBe(RiskLevel.CRITICAL);
+      expect(results[0].extractionWarnings?.some((warning) => warning.unanalyzable)).not.toBe(true);
+    });
+  });
+
+  it('should analyze SQL from destructured TypeORM manager query aliases', async () => {
+    const sql = `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class DropUsers implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    const { query } = queryRunner.manager;
+    await query('DROP TABLE users');
+  }
+}`;
+    await withTempSqlFile('pgfence-typeorm-manager-query-destructure-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, format: 'typeorm', requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      expect(results[0].checks.some((check) => check.ruleId === 'drop-table')).toBe(true);
+      expect(results[0].maxRisk).toBe(RiskLevel.CRITICAL);
+      expect(results[0].extractionWarnings?.some((warning) => warning.unanalyzable)).not.toBe(true);
+    });
+  });
+
   it('should analyze Knex schema builder calls from aliased schema objects', async () => {
     const sql = `exports.up = async function(knex) {
   const schema = knex.schema;
   await schema.dropTable('users');
 };`;
     await withTempSqlFile('pgfence-knex-schema-alias-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, format: 'knex', requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      expect(results[0].checks.some((check) => check.ruleId === 'drop-table')).toBe(true);
+      expect(results[0].maxRisk).toBe(RiskLevel.CRITICAL);
+      expect(results[0].extractionWarnings?.some((warning) => warning.unanalyzable)).not.toBe(true);
+    });
+  });
+
+  it('should analyze Knex schema builder calls from destructured schema aliases', async () => {
+    const sql = `exports.up = async function(knex) {
+  const { schema } = knex;
+  await schema.dropTable('users');
+};`;
+    await withTempSqlFile('pgfence-knex-schema-destructure-test', sql, async (tmpFile) => {
       const results = await analyze(
         [tmpFile],
         { ...defaultConfig, format: 'knex', requireLockTimeout: false, requireStatementTimeout: false },
@@ -400,6 +454,27 @@ export class AddCheck implements MigrationInterface {
     expect(fkCheck).toBeDefined();
     expect(fkCheck!.adjustedRisk).toBe(RiskLevel.CRITICAL);
     expect(results[0].maxRisk).toBe(RiskLevel.CRITICAL);
+  });
+
+  it('should adjust inline ADD COLUMN REFERENCES risk using referenced table stats too', async () => {
+    const sql = 'ALTER TABLE appointments ADD COLUMN worker_id integer REFERENCES workers(id);';
+    await withTempSqlFile('pgfence-inline-fk-stats-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        {
+          ...defaultConfig,
+          tableStats: [
+            { schemaName: 'public', tableName: 'appointments', rowCount: 1, totalBytes: 1000 },
+            { schemaName: 'public', tableName: 'workers', rowCount: 20_000_000, totalBytes: 1000 },
+          ],
+        },
+      );
+      const fkCheck = results[0].checks.find((check) => check.ruleId === 'add-column-inline-foreign-key');
+
+      expect(fkCheck).toBeDefined();
+      expect(fkCheck!.adjustedRisk).toBe(RiskLevel.CRITICAL);
+      expect(results[0].maxRisk).toBe(RiskLevel.CRITICAL);
+    });
   });
 
   it('should exclude DO blocks from analyzed coverage while surfacing UNKNOWN', async () => {
@@ -882,6 +957,56 @@ ALTER TABLE users ADD COLUMN seq_id bigint GENERATED ALWAYS AS IDENTITY;`;
     });
   });
 
+  it('should detect constrained domains from schema snapshots', async () => {
+    const sql = 'ALTER TABLE users ADD COLUMN score positive_int;';
+    const snapshotPath = `/tmp/pgfence-domain-snapshot-${randomUUID()}.json`;
+    const snapshot: SchemaSnapshot = {
+      version: 1,
+      generatedAt: '2026-06-02T00:00:00.000Z',
+      tables: [],
+      domains: [
+        { schemaName: 'public', domainName: 'positive_int', hasConstraint: true },
+      ],
+    };
+    await writeFile(snapshotPath, JSON.stringify(snapshot), 'utf8');
+
+    try {
+      await withTempSqlFile('pgfence-add-column-snapshot-domain', sql, async (tmpFile) => {
+        const results = await analyze(
+          [tmpFile],
+          {
+            ...defaultConfig,
+            snapshotFile: snapshotPath,
+            requireLockTimeout: false,
+            requireStatementTimeout: false,
+          },
+        );
+        const domainCheck = results[0].checks.find((check) => check.ruleId === 'add-column-constrained-domain');
+
+        expect(domainCheck).toBeDefined();
+        expect(domainCheck!.risk).toBe(RiskLevel.HIGH);
+        expect(domainCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+      });
+    } finally {
+      await rm(snapshotPath, { force: true });
+    }
+  });
+
+  it('should surface unresolved custom ADD COLUMN types as not fully analyzable', async () => {
+    const sql = 'ALTER TABLE users ADD COLUMN score positive_int;';
+    await withTempSqlFile('pgfence-add-column-unresolved-custom-type', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      const customTypeCheck = results[0].checks.find((check) => check.ruleId === 'add-column-unresolved-custom-type');
+
+      expect(customTypeCheck).toBeDefined();
+      expect(customTypeCheck!.risk).toBe(RiskLevel.MEDIUM);
+      expect(customTypeCheck!.message).toContain('cannot rule out a constrained domain');
+    });
+  });
+
   it('should detect inline ADD COLUMN REFERENCES as a foreign key lock risk', async () => {
     const results = await analyze(
       [fixture('knex-add-column-references.ts')],
@@ -1350,6 +1475,23 @@ SET statement_timeout = '5min';
 SET application_name = 'migrate:test';
 SET idle_in_transaction_session_timeout = '30s';`;
     await withTempSqlFile('pgfence-add-column-order-test', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], defaultConfig);
+      expect(results[0].policyViolations.some((violation) => violation.ruleId === 'lock-timeout-after-dangerous-statement')).toBe(true);
+    });
+  });
+
+  it.each([
+    ['cluster', 'CLUSTER users USING idx_users_id;'],
+    ['vacuum full', 'VACUUM FULL users;'],
+    ['constrained domain add column', 'CREATE DOMAIN positive_int AS integer CHECK (VALUE > 0);\nALTER TABLE users ADD COLUMN score positive_int;'],
+    ['inline foreign key add column', 'ALTER TABLE appointments ADD COLUMN worker_id integer REFERENCES workers(id);'],
+  ])('should detect lock_timeout set after %s emitted ACCESS EXCLUSIVE checks', async (_label, sqlPrefix) => {
+    const sql = `${sqlPrefix}
+SET lock_timeout = '2s';
+SET statement_timeout = '5min';
+SET application_name = 'migrate:test';
+SET idle_in_transaction_session_timeout = '30s';`;
+    await withTempSqlFile('pgfence-emitted-access-exclusive-order-test', sql, async (tmpFile) => {
       const results = await analyze([tmpFile], defaultConfig);
       expect(results[0].policyViolations.some((violation) => violation.ruleId === 'lock-timeout-after-dangerous-statement')).toBe(true);
     });

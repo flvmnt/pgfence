@@ -317,6 +317,12 @@ describe('security boundaries', () => {
     const script = await readFile(path.join(process.cwd(), 'scripts', 'check-public-boundaries.sh'), 'utf8');
     expect(script).toContain("(cloud|agent)(/|['\\\"]");
   });
+
+  it('eslint boundary patterns reject bare local-only imports too', async () => {
+    const config = await readFile(path.join(process.cwd(), 'eslint.config.js'), 'utf8');
+    expect(config).toContain("'**/cloud'");
+    expect(config).toContain("'**/agent'");
+  });
 });
 
 describe('plugin trust: repo-local config must not auto-load code', () => {

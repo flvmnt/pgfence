@@ -77,7 +77,7 @@ function isSetToValue(kind?: string): boolean {
 export function checkPolicies(
   stmts: ParsedStatement[],
   config: PgfenceConfig,
-  options?: { autoCommit?: boolean },
+  options?: { autoCommit?: boolean; accessExclusiveStatements?: Set<string> },
 ): PolicyViolation[] {
   const violations: PolicyViolation[] = [];
   const migrationWrappedInTransaction = options?.autoCommit === false;
@@ -190,13 +190,17 @@ export function checkPolicies(
 
     // Track ACCESS EXCLUSIVE statements for compounding danger (Eugene E4)
     // Also track the first dangerous statement for ordering validation (Gap 2)
-    if (isAccessExclusiveStatement(stmt)) {
+    const statementTakesAccessExclusive = isAccessExclusiveStatement(stmt);
+    const statementNeedsTimeoutOrdering = statementTakesAccessExclusive || options?.accessExclusiveStatements?.has(stmt.sql) === true;
+    if (statementNeedsTimeoutOrdering) {
       // Track first dangerous statement position
       if (firstDangerousIndex === -1) {
         firstDangerousIndex = i;
         firstDangerousSql = makePreview(stmt.sql, 60);
       }
+    }
 
+    if (statementTakesAccessExclusive) {
       // Compounding danger detection
       // Skip when autoCommit is true (e.g. TypeORM transaction = false) since
       // each statement auto-commits and locks don't compound across statements.

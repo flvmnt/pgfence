@@ -39,15 +39,24 @@ export interface TableSnapshot {
   indexes: IndexSnapshot[];
 }
 
+export interface DomainSnapshot {
+  schemaName: string;
+  domainName: string;
+  hasConstraint: boolean;
+}
+
 export interface SchemaSnapshot {
   version: number;
   generatedAt: string;
   tables: TableSnapshot[];
+  domains?: DomainSnapshot[];
 }
 
 export interface SchemaLookup {
   getColumn(table: string, column: string): ColumnSnapshot | null;
   getTable(table: string): TableSnapshot | null;
+  getDomain(typeName: string): DomainSnapshot | null;
+  getDomains(): DomainSnapshot[];
   hasTable(table: string): boolean;
 }
 
@@ -57,6 +66,8 @@ export interface SchemaLookup {
 export function loadSnapshot(snapshot: SchemaSnapshot): SchemaLookup {
   const exactTableMap = new Map<string, TableSnapshot>();
   const bareTableMap = new Map<string, TableSnapshot | null>();
+  const exactDomainMap = new Map<string, DomainSnapshot>();
+  const bareDomainMap = new Map<string, DomainSnapshot | null>();
 
   for (const table of snapshot.tables) {
     const key = table.tableName.toLowerCase();
@@ -71,6 +82,19 @@ export function loadSnapshot(snapshot: SchemaSnapshot): SchemaLookup {
     }
   }
 
+  for (const domain of snapshot.domains ?? []) {
+    const key = domain.domainName.toLowerCase();
+    const exactKey = `${domain.schemaName.toLowerCase()}.${key}`;
+    exactDomainMap.set(exactKey, domain);
+
+    const existing = bareDomainMap.get(key);
+    if (existing === undefined) {
+      bareDomainMap.set(key, domain);
+    } else if (existing !== domain) {
+      bareDomainMap.set(key, null);
+    }
+  }
+
   return {
     getColumn(table: string, column: string): ColumnSnapshot | null {
       const tableKey = table.toLowerCase();
@@ -81,6 +105,13 @@ export function loadSnapshot(snapshot: SchemaSnapshot): SchemaLookup {
     getTable(table: string): TableSnapshot | null {
       const tableKey = table.toLowerCase();
       return exactTableMap.get(tableKey) ?? bareTableMap.get(tableKey) ?? null;
+    },
+    getDomain(typeName: string): DomainSnapshot | null {
+      const typeKey = typeName.toLowerCase();
+      return exactDomainMap.get(typeKey) ?? bareDomainMap.get(typeKey) ?? null;
+    },
+    getDomains(): DomainSnapshot[] {
+      return [...exactDomainMap.values()];
     },
     hasTable(table: string): boolean {
       const tableKey = table.toLowerCase();
@@ -160,6 +191,22 @@ export async function fetchSchemaSnapshot(dbUrl: string): Promise<SchemaSnapshot
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
     `);
 
+    const domainsResult = await pool.query(`
+      SELECT
+        n.nspname AS schema_name,
+        t.typname AS domain_name,
+        EXISTS (
+          SELECT 1
+          FROM pg_constraint c
+          WHERE c.contypid = t.oid
+        ) AS has_constraint
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE t.typtype = 'd'
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      ORDER BY n.nspname, t.typname
+    `);
+
     // Build table map
     const tableMap = new Map<string, TableSnapshot>();
 
@@ -212,6 +259,11 @@ export async function fetchSchemaSnapshot(dbUrl: string): Promise<SchemaSnapshot
       version: 1,
       generatedAt: new Date().toISOString(),
       tables: [...tableMap.values()],
+      domains: domainsResult.rows.map((row) => ({
+        schemaName: row.schema_name,
+        domainName: row.domain_name,
+        hasConstraint: row.has_constraint === true,
+      })),
     };
   } finally {
     await pool.end();

@@ -221,8 +221,19 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   const createdTables = new Set<string>();
   const writtenTables = new Set<string>();
   const constrainedDomains = collectConstrainedDomains(stmts);
-  const ruleConfig: PgfenceConfig = constrainedDomains.size > 0
-    ? { ...config, constrainedDomains }
+  const knownCustomTypes = new Set<string>();
+  for (const domain of schemaLookup?.getDomains() ?? []) {
+    const exact = `${domain.schemaName}.${domain.domainName}`.toLowerCase();
+    const bare = domain.domainName.toLowerCase();
+    knownCustomTypes.add(exact);
+    knownCustomTypes.add(bare);
+    if (domain.hasConstraint) {
+      constrainedDomains.add(exact);
+      constrainedDomains.add(bare);
+    }
+  }
+  const ruleConfig: PgfenceConfig = (constrainedDomains.size > 0 || knownCustomTypes.size > 0)
+    ? { ...config, constrainedDomains, knownCustomTypes }
     : config;
   let unanalyzableParsedStatementCount = 0;
 
@@ -278,7 +289,12 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   result.statementCount = Math.max(0, result.statementCount - unanalyzableParsedStatementCount);
 
   // Apply policy checks
-  const builtInPolicies = checkPolicies(stmts, config, { autoCommit });
+  const accessExclusiveStatements = new Set(
+    result.checks
+      .filter((check) => check.lockMode === 'ACCESS EXCLUSIVE')
+      .map((check) => check.statement),
+  );
+  const builtInPolicies = checkPolicies(stmts, config, { autoCommit, accessExclusiveStatements });
   if (plugins.policies.length > 0) {
     builtInPolicies.push(...runPluginPolicies(plugins.policies, stmts, config, result.extractionWarnings, filePath));
   }
