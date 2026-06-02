@@ -508,6 +508,23 @@ describe('Extractor: Sequelize', () => {
         const stmts = await parseSQL(result.sql);
         expect(stmts.some((s) => s.nodeType === 'DropStmt')).toBe(true);
     });
+
+    it('should emit SET NOT NULL / SET DEFAULT from changeColumn, not only a phantom TYPE rewrite', async () => {
+        await withTempFile('pgfence-sequelize-change-', '.js', `'use strict';
+module.exports = {
+  async up(queryInterface, Sequelize) {
+    await queryInterface.changeColumn('users', 'status', { type: Sequelize.STRING(500), allowNull: false });
+    await queryInterface.changeColumn('users', 'kind', { type: Sequelize.STRING, defaultValue: 'pending' });
+  },
+  async down() {},
+};`, async (filePath) => {
+            const result = await extractSequelizeSQL(filePath);
+            expect(result.sql).toContain('ALTER COLUMN "status" SET NOT NULL');
+            expect(result.sql).toContain(`ALTER COLUMN "kind" SET DEFAULT 'pending'`);
+            const stmts = await parseSQL(result.sql);
+            expect(stmts.length).toBeGreaterThanOrEqual(3);
+        });
+    });
 });
 
 describe('Extractor: TypeORM builder API', () => {

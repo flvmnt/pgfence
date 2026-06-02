@@ -450,6 +450,32 @@ function transpileRenameColumn(args: TSNode[], filePath: string): TranspileResul
   return { sql, warnings };
 }
 
+/**
+ * Render a Sequelize column `defaultValue` AST node to a SQL default expression,
+ * or null if it is not a statically resolvable literal. A Sequelize.literal()
+ * is treated as a volatile expression placeholder so the analyzer still flags it.
+ */
+function sequelizeDefaultToSql(value: TSNode): string | null {
+  if (value.type === 'Literal') {
+    if (typeof value.value === 'string') return `'${value.value.replace(/'/g, "''")}'`;
+    if (typeof value.value === 'number') return String(value.value);
+    if (typeof value.value === 'boolean') return String(value.value);
+    if (value.value === null) return 'NULL';
+    return null;
+  }
+  if (value.type === 'CallExpression') {
+    const defCallee = value.callee as TSNode;
+    if (
+      defCallee?.type === 'MemberExpression' &&
+      (defCallee.property as TSNode)?.type === 'Identifier' &&
+      ((defCallee.property as TSNode).name as string) === 'literal'
+    ) {
+      return 'pgfence_volatile_expr()';
+    }
+  }
+  return null;
+}
+
 function transpileChangeColumn(args: TSNode[], filePath: string): TranspileResult {
   const sql: string[] = [];
   const warnings: ExtractionWarning[] = [];
@@ -482,26 +508,47 @@ function transpileChangeColumn(args: TSNode[], filePath: string): TranspileResul
   if (resolvedType) {
     sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" TYPE ${resolvedType}`);
   } else if (typeDef.type === 'ObjectExpression') {
-    // Object with type property
+    // Object form: { type, allowNull, defaultValue, ... }. Sequelize's
+    // changeColumn applies each attribute, so emit a separate ALTER COLUMN
+    // statement per attribute. Reading only `type` (the previous behavior)
+    // silently dropped SET NOT NULL / SET DEFAULT and, because Sequelize
+    // normalization always carries a `type`, fabricated a phantom TYPE rewrite
+    // for changes that were really just a nullability or default change.
     const props = typeDef.properties as TSNode[];
-    let found = false;
+    let emitted = false;
     for (const prop of props) {
       if (prop.type !== 'Property') continue;
       const key = prop.key as TSNode;
-      if (key.type === 'Identifier' && (key.name as string) === 'type') {
-        const resolved = resolveSequelizeType(prop.value as TSNode);
+      const keyName = key.type === 'Identifier' ? (key.name as string) : null;
+      const value = prop.value as TSNode;
+      if (keyName === 'type') {
+        const resolved = resolveSequelizeType(value);
         if (resolved) {
           sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" TYPE ${resolved}`);
-          found = true;
+          emitted = true;
+        }
+      } else if (keyName === 'allowNull' && value.type === 'Literal') {
+        if (value.value === false) {
+          sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" SET NOT NULL`);
+          emitted = true;
+        } else if (value.value === true) {
+          sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" DROP NOT NULL`);
+          emitted = true;
+        }
+      } else if (keyName === 'defaultValue') {
+        const def = sequelizeDefaultToSql(value);
+        if (def !== null) {
+          sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" SET DEFAULT ${def}`);
+          emitted = true;
         }
       }
     }
-    if (!found) {
+    if (!emitted) {
       warnings.push({
         filePath,
         line: typeDef.loc?.start?.line ?? 0,
         column: typeDef.loc?.start?.column ?? 0,
-        message: `Could not resolve type in changeColumn for "${tableName}"."${colName}": cannot statically analyze`,
+        message: `Could not resolve any attribute in changeColumn for "${tableName}"."${colName}": cannot statically analyze`,
         unanalyzable: true,
       });
     }
