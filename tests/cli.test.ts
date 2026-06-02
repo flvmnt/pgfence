@@ -5,8 +5,8 @@ import path from 'path';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { analyze, RISK_ORDER } from '../src/analyzer.js';
-import type { PgfenceConfig } from '../src/types.js';
+import { analyze, parseExtractedStatements, RISK_ORDER } from '../src/analyzer.js';
+import type { ExtractionResult, PgfenceConfig } from '../src/types.js';
 import { RiskLevel } from '../src/types.js';
 import { installHooks, installPrismaGitHubAction } from '../src/init.js';
 
@@ -81,6 +81,29 @@ describe('CI exit code logic', () => {
         );
         expect(results[0].policyViolations.some((v) => v.severity === 'error')).toBe(true);
         expect(wouldCiFail(results, RiskLevel.HIGH)).toBe(true);
+    });
+});
+
+describe('Trace parser fallback', () => {
+    it('preserves valid extracted statements when one ORM statement fails to parse', async () => {
+        const extraction: ExtractionResult = {
+            sql: [
+                'ALTER TABLE users ADD COLUMN nickname text;',
+                'ALTER TABLE',
+            ].join('\n'),
+            statements: [
+                'ALTER TABLE users ADD COLUMN nickname text;',
+                'ALTER TABLE',
+            ],
+            warnings: [],
+        };
+
+        const stmts = await parseExtractedStatements(extraction, 'migration.ts');
+
+        expect(stmts).toHaveLength(1);
+        expect(stmts[0].sql).toContain('ADD COLUMN nickname');
+        expect(extraction.warnings).toHaveLength(1);
+        expect(extraction.warnings[0]).toMatchObject({ unanalyzable: true, line: 1, column: 1 });
     });
 });
 

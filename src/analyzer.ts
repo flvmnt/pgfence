@@ -87,6 +87,47 @@ export function adjustRisk(baseRisk: RiskLevelType, rowCount: number): RiskLevel
   return RISK_ORDER[newIdx];
 }
 
+export async function parseExtractedStatements(
+  extraction: ExtractionResult,
+  filePath: string,
+): Promise<ParsedStatement[]> {
+  const stmts: ParsedStatement[] = [];
+  if (!extraction.sql.trim()) return stmts;
+
+  try {
+    return await parseSQL(extraction.sql);
+  } catch (err) {
+    if (extraction.statements && extraction.statements.length > 1) {
+      for (const piece of extraction.statements) {
+        if (!piece.trim()) continue;
+        try {
+          stmts.push(...(await parseSQL(piece)));
+        } catch (pieceErr) {
+          const message = pieceErr instanceof Error ? pieceErr.message : String(pieceErr);
+          extraction.warnings.push({
+            message: `SQL parse error: ${message}, this statement could not be analyzed`,
+            filePath,
+            line: 1,
+            column: 1,
+            unanalyzable: true,
+          });
+        }
+      }
+      return stmts;
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+    extraction.warnings.push({
+      message: `SQL parse error: ${message}, this file could not be analyzed`,
+      filePath,
+      line: 1,
+      column: 1,
+      unanalyzable: true,
+    });
+    return stmts;
+  }
+}
+
 /**
  * Analyze migration files and return results.
  */
@@ -152,44 +193,7 @@ export async function analyze(
     // handled per-file (surfaced as an unanalyzable warning) by the extractor
     // itself, so one malformed .ts/.js migration cannot abort the whole batch.
     const extraction = await extractSQL(filePath, config);
-    let stmts: ParsedStatement[] = [];
-    if (extraction.sql.trim()) {
-      try {
-        stmts = await parseSQL(extraction.sql);
-      } catch (err) {
-        // The joined batch failed to parse. If the extractor produced
-        // per-statement SQL (ORM transpilers join with ';\n'), re-parse each
-        // statement in isolation so one malformed generated statement cannot
-        // void analysis of the rest of the file. Each failure is surfaced as
-        // unanalyzable rather than silently dropped.
-        if (extraction.statements && extraction.statements.length > 1) {
-          for (const piece of extraction.statements) {
-            if (!piece.trim()) continue;
-            try {
-              stmts.push(...(await parseSQL(piece)));
-            } catch (pieceErr) {
-              const message = pieceErr instanceof Error ? pieceErr.message : String(pieceErr);
-              extraction.warnings.push({
-                message: `SQL parse error: ${message}, this statement could not be analyzed`,
-                filePath,
-                line: 1,
-                column: 1,
-                unanalyzable: true,
-              });
-            }
-          }
-        } else {
-          const message = err instanceof Error ? err.message : String(err);
-          extraction.warnings.push({
-            message: `SQL parse error: ${message}, this file could not be analyzed`,
-            filePath,
-            line: 1,
-            column: 1,
-            unanalyzable: true,
-          });
-        }
-      }
-    }
+    const stmts = await parseExtractedStatements(extraction, filePath);
     const constrainedDomains = collectConstrainedDomains(stmts);
     const ruleConfig: PgfenceConfig = constrainedDomains.size > 0
       ? { ...config, constrainedDomains }

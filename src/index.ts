@@ -354,8 +354,7 @@ program
         // 7. For each file's static result, trace each statement
         const { mergeTraceWithStatic } = await import('./trace-merge.js');
         const { reportTraceCLI } = await import('./reporters/trace-cli.js');
-        const { parseSQL } = await import('./parser.js');
-        const { extractSQL } = await import('./analyzer.js');
+        const { extractSQL, parseExtractedStatements } = await import('./analyzer.js');
 
         const traceResults: TraceResult[] = [];
 
@@ -378,11 +377,8 @@ program
           // Re-read and extract SQL from the file (handles ORM formats)
           const filePath = files[fileIdx];
           const extraction = await extractSQL(filePath, config);
-          let statements: string[] = [];
-          if (extraction.sql.trim()) {
-            const parsed = await parseSQL(extraction.sql);
-            statements = parsed.map(s => s.sql);
-          }
+          const parsedStatements = await parseExtractedStatements(extraction, filePath);
+          const statements = parsedStatements.map(s => s.sql);
 
           // Trace each statement
           const traces = [];
