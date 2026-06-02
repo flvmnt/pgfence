@@ -771,7 +771,6 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
   let fields: string[] = [];
   let refTable = '';
   let refFields: string[] = [];
-  let whereClause = '';
   let onDelete = '';
   let onUpdate = '';
   let unresolvedForeignKey = false;
@@ -834,11 +833,6 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
           unresolvedForeignKey = true;
         }
         break;
-      case 'where':
-        if (value.type === 'ObjectExpression') {
-          whereClause = ' WHERE ...';
-        }
-        break;
       case 'onDelete': {
         const act = getStringArg(value)?.toUpperCase() ?? '';
         if (FK_ACTIONS.has(act)) onDelete = act;
@@ -890,7 +884,21 @@ function transpileAddConstraint(args: TSNode[], filePath: string): TranspileResu
       }
       break;
     case 'check':
-      sql.push(`ALTER TABLE "${tableName}" ADD CONSTRAINT ${nameClause}CHECK ${whereClause || '(...)'}`);
+      // A Sequelize CHECK constraint predicate is supplied as a Sequelize
+      // `where` object, which pgfence cannot statically render to a SQL
+      // expression. Emitting a placeholder predicate ("CHECK (...)" or
+      // "CHECK WHERE ...") produces SQL that fails libpg-query parsing; because
+      // the file's statements are parsed as one batch, that would void analysis
+      // of every other (possibly dangerous) statement in the migration. Fail
+      // closed: surface the CHECK as unanalyzable and emit no SQL.
+      warnings.push({
+        filePath,
+        line: optsArg.loc?.start?.line ?? 0,
+        column: optsArg.loc?.start?.column ?? 0,
+        message:
+          'CHECK constraint predicate is not statically resolvable from this Sequelize migration; manual review required',
+        unanalyzable: true,
+      });
       break;
     default:
       if (constraintType) {

@@ -5,6 +5,7 @@ import { extractTypeORMSQL } from '../src/extractors/typeorm.js';
 import { extractKnexSQL } from '../src/extractors/knex.js';
 import { extractDrizzleSQL } from '../src/extractors/drizzle.js';
 import { extractSequelizeSQL } from '../src/extractors/sequelize.js';
+import { parseSQL } from '../src/parser.js';
 import path from 'path';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -469,6 +470,19 @@ describe('Extractor: Sequelize', () => {
         const filePath = path.join(fixturesDir, 'sequelize-literal-default.js');
         const result = await extractSequelizeSQL(filePath);
         expect(result.sql).toContain('pgfence_volatile_expr');
+    });
+
+    it('should fail closed on a CHECK constraint instead of emitting invalid SQL that poisons the batch', async () => {
+        const filePath = path.join(fixturesDir, 'sequelize-check-constraint.js');
+        const result = await extractSequelizeSQL(filePath);
+        // The unresolvable CHECK is surfaced as unanalyzable, not emitted as SQL.
+        expect(result.warnings.some((w) => w.unanalyzable)).toBe(true);
+        expect(result.sql).not.toContain('CHECK');
+        // The co-located dangerous statement is still extracted and parseable.
+        expect(result.sql).toContain('DROP TABLE');
+        expect(result.sql).toContain('"legacy_orders"');
+        const stmts = await parseSQL(result.sql);
+        expect(stmts.some((s) => s.nodeType === 'DropStmt')).toBe(true);
     });
 });
 
