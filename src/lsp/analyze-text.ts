@@ -177,7 +177,20 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
 
   result.statementCount = stmts.length;
   const statementSourceRanges = stmts.map((stmt, index) => {
-    return extractedSourceRanges?.[index] ?? { startOffset: stmt.startOffset, endOffset: stmt.endOffset };
+    // For ORM formats the extractor emits one source range per extracted literal.
+    // If a single literal (e.g. one queryRunner.query("...; ...")) parsed into
+    // multiple statements, the positional map runs past the available ranges.
+    // Clamp to the last known literal range so the diagnostic still points at a
+    // real location in the source document rather than at an offset into the
+    // joined extracted SQL (which would highlight the wrong place in the editor).
+    if (extractedSourceRanges) {
+      return (
+        extractedSourceRanges[index] ??
+        extractedSourceRanges[extractedSourceRanges.length - 1] ??
+        { startOffset: stmt.startOffset, endOffset: stmt.endOffset }
+      );
+    }
+    return { startOffset: stmt.startOffset, endOffset: stmt.endOffset };
   });
 
   const schemaLookup: SchemaLookup | undefined = config.snapshotFile

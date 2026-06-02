@@ -30,6 +30,34 @@ describe('analyzeText', () => {
     expect(result.sourceRanges[0].endOffset).toBeGreaterThan(0);
   });
 
+  it('keeps diagnostic ranges inside the source literal when one ORM query holds multiple statements', async () => {
+    const content = `import { MigrationInterface, QueryRunner } from "typeorm";
+export class M implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query("CREATE INDEX idx_a ON users (a); DROP TABLE legacy_users");
+  }
+  async down(queryRunner: QueryRunner): Promise<void> {}
+}
+`;
+    const result = await analyzeText({
+      content,
+      filePath: 'migrations/1700000000000-M.ts',
+      config: defaultConfig,
+    });
+    // Both statements in the single query() literal are analyzed.
+    expect(result.statementCount).toBe(2);
+    expect(result.checks.length).toBeGreaterThanOrEqual(2);
+    expect(result.maxRisk).toBe(RiskLevel.CRITICAL); // DROP TABLE survives.
+    // Every diagnostic range points inside the SQL literal in the .ts source,
+    // not at a stale offset into the joined extracted SQL.
+    const litStart = content.indexOf('CREATE INDEX');
+    const litEnd = content.indexOf('legacy_users') + 'legacy_users'.length;
+    for (const range of result.sourceRanges) {
+      expect(range.startOffset).toBeGreaterThanOrEqual(litStart - 2);
+      expect(range.endOffset).toBeLessThanOrEqual(litEnd + 2);
+    }
+  });
+
   it('should handle parse errors gracefully', async () => {
     const result = await analyzeText({
       content: 'ALTER TABLE users INVALID SYNTAX;',
