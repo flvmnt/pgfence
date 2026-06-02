@@ -509,6 +509,20 @@ describe('Extractor: Sequelize', () => {
         expect(stmts.some((s) => s.nodeType === 'DropStmt')).toBe(true);
     });
 
+    it('should detect builder calls when the up() parameter is aliased (not named queryInterface)', async () => {
+        await withTempFile('pgfence-sequelize-alias-', '.js', `'use strict';
+module.exports = {
+  up: async (qi) => {
+    await qi.dropTable('users');
+  },
+  down: async () => {},
+};`, async (filePath) => {
+            const result = await extractSequelizeSQL(filePath);
+            expect(result.sql).toContain('DROP TABLE');
+            expect(result.sql).toContain('"users"');
+        });
+    });
+
     it('should emit SET NOT NULL / SET DEFAULT from changeColumn, not only a phantom TYPE rewrite', async () => {
         await withTempFile('pgfence-sequelize-change-', '.js', `'use strict';
 module.exports = {

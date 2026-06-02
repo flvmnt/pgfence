@@ -65,6 +65,14 @@ export async function extractSequelizeSQLFromSource(
         return { sql: '', warnings };
     }
 
+    // Sequelize passes queryInterface as the first positional parameter, which
+    // is conventionally but not necessarily named "queryInterface" (umzug setups
+    // alias or destructure it). Bind to the actual parameter name so builder
+    // calls like `qi.dropTable(...)` are not silently skipped. A destructured or
+    // missing first param falls back to the conventional name (which also matches
+    // the umzug `{ context: queryInterface }` binding).
+    const builderObjName = getFirstParamName(upFn) ?? 'queryInterface';
+
     let foundQuery = false;
 
     // Gap 11: track conditional depth to warn about conditional SQL
@@ -107,7 +115,7 @@ export async function extractSequelizeSQLFromSource(
                             unanalyzable: true,
                         });
                     }
-                } else if (isQueryInterfaceBuilder(node)) {
+                } else if (isQueryInterfaceBuilder(node, builderObjName)) {
                     // Gap 13: Transpile queryInterface builder calls to SQL
                     foundQuery = true;
                     const result = transpileSequelizeCall(node, filePath);
@@ -115,6 +123,16 @@ export async function extractSequelizeSQLFromSource(
                         queries.push(...result.sql);
                         for (let i = 0; i < result.sql.length; i++) {
                             sourceRanges.push(nodeRange(node));
+                        }
+                        if (conditionalDepth > 0) {
+                            const loc = node.loc?.start ?? { line: 0, column: 0 };
+                            warnings.push({
+                                filePath,
+                                line: loc.line,
+                                column: loc.column,
+                                message: `Conditional SQL at line ${loc.line}, statement may or may not execute depending on runtime condition`,
+                                unanalyzable: true,
+                            });
                         }
                     } else if (result.warnings.length === 0) {
                         const loc = node.loc?.start ?? { line: 0, column: 0 };
@@ -173,7 +191,14 @@ const QUERY_INTERFACE_METHODS = new Set([
     'addConstraint', 'removeConstraint',
 ]);
 
-function isQueryInterfaceBuilder(node: TSNode): boolean {
+function getFirstParamName(fn: TSNode): string | null {
+    const params = fn.params as TSNode[] | undefined;
+    const first = params?.[0];
+    if (first?.type === 'Identifier') return first.name as string;
+    return null;
+}
+
+function isQueryInterfaceBuilder(node: TSNode, objName: string): boolean {
     const callee = node.callee as TSNode;
     if (callee?.type !== 'MemberExpression') return false;
 
@@ -181,9 +206,10 @@ function isQueryInterfaceBuilder(node: TSNode): boolean {
     if (prop?.type !== 'Identifier') return false;
     if (!QUERY_INTERFACE_METHODS.has(prop.name as string)) return false;
 
-    // Check that object is queryInterface (an identifier)
+    // Check that the object is the bound queryInterface parameter (which may be
+    // named anything, e.g. `qi`), not the literal identifier "queryInterface".
     const obj = callee.object as TSNode;
-    if (obj?.type === 'Identifier' && (obj.name as string) === 'queryInterface') {
+    if (obj?.type === 'Identifier' && (obj.name as string) === objName) {
         return true;
     }
 
