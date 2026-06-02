@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 import { loadConfigFile, mergeConfig } from '../src/config.js';
 import { getAnalysisHooks, registerAnalysisHooks } from '../src/analysis-hooks.js';
 import { RiskLevel } from '../src/types.js';
+
+const execFileAsync = promisify(execFile);
 
 async function makeRepoLocalTempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(process.cwd(), prefix));
@@ -322,6 +326,22 @@ describe('security boundaries', () => {
     const config = await readFile(path.join(process.cwd(), 'eslint.config.js'), 'utf8');
     expect(config).toContain("'**/cloud'");
     expect(config).toContain("'**/agent'");
+  });
+
+  it('eslint rejects dynamic imports into local-only implementation paths', async () => {
+    const probeDir = await mkdtemp(path.join(process.cwd(), 'src', '.eslint-boundary-probe-'));
+    const probeFile = path.join(probeDir, 'dynamic.ts');
+    await writeFile(probeFile, "import('./cloud');\nimport('../agent');\n", 'utf8');
+
+    try {
+      await expect(execFileAsync('pnpm', ['exec', 'eslint', probeFile], {
+        cwd: process.cwd(),
+      })).rejects.toMatchObject({
+        code: 1,
+      });
+    } finally {
+      await rm(probeDir, { recursive: true, force: true });
+    }
   });
 });
 

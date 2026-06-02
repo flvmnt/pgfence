@@ -20,6 +20,13 @@ export default tseslint.config(
           ],
         },
       ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "ImportExpression[source.value=/^\\.\\.?\\/(?:cloud|agent)(?:\\/|$)/]",
+          message: 'Local-only modules must not be dynamically imported from public code.',
+        },
+      ],
     },
   },
   {
