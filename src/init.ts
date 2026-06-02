@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { join, resolve } from 'node:path';
 
 const execFileAsync = promisify(execFile);
-const PACKAGE_VERSION = '0.6.0';
+const PACKAGE_VERSION = '0.6.1';
 
 const PRE_COMMIT_HOOK_CONTENT = `#!/bin/sh
 # pgfence pre-commit hook

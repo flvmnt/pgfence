@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.1 (2026-06-02)
+
+### Trust Contract
+
+- Fixed false negatives in TypeORM manager alias extraction and Knex schema alias extraction.
+- Fixed coverage accounting so procedural statements that are intentionally skipped do not inflate analyzed statement counts.
+- Fixed size-aware foreign key risk scoring so referenced table stats are considered with the child table.
+- Fixed ADD COLUMN identity and same-file constrained domain analysis so high-risk additions are reported.
+- Fixed timeout ordering analysis for row security and policy operations that take ACCESS EXCLUSIVE locks.
+- Fixed GitLab coverage summaries so dynamic SQL points to the real source line.
+
+### CLI And Boundaries
+
+- Fixed CLI precedence so `--db-url` overrides `--stats-file`.
+- Hardened public boundary checks for bare imports into excluded implementation areas.
+- Fixed LSP fallback analysis for mixed parseable and unparseable statements.
+- Added fail-closed Sequelize handling for computed `createTable` column keys.
+- Clarified generated Prisma workflow and GitHub Actions examples for version 0.6.1.
+
 ## 0.6.0 (2026-05-25)
 
 ### New surfaces

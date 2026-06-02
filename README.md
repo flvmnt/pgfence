@@ -211,7 +211,7 @@ pgfence init --prisma-github-action
 This writes `.github/workflows/pgfence-prisma.yml`. The workflow runs on pull requests that touch `prisma/migrations/**/migration.sql`, finds every Prisma `migration.sql` file, and checks them with:
 
 ```bash
-npx --yes @flvmnt/pgfence@0.6.0 analyze --format prisma --ci --max-risk medium
+npx --yes @flvmnt/pgfence@0.6.1 analyze --format prisma --ci --max-risk medium
 ```
 
 The command refuses to overwrite an existing `pgfence-prisma.yml`, so you can review or rename your current workflow first.
@@ -464,7 +464,7 @@ Use a concrete migration path or a glob here. The composite action expands `path
 
 ```yaml
 - name: Check migration safety
-  uses: flvmnt/pgfence@v0.6.0
+  uses: flvmnt/pgfence@v0.6.1
   with:
     path: migrations/add-users.sql
     max-risk: medium
