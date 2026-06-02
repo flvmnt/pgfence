@@ -289,7 +289,7 @@ pgfence analyze --output github migrations/*.sql
 ### CI mode
 
 ```bash
-# Exit 1 if any check exceeds the MEDIUM threshold
+# Exit 1 when risk exceeds MEDIUM, a policy error is present, or --unknown block sees unanalyzable SQL
 pgfence analyze --ci --max-risk medium migrations/*.sql
 ```
 
@@ -427,11 +427,11 @@ Beyond DDL analysis, pgfence enforces operational best practices:
 
 When pgfence detects a dangerous pattern, it outputs the exact safe alternative:
 
-### ADD COLUMN with NOT NULL + non-constant DEFAULT
+### ADD COLUMN with NOT NULL + volatile DEFAULT
 
 **Dangerous:**
 ```sql
-ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp();
 -- ACCESS EXCLUSIVE lock on entire table for duration of rewrite
 ```
 

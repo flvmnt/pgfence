@@ -359,4 +359,20 @@ printf '%s\\n' "\${FILES[@]}"
             await rm(statsDir, { recursive: true, force: true });
         }
     });
+
+    it('lets --db-url override a missing --stats-file', async () => {
+        const fixture = path.join(fixturesDir, 'safe-migration.sql');
+        const missingStats = path.join(tmpdir(), `pgfence-missing-stats-${Date.now()}.json`);
+
+        try {
+            await execPromise(cliCommand(`analyze "${fixture}" --db-url postgres://bad:bad@localhost:0/noexist --stats-file "${missingStats}"`));
+            throw new Error('expected analyze to fail on db connection');
+        } catch (err: unknown) {
+            const error = err as { code?: number; stderr?: string };
+            expect(error.code).toBe(2);
+            expect(error.stderr ?? '').toContain('pgfence error:');
+            expect(error.stderr ?? '').not.toContain('Failed to load stats file');
+            expect(error.stderr ?? '').not.toContain(missingStats);
+        }
+    });
 });

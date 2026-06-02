@@ -288,14 +288,34 @@ describe('security boundaries', () => {
 
   it('keeps public source files free of local-only cloud or agent imports', async () => {
     const sourceFiles = await collectTypeScriptFiles(path.join(process.cwd(), 'src'));
-    const forbiddenReference = /from ['"]\.\.?\/(?:cloud|agent)\//;
-    const forbiddenDynamicImport = /import\(['"]\.\.?\/(?:cloud|agent)\//;
+    const forbiddenStaticImport = /(?:from|import)\s+['"]\.\.?\/(?:cloud|agent)(?:\/|['"])/;
+    const forbiddenDynamicImport = /import\(['"]\.\.?\/(?:cloud|agent)(?:\/|['"])/;
+    const forbiddenRequire = /require\(['"]\.\.?\/(?:cloud|agent)(?:\/|['"])/;
 
     for (const sourceFile of sourceFiles) {
       const content = await readFile(sourceFile, 'utf8');
-      expect(content).not.toMatch(forbiddenReference);
+      expect(content).not.toMatch(forbiddenStaticImport);
       expect(content).not.toMatch(forbiddenDynamicImport);
+      expect(content).not.toMatch(forbiddenRequire);
     }
+  });
+
+  it('boundary import patterns reject bare and nested local-only imports', () => {
+    const forbiddenStaticImport = /(?:from|import)\s+['"]\.\.?\/(?:cloud|agent)(?:\/|['"])/;
+    const forbiddenDynamicImport = /import\(['"]\.\.?\/(?:cloud|agent)(?:\/|['"])/;
+    const forbiddenRequire = /require\(['"]\.\.?\/(?:cloud|agent)(?:\/|['"])/;
+
+    expect(`import './cloud';`).toMatch(forbiddenStaticImport);
+    expect(`import '../agent';`).toMatch(forbiddenStaticImport);
+    expect(`import './cloud/client';`).toMatch(forbiddenStaticImport);
+    expect(`import client from './cloud';`).toMatch(forbiddenStaticImport);
+    expect(`await import('../agent');`).toMatch(forbiddenDynamicImport);
+    expect(`require('./cloud');`).toMatch(forbiddenRequire);
+  });
+
+  it('public boundary script rejects bare local-only imports too', async () => {
+    const script = await readFile(path.join(process.cwd(), 'scripts', 'check-public-boundaries.sh'), 'utf8');
+    expect(script).toContain("(cloud|agent)(/|['\\\"]");
   });
 });
 

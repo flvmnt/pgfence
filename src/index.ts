@@ -158,7 +158,10 @@ program
 
       // Load stats file if provided (alternative to --db-url)
       let tableStats: TableStats[] | undefined;
-      const statsFilePath = optionFromCli(command, 'statsFile') ? opts.statsFile : fileConfig?.['stats-file'];
+      const dbUrl = optionFromCli(command, 'dbUrl') ? opts.dbUrl : fileConfig?.['db-url'];
+      const statsFilePath = dbUrl
+        ? undefined
+        : optionFromCli(command, 'statsFile') ? opts.statsFile : fileConfig?.['stats-file'];
       if (statsFilePath) {
         try {
           const raw = await readFile(statsFilePath, 'utf8');

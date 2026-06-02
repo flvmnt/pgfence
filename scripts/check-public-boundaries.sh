@@ -20,9 +20,9 @@ if [ -n "$FORBIDDEN_TRACKED" ]; then
 fi
 
 if command -v rg >/dev/null 2>&1; then
-  FORBIDDEN_REFERENCES=$(rg -n "from ['\"]\.\.?/(cloud|agent)/|import\(['\"]\.\.?/(cloud|agent)/|require\(['\"]\.\.?/(cloud|agent)/" src --glob '!src/cloud/**' --glob '!src/agent/**' || true)
+  FORBIDDEN_REFERENCES=$(rg -n "(from|import)[[:space:]]+['\"]\.\.?/(cloud|agent)(/|['\"])|import\(['\"]\.\.?/(cloud|agent)(/|['\"])|require\(['\"]\.\.?/(cloud|agent)(/|['\"])" src --glob '!src/cloud/**' --glob '!src/agent/**' || true)
 else
-  FORBIDDEN_REFERENCES=$(grep -REn "from ['\"]\.\.?/(cloud|agent)/|import\(['\"]\.\.?/(cloud|agent)/|require\(['\"]\.\.?/(cloud|agent)/" src --exclude-dir=cloud --exclude-dir=agent || true)
+  FORBIDDEN_REFERENCES=$(grep -REn "(from|import)[[:space:]]+['\"]\.\.?/(cloud|agent)(/|['\"])|import\(['\"]\.\.?/(cloud|agent)(/|['\"])|require\(['\"]\.\.?/(cloud|agent)(/|['\"])" src --exclude-dir=cloud --exclude-dir=agent || true)
 fi
 
 if [ -n "$FORBIDDEN_REFERENCES" ]; then
