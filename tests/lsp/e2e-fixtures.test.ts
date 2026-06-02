@@ -439,7 +439,7 @@ describe('LSP E2E on fixtures', { timeout: 30000 }, () => {
 
   // ── ADD COLUMN volatile default ───────────────────────────
 
-  it('add-column: volatile default (now())', async () => {
+  it('add-column: volatile default (clock_timestamp())', async () => {
     const { child: c, waitFor } = await init();
     const { diags } = await openAndGetDiags(c, waitFor, 'dangerous-add-column-function.sql');
     expect(hasRule(diags, 'add-column-non-constant-default')).toBeDefined();

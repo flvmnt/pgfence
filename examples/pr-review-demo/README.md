@@ -25,7 +25,7 @@ node dist/index.js analyze --output gitlab examples/pr-review-demo/migrations/20
 
 The risky migration does three things reviewers routinely miss:
 
-1. It adds a column with `DEFAULT now()`, which is non-constant and can force a table rewrite under an `ACCESS EXCLUSIVE` lock.
+1. It adds a column with `DEFAULT clock_timestamp()`, which is volatile and can force a table rewrite under an `ACCESS EXCLUSIVE` lock.
 2. It makes the column `NOT NULL` immediately, which should be handled in a safer contract step.
 3. It creates a plain index without `CONCURRENTLY`, which blocks writes for the duration of the build.
 

@@ -72,15 +72,15 @@
     "fingerprint": "f5e78a48915f9d2cbf8712f754146611688d7b10"
   },
   {
-    "description": "Analyzed 2 SQL statements. 0 dynamic statements not analyzable. Coverage: 100%.",
+    "description": "Analyzed 2 SQL statements. 0 dynamic statements not analyzable. Coverage: 100%",
     "check_name": "pgfence-coverage-summary",
     "severity": "info",
     "location": {
       "path": "examples/pr-review-demo/migrations/20260415_add_last_seen_at.sql",
       "lines": {
-        "begin": 7
+        "begin": 1
       }
     },
-    "fingerprint": "d86066bc8b340cfccf7c5e4ec2cf6831993a687c"
+    "fingerprint": "57e389a74809c61eabd54c88fc3276df13a199d1"
   }
 ]

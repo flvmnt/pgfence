@@ -27,7 +27,7 @@
 
 Your ORM migration just took down production for 47 seconds.
 
-A seemingly innocent `ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()` grabbed an `ACCESS EXCLUSIVE` lock on your 12M-row users table. Every query queued behind it. Your healthchecks failed. Pods restarted. Customers noticed.
+A seemingly innocent `ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()` grabbed an `ACCESS EXCLUSIVE` lock on your 12M-row users table. Every query queued behind it. Your healthchecks failed. Pods restarted. Customers noticed.
 
 This happens because ORMs hide the Postgres lock semantics from you. You can't fix what you can't see.
 
@@ -68,7 +68,7 @@ pgfence - Migration Safety Report
 │ Statement                                       │ Lock Mode        │ Blocks   │ Risk   │
 ├─────────────────────────────────────────────────┼──────────────────┼──────────┼────────┤
 │ ALTER TABLE users ADD COLUMN last_seen_at       │ ACCESS EXCLUSIVE │ R + W    │ HIGH   │
-│ TIMESTAMPTZ NOT NULL DEFAULT now()              │                  │          │        │
+│ TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()  │                  │          │        │
 ├─────────────────────────────────────────────────┼──────────────────┼──────────┼────────┤
 │ CREATE INDEX idx_users_email ON users(email)    │ SHARE            │ W        │ MEDIUM │
 └─────────────────────────────────────────────────┴──────────────────┴──────────┴────────┘
@@ -77,7 +77,7 @@ Policy Violations:
   ✗ Missing SET lock_timeout: add SET lock_timeout = '2s' at the start
 
 Safe Rewrites:
-  1. ADD COLUMN with NOT NULL + non-constant DEFAULT → split into expand/backfill/contract:
+  1. ADD COLUMN with NOT NULL + volatile DEFAULT → split into expand/backfill/contract:
      • ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
      • Backfill in batches: WITH batch AS (SELECT ctid FROM users WHERE email_verified IS NULL LIMIT 1000 FOR UPDATE SKIP LOCKED) UPDATE users t SET email_verified = <fill_value> FROM batch WHERE t.ctid = batch.ctid;
      • ALTER TABLE users ADD CONSTRAINT ... CHECK (email_verified IS NOT NULL) NOT VALID;

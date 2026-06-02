@@ -41,7 +41,7 @@ SET application_name = 'migrate:<short-name>';    -- pg_stat_activity visibility
 ### Table rewrites (ACCESS EXCLUSIVE, blocks reads + writes)
 
 - `ALTER COLUMN ... TYPE` (most type changes rewrite the table)
-- `ADD COLUMN ... DEFAULT <volatile>` (e.g. `DEFAULT now()`, `DEFAULT uuid_generate_v4()`)
+- `ADD COLUMN ... DEFAULT <volatile>` (e.g. `DEFAULT clock_timestamp()`, `DEFAULT uuid_generate_v4()`)
 - `ADD COLUMN ... NOT NULL` without a `DEFAULT` (on a non-empty table)
 - `VACUUM FULL`, `CLUSTER` (full rewrite to compact)
 - `ALTER TABLE ... SET LOGGED` or `SET UNLOGGED`

@@ -208,7 +208,9 @@
       "properties": {
         "coverageSummary": {
           "totalStatements": 2,
+          "analyzedStatements": 2,
           "dynamicStatements": 0,
+          "dynamicStatementLines": [],
           "coveragePercent": 100
         }
       }

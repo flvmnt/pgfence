@@ -4,7 +4,7 @@
 
 | # | Statement | Lock Mode | Blocks | Risk | Message |
 |---|-----------|-----------|--------|------|---------|
-| 1 | <code>ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()</code> | <code>ACCESS EXCLUSIVE</code> | <code>reads, writes, DDL</code> | :red_circle: HIGH | <code>ADD COLUMN &quot;last_seen_at&quot; with non-constant DEFAULT: causes table rewrite under ACCESS EXCLUSIVE lock. Column is also NOT NULL, requiring an additional constraint step</code> |
+| 1 | <code>ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()</code> | <code>ACCESS EXCLUSIVE</code> | <code>reads, writes, DDL</code> | :red_circle: HIGH | <code>ADD COLUMN &quot;last_seen_at&quot; with non-constant DEFAULT: causes table rewrite under ACCESS EXCLUSIVE lock. Column is also NOT NULL, requiring an additional constraint step</code> |
 | 2 | <code>CREATE INDEX idx_users_last_seen_at ON users (last_seen_at)</code> | <code>SHARE</code> | <code>writes, DDL</code> | :warning: MEDIUM | <code>CREATE INDEX &quot;idx_users_last_seen_at&quot; without CONCURRENTLY: acquires SHARE lock, blocking all writes on &quot;users&quot;</code> |
 
 <details>
@@ -44,7 +44,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_last_seen_at ON users (last_se
 
 ### Coverage
 
-Analyzed **2** SQL statements. **0** dynamic statements not analyzable. Coverage: **100%**
+Analyzed 2 SQL statements. 0 dynamic statements not analyzable. Coverage: 100%
 
 ---
 *[pgfence](https://pgfence.com) migration safety report*

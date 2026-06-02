@@ -2,10 +2,11 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const execFileAsync = promisify(execFile);
-const PACKAGE_VERSION = '0.6.1';
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PRE_COMMIT_HOOK_CONTENT = `#!/bin/sh
 # pgfence pre-commit hook
@@ -29,7 +30,18 @@ if [ $? -ne 0 ]; then
 fi
 `;
 
-const PRISMA_GITHUB_ACTION_WORKFLOW = `name: Prisma Migration Safety
+async function loadPackageVersion(): Promise<string> {
+  const packageJsonPath = resolve(__dirname, '../package.json');
+  const raw = await readFile(packageJsonPath, 'utf8');
+  const parsed = JSON.parse(raw) as { version?: unknown };
+  if (typeof parsed.version !== 'string' || parsed.version.length === 0) {
+    throw new Error(`package.json at ${packageJsonPath} does not contain a valid version`);
+  }
+  return parsed.version;
+}
+
+function prismaGitHubActionWorkflow(packageVersion: string): string {
+  return `name: Prisma Migration Safety
 
 on:
   pull_request:
@@ -62,8 +74,9 @@ jobs:
             exit 0
           fi
 
-          npx --yes @flvmnt/pgfence@${PACKAGE_VERSION} analyze --format prisma --ci --max-risk medium "\${files[@]}"
+          npx --yes @flvmnt/pgfence@${packageVersion} analyze --format prisma --ci --max-risk medium "\${files[@]}"
 `;
+}
 
 export async function installHooks(): Promise<void> {
   const cwd = process.cwd();
@@ -128,7 +141,7 @@ export async function installPrismaGitHubAction(): Promise<void> {
   }
 
   await mkdir(workflowDir, { recursive: true });
-  await writeFile(workflowFile, PRISMA_GITHUB_ACTION_WORKFLOW, 'utf8');
+  await writeFile(workflowFile, prismaGitHubActionWorkflow(await loadPackageVersion()), 'utf8');
 
   console.log(`✅ pgfence Prisma GitHub Actions workflow written to ${workflowFile}`);
 }

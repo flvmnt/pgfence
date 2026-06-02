@@ -16,7 +16,10 @@
 - Fixed CLI precedence so `--db-url` overrides `--stats-file`.
 - Hardened public boundary checks for bare imports into excluded implementation areas.
 - Fixed LSP fallback analysis for mixed parseable and unparseable statements.
+- Fixed trace-mode parsing so one malformed extracted ORM statement does not discard valid traced statements from the same file.
 - Added fail-closed Sequelize handling for computed `createTable` column keys.
+- Fixed Knex auto-increment `.alter()` warnings so coverage points to an actionable source line.
+- Generated Prisma workflow package pins now derive from package metadata.
 - Clarified generated Prisma workflow and GitHub Actions examples for version 0.6.1.
 
 ## 0.6.0 (2026-05-25)
@@ -155,7 +158,7 @@ Eugene, Squawk, pgrubic, and strong_migrations together cover none of REPLICA ID
 
 ### Comment Accuracy
 
-- Fixed 11 stale/inaccurate comments across rule files: REINDEX TABLE lock mode (SHARE, not ACCESS EXCLUSIVE), ATTACH PARTITION PG12+ behavior, ALTER TYPE ADD VALUE type-object lock clarification, DROP CONSTRAINT added to destructive header, policy.ts state machine description, analyze-text.ts temp-file comment, alter-column.ts text conversion accuracy, best-practices.ts varchar widening note, cloud-hooks.ts "open-source mode" clarification, add-column.ts non-constant default description, add-constraint.ts VALIDATE lock description
+- Fixed 11 stale/inaccurate comments across rule files: REINDEX TABLE lock mode (SHARE, not ACCESS EXCLUSIVE), ATTACH PARTITION PG12+ behavior, ALTER TYPE ADD VALUE type-object lock clarification, DROP CONSTRAINT added to destructive header, policy.ts state machine description, analyze-text.ts temp-file comment, alter-column.ts text conversion accuracy, best-practices.ts varchar widening note, local-only hook comment clarification, add-column.ts non-constant default description, add-constraint.ts VALIDATE lock description
 - `db-stats.ts`: descriptive connection error messages
 - `transaction-state.ts`: accurate depth tracking JSDoc
 - `diagnostics.ts`: UTF-8 multi-byte character note

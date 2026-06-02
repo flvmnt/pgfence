@@ -252,8 +252,8 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
       if (/\b(?:big)?serial\b/i.test(col.type)) {
         warnings.push({
           filePath,
-          line: 0,
-          column: 0,
+          line: col.line,
+          column: col.column,
           message: `Cannot transpile .alter() on auto-increment column "${col.name}": serial is a pseudo-type that cannot be used in ALTER COLUMN TYPE; manual review required`,
           unanalyzable: true,
         });
@@ -412,6 +412,8 @@ interface ColumnDef {
   name: string;
   type: string;
   modifiers: string;
+  line: number;
+  column: number;
   /** Structured NOT NULL flag; lets the .alter() path avoid re-parsing the modifier string. */
   notNull?: boolean;
   /** Structured, already-quoted DEFAULT expression; used by the .alter() path. */
@@ -459,8 +461,20 @@ function extractColumnDefs(
 
     // Handle timestamps() specially: it creates two columns
     if (isTimestampsCall(rootCall, paramName)) {
-      columns.push({ name: 'created_at', type: 'timestamp', modifiers: '' });
-      columns.push({ name: 'updated_at', type: 'timestamp', modifiers: '' });
+      columns.push({
+        name: 'created_at',
+        type: 'timestamp',
+        modifiers: '',
+        line: rootCall.loc?.start?.line ?? 0,
+        column: rootCall.loc?.start?.column ?? 0,
+      });
+      columns.push({
+        name: 'updated_at',
+        type: 'timestamp',
+        modifiers: '',
+        line: rootCall.loc?.start?.line ?? 0,
+        column: rootCall.loc?.start?.column ?? 0,
+      });
       return;
     }
 
@@ -676,7 +690,15 @@ function parseColumnChain(
     modifiers += fkActions.join('');
   }
 
-  return { name: colName, type, modifiers, notNull, defaultSql };
+  return {
+    name: colName,
+    type,
+    modifiers,
+    line: node.loc?.start?.line ?? 0,
+    column: node.loc?.start?.column ?? 0,
+    notNull,
+    defaultSql,
+  };
 }
 
 function parseInlineReference(reference: string): { table: string; column: string } | null {

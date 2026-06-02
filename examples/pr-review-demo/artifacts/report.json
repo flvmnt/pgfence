@@ -2,7 +2,9 @@
   "version": "1.0",
   "coverage": {
     "totalStatements": 2,
+    "analyzedStatements": 2,
     "dynamicStatements": 0,
+    "dynamicStatementLines": [],
     "coveragePercent": 100
   },
   "results": [
@@ -10,8 +12,8 @@
       "filePath": "examples/pr-review-demo/migrations/20260415_add_last_seen_at.sql",
       "checks": [
         {
-          "statement": "ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()",
-          "statementPreview": "ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()",
+          "statement": "ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()",
+          "statementPreview": "ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()",
           "tableName": "users",
           "lockMode": "ACCESS EXCLUSIVE",
           "blocks": {
@@ -37,7 +39,8 @@
               "ALTER TABLE users ALTER COLUMN last_seen_at SET NOT NULL;",
               "ALTER TABLE users DROP CONSTRAINT chk_last_seen_at_nn;"
             ]
-          }
+          },
+          "tableKey": "users"
         },
         {
           "statement": "CREATE INDEX idx_users_last_seen_at ON users (last_seen_at)",
@@ -58,7 +61,8 @@
               "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_last_seen_at ON users (last_seen_at);",
               "-- Note: CONCURRENTLY must run outside a transaction block (disable ORM transaction wrappers)"
             ]
-          }
+          },
+          "tableKey": "users"
         }
       ],
       "policyViolations": [

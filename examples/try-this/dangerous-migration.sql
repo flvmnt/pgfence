@@ -4,7 +4,7 @@
 -- This migration looks normal. It hides four production-grade footguns
 -- that pgfence will catch:
 --
---   1. ADD COLUMN with NOT NULL + non-constant DEFAULT
+--   1. ADD COLUMN with NOT NULL + volatile DEFAULT
 --      ACCESS EXCLUSIVE lock for the duration of a full table rewrite.
 --   2. ADD CONSTRAINT FOREIGN KEY without NOT VALID
 --      SHARE ROW EXCLUSIVE on both tables, full table scan to validate.
@@ -27,7 +27,7 @@
 -- ============================================================================
 
 ALTER TABLE users
-  ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now();
+  ADD COLUMN last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp();
 
 ALTER TABLE sessions
   ADD CONSTRAINT fk_sessions_user

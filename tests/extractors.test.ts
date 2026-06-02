@@ -402,7 +402,9 @@ export async function up(knex: Knex): Promise<void> {
   });
 }`, async (filePath) => {
             const result = await extractKnexSQL(filePath);
-            expect(result.warnings.some((w) => w.unanalyzable)).toBe(true);
+            const warning = result.warnings.find((w) => w.unanalyzable);
+            expect(warning).toBeDefined();
+            expect(warning?.line).toBeGreaterThan(0);
             expect(result.sql).not.toContain('TYPE serial');
         });
     });
