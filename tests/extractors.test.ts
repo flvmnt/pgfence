@@ -357,6 +357,30 @@ describe('Extractor: Knex', () => {
             expect(result.sql).toContain('ALTER TABLE "orders" ADD CONSTRAINT "orders_user_fk" FOREIGN KEY ("tenant_id", "user_id") REFERENCES "users" ("tenant_id", "id") ON UPDATE CASCADE');
         });
     });
+
+    it('should not truncate a multi-word DEFAULT on .alter()', async () => {
+        const filePath = path.join(fixturesDir, 'knex-alter-default.ts');
+        const result = await extractKnexSQL(filePath);
+        // The full quoted default survives (no truncation at the first space).
+        expect(result.sql).toContain(`SET DEFAULT 'it is pending'`);
+        expect(result.sql).toContain('SET NOT NULL');
+        // And the emitted SQL is valid (parses cleanly, no unterminated literal).
+        const stmts = await parseSQL(result.sql);
+        expect(stmts.length).toBeGreaterThan(0);
+    });
+
+    it('should fail closed on .alter() of an auto-increment column instead of emitting invalid serial TYPE', async () => {
+        await withTempFile('pgfence-knex-incr-alter-', '.ts', `import type { Knex } from 'knex';
+export async function up(knex: Knex): Promise<void> {
+  await knex.schema.alterTable('users', (t) => {
+    t.increments('id').alter();
+  });
+}`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.warnings.some((w) => w.unanalyzable)).toBe(true);
+            expect(result.sql).not.toContain('TYPE serial');
+        });
+    });
 });
 
 describe('Extractor: Drizzle', () => {

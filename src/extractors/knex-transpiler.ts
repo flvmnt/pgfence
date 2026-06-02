@@ -245,17 +245,31 @@ function transpileAlterTable(args: TSNode[], filePath: string): TranspileResult 
   }
   for (const col of columns) {
     if (col.modifiers.includes('__PGFENCE_ALTER__')) {
-      // .alter() means modify existing column, not add new one
-      const cleanMods = col.modifiers.replace(' __PGFENCE_ALTER__', '');
+      // .alter() modifies an existing column. serial/bigserial are pseudo-types
+      // (sequence + default + PK) that cannot appear in ALTER COLUMN TYPE, so an
+      // .alter() on an auto-increment column is ambiguous: fail closed rather
+      // than emit invalid SQL.
+      if (/\b(?:big)?serial\b/i.test(col.type)) {
+        warnings.push({
+          filePath,
+          line: 0,
+          column: 0,
+          message: `Cannot transpile .alter() on auto-increment column "${col.name}": serial is a pseudo-type that cannot be used in ALTER COLUMN TYPE; manual review required`,
+          unanalyzable: true,
+        });
+        continue;
+      }
       sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${col.name}" TYPE ${col.type}`);
-      if (cleanMods.includes('NOT NULL')) {
+      // Use the structured NOT NULL / DEFAULT captured on the column rather than
+      // re-scanning the serialized modifier string: a regex split on whitespace
+      // truncated any DEFAULT value containing a space (e.g. 'it is pending'),
+      // producing an unterminated quoted literal that failed to parse and, via
+      // the joined batch, voided analysis of the whole file.
+      if (col.notNull) {
         sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${col.name}" SET NOT NULL`);
       }
-      if (cleanMods.includes('DEFAULT ')) {
-        const defMatch = cleanMods.match(/DEFAULT\s+(\S+(?:\([^)]*\))?)/);
-        if (defMatch) {
-          sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${col.name}" SET DEFAULT ${defMatch[1]}`);
-        }
+      if (col.defaultSql !== undefined) {
+        sql.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${col.name}" SET DEFAULT ${col.defaultSql}`);
       }
     } else {
       sql.push(`ALTER TABLE "${tableName}" ADD COLUMN "${col.name}" ${col.type}${col.modifiers}`);
@@ -398,6 +412,10 @@ interface ColumnDef {
   name: string;
   type: string;
   modifiers: string;
+  /** Structured NOT NULL flag; lets the .alter() path avoid re-parsing the modifier string. */
+  notNull?: boolean;
+  /** Structured, already-quoted DEFAULT expression; used by the .alter() path. */
+  defaultSql?: string;
 }
 
 function getCallbackParamName(callback: TSNode): string | null {
@@ -556,6 +574,8 @@ function parseColumnChain(
 
   // Parse modifiers from chain
   let modifiers = '';
+  let notNull = false;
+  let defaultSql: string | undefined;
   let fkTable: string | null = null;
   let fkColumn: string | null = null;
   let sawReferences = false;
@@ -567,6 +587,7 @@ function parseColumnChain(
     switch (call.method) {
       case 'notNullable':
         modifiers += ' NOT NULL';
+        notNull = true;
         break;
       case 'nullable':
         // default, nothing to add
@@ -574,6 +595,7 @@ function parseColumnChain(
       case 'defaultTo': {
         const defVal = call.args.length > 0 ? extractDefaultValue(call.args[0]) : 'NULL';
         modifiers += ` DEFAULT ${defVal}`;
+        defaultSql = defVal;
         break;
       }
       case 'primary':
@@ -654,7 +676,7 @@ function parseColumnChain(
     modifiers += fkActions.join('');
   }
 
-  return { name: colName, type, modifiers };
+  return { name: colName, type, modifiers, notNull, defaultSql };
 }
 
 function parseInlineReference(reference: string): { table: string; column: string } | null {
