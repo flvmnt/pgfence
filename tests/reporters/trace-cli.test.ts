@@ -69,6 +69,16 @@ describe('Reporter: Trace CLI', () => {
     expect(output).toContain('Trace-only: 0');
   });
 
+  it('should surface execution errors rather than implying everything was verified', () => {
+    const errored = makeCheck({ verification: 'error', tracedLockMode: undefined });
+    const cascade = makeCheck({ verification: 'cascade-error', tracedLockMode: undefined });
+    const output = reportTraceCLI([
+      makeResult({ checks: [errored, cascade], traceChecks: [errored, cascade], statementCount: 2 }),
+    ]);
+    expect(output).toContain('Unverified (execution errors): 2');
+    expect(output).toMatch(/NOT confirmed/);
+  });
+
   it('should show "(predicted: ...)" for mismatch checks', () => {
     const mismatchCheck = makeCheck({
       verification: 'mismatch',

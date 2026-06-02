@@ -244,6 +244,11 @@ export function reportTraceCLI(results: TraceResult[]): string {
   ).length;
   const mismatches = allChecks.filter((c) => c.verification === 'mismatch').length;
   const traceOnly = allChecks.filter((c) => c.verification === 'trace-only').length;
+  // Statements that failed to execute in the container, or were skipped because a
+  // prior statement failed, are NOT verified. They must not be implied as covered.
+  const errored = allChecks.filter(
+    (c) => c.verification === 'error' || c.verification === 'cascade-error',
+  ).length;
 
   const dockerImage = 'postgres:' + (results[0]?.pgVersion ?? 17) + '-alpine';
   const containerLifetime = results.reduce((max, r) => Math.max(max, r.containerLifetimeMs ?? 0), 0) / 1000;
@@ -255,8 +260,17 @@ export function reportTraceCLI(results: TraceResult[]): string {
     `${formatCoverageLine(coverage)} | ` +
       `Verified: ${verified}/${allChecks.length} | ` +
       `Mismatches: ${mismatches} | ` +
-      `Trace-only: ${traceOnly}`,
+      `Trace-only: ${traceOnly}` +
+      (errored > 0 ? ` | Unverified (execution errors): ${errored}` : ''),
   );
+  if (errored > 0) {
+    lines.push(
+      chalk.yellow(
+        `Note: ${errored} statement(s) could not be verified against the database ` +
+          `(execution or cascade errors); their lock behavior is NOT confirmed by the trace.`,
+      ),
+    );
+  }
   lines.push(`Docker: ${dockerImage} | Container lifetime: ${containerLifetime.toFixed(1)}s`);
   lines.push('');
 
