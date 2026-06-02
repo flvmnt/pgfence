@@ -226,7 +226,23 @@ export function mergeConfig(
       base.rules = { ...base.rules, enable: fileConfig['enable-rules'] };
     }
     if (fileConfig.snapshot != null) base.snapshotFile = fileConfig.snapshot;
-    if (fileConfig.plugins != null) base.plugins = fileConfig.plugins;
+    if (fileConfig.plugins != null) {
+      // Security: a `plugins` array in a repo-local .pgfence.json/.pgfence.toml
+      // would auto-load and EXECUTE code from the checked-out repo whenever
+      // `pgfence analyze` runs (arbitrary code execution from an untrusted
+      // repository, e.g. via a pre-commit hook on a freshly cloned repo). Plugins
+      // are trusted code, so honoring them from project-local config requires an
+      // explicit opt-in. Plugins passed with --plugin on the CLI are an
+      // interactive choice and arrive via `overrides`, so they still apply.
+      if (process.env.PGFENCE_ALLOW_LOCAL_PLUGINS === '1') {
+        base.plugins = fileConfig.plugins;
+      } else {
+        console.warn(
+          'pgfence: ignoring "plugins" from project config because plugins execute code. ' +
+          'Set PGFENCE_ALLOW_LOCAL_PLUGINS=1 to trust this repo\'s plugins, or pass --plugin explicitly.',
+        );
+      }
+    }
   }
 
   return { ...base, ...overrides };

@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadConfigFile } from '../src/config.js';
+import { loadConfigFile, mergeConfig } from '../src/config.js';
 import { getAnalysisHooks, registerAnalysisHooks } from '../src/analysis-hooks.js';
 import { RiskLevel } from '../src/types.js';
 
@@ -296,5 +296,33 @@ describe('security boundaries', () => {
       expect(content).not.toMatch(forbiddenReference);
       expect(content).not.toMatch(forbiddenDynamicImport);
     }
+  });
+});
+
+describe('plugin trust: repo-local config must not auto-load code', () => {
+  const ENV_KEY = 'PGFENCE_ALLOW_LOCAL_PLUGINS';
+  afterEach(() => {
+    delete process.env[ENV_KEY];
+    vi.restoreAllMocks();
+  });
+
+  it('does NOT honor a plugins array from project config without explicit opt-in', () => {
+    delete process.env[ENV_KEY];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const config = mergeConfig({ plugins: ['./evil.mjs'] }, {});
+    expect(config.plugins).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('honors config plugins only when PGFENCE_ALLOW_LOCAL_PLUGINS=1', () => {
+    process.env[ENV_KEY] = '1';
+    const config = mergeConfig({ plugins: ['./trusted.mjs'] }, {});
+    expect(config.plugins).toEqual(['./trusted.mjs']);
+  });
+
+  it('always honors plugins passed explicitly on the CLI (overrides)', () => {
+    delete process.env[ENV_KEY];
+    const config = mergeConfig(null, { plugins: ['./cli-plugin.mjs'] });
+    expect(config.plugins).toEqual(['./cli-plugin.mjs']);
   });
 });
