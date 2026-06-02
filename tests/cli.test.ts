@@ -332,4 +332,31 @@ printf '%s\\n' "\${FILES[@]}"
             await rm(statsDir, { recursive: true, force: true });
         }
     });
+
+    it('rejects a stats file whose later rows are malformed (not just the first)', async () => {
+        const fs = await import('node:fs/promises');
+        const fixture = path.join(fixturesDir, 'safe-migration.sql');
+        const statsDir = await mkdtemp(path.join(tmpdir(), 'pgfence-stats-bad-'));
+        const statsPath = path.join(statsDir, 'stats.json');
+        // First row valid, second row has no rowCount: must NOT pass validation.
+        await fs.writeFile(statsPath, JSON.stringify([
+            { schemaName: 'public', tableName: 'ok', rowCount: 1, totalBytes: 1 },
+            { schemaName: 'public', tableName: 'huge' },
+        ]));
+
+        try {
+            let rejected = false;
+            try {
+                await execPromise(cliCommand(`analyze "${fixture}" --stats-file "${statsPath}"`));
+            } catch (err: unknown) {
+                rejected = true;
+                const e = err as { code?: number; stderr?: string };
+                expect(e.code).toBe(2);
+                expect(e.stderr ?? '').toMatch(/Invalid stats file format at row 1/);
+            }
+            expect(rejected).toBe(true);
+        } finally {
+            await rm(statsDir, { recursive: true, force: true });
+        }
+    });
 });

@@ -163,16 +163,35 @@ program
         try {
           const raw = await readFile(statsFilePath, 'utf8');
           const parsed = JSON.parse(raw);
-          tableStats = Array.isArray(parsed) ? parsed : parsed.tables ?? parsed;
-          if (tableStats && tableStats.length > 0) {
-            const sample = tableStats[0];
-            if (typeof sample.tableName !== 'string' || typeof sample.rowCount !== 'number') {
+          const candidate = Array.isArray(parsed) ? parsed : parsed?.tables;
+          if (!Array.isArray(candidate)) {
+            throw new Error(
+              `Invalid stats file format. Expected a JSON array of ` +
+              `{schemaName, tableName, rowCount, totalBytes} objects (or { "tables": [ ... ] }).`,
+            );
+          }
+          // Validate EVERY row, not just the first: a later row with a missing
+          // or non-finite rowCount would otherwise slip through and (because
+          // NaN >= threshold is false) silently leave a large table at base risk
+          // instead of escalating it. Reject, do not coerce.
+          candidate.forEach((row, i) => {
+            const r = row as Partial<TableStats>;
+            if (
+              !r ||
+              typeof r !== 'object' ||
+              typeof r.tableName !== 'string' ||
+              typeof r.rowCount !== 'number' ||
+              !Number.isFinite(r.rowCount) ||
+              r.rowCount < 0
+            ) {
+              const shape = row && typeof row === 'object' ? `keys: ${Object.keys(row).join(', ')}` : typeof row;
               throw new Error(
-                `Invalid stats file format. Expected objects with {schemaName, tableName, rowCount, totalBytes}. ` +
-                `Got keys: ${Object.keys(sample).join(', ')}`,
+                `Invalid stats file format at row ${i}: each entry needs a string tableName and a ` +
+                `finite non-negative numeric rowCount (${shape}).`,
               );
             }
-          }
+          });
+          tableStats = candidate as TableStats[];
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new Error(`Failed to load stats file "${statsFilePath}": ${message}`);

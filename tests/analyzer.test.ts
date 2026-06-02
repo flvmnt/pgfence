@@ -304,6 +304,12 @@ export class AddCheck implements MigrationInterface {
     expect(adjustRisk(RiskLevel.MEDIUM, 9_999)).toBe(RiskLevel.MEDIUM);
   });
 
+  it('should not escalate (or misbehave) on a non-finite or negative row count', () => {
+    expect(adjustRisk(RiskLevel.MEDIUM, NaN)).toBe(RiskLevel.MEDIUM);
+    expect(adjustRisk(RiskLevel.LOW, Number.POSITIVE_INFINITY)).toBe(RiskLevel.LOW);
+    expect(adjustRisk(RiskLevel.HIGH, -5)).toBe(RiskLevel.HIGH);
+  });
+
   it('should bump +2 at exactly 1,000,000 rows', () => {
     expect(adjustRisk(RiskLevel.LOW, 1_000_000)).toBe(RiskLevel.HIGH);
   });

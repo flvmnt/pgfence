@@ -70,6 +70,10 @@ function maxRiskLevel(a: RiskLevelType, b: RiskLevelType): RiskLevelType {
  * Exported for testing.
  */
 export function adjustRisk(baseRisk: RiskLevelType, rowCount: number): RiskLevelType {
+  // Defensive: a non-finite or negative row count carries no size signal, so do
+  // not escalate (and never silently misbehave on NaN, where every comparison
+  // below is false). The stats-file loader rejects such rows up front.
+  if (!Number.isFinite(rowCount) || rowCount < 0) return baseRisk;
   if (rowCount >= 10_000_000) return RiskLevel.CRITICAL;
 
   let bump = 0;
