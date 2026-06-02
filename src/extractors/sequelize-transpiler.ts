@@ -198,6 +198,16 @@ function transpileCreateTable(args: TSNode[], filePath: string): TranspileResult
   const properties = colsObj.properties as TSNode[];
   for (const prop of properties) {
     if (prop.type !== 'Property') continue;
+    if ((prop as { computed?: boolean }).computed === true) {
+      warnings.push({
+        filePath,
+        line: prop.loc?.start?.line ?? 0,
+        column: prop.loc?.start?.column ?? 0,
+        message: 'Computed Sequelize createTable column key: cannot statically resolve column name',
+        unanalyzable: true,
+      });
+      continue;
+    }
     const key = prop.key as TSNode;
     const colName = key.type === 'Identifier' ? (key.name as string) : getStringArg(key);
     if (!colName) continue;

@@ -107,6 +107,7 @@ export async function extractTypeORMSQLFromSource(
   // Gap 11: track conditional depth to warn about conditional SQL
   const conditionalTypes = new Set(['IfStatement', 'ConditionalExpression', 'SwitchCase']);
   const queryRunnerNames = new Set([upInfo.paramName]);
+  const managerNames = new Set<string>();
   const queryFunctionNames = new Set<string>();
   let conditionalDepth = 0;
 
@@ -115,7 +116,7 @@ export async function extractTypeORMSQLFromSource(
       if (conditionalTypes.has(node.type)) conditionalDepth++;
 
       if (node.type === 'VariableDeclarator') {
-        trackTypeORMAlias(node, queryRunnerNames, queryFunctionNames);
+        trackTypeORMAlias(node, queryRunnerNames, managerNames, queryFunctionNames);
       }
 
       if (node.type === 'CallExpression') {
@@ -141,7 +142,7 @@ export async function extractTypeORMSQLFromSource(
         }
 
         // Check for queryRunner.query() calls
-        if (isQueryRunnerQuery(node, queryRunnerNames) || isQueryFunctionCall(node, queryFunctionNames)) {
+        if (isQueryRunnerQuery(node, queryRunnerNames, managerNames) || isQueryFunctionCall(node, queryFunctionNames)) {
           const args = node.arguments as TSNode[];
           if (args.length === 0) return;
 
@@ -241,7 +242,7 @@ function findUpMethod(ast: TSNode): UpMethodInfo | null {
   return { body, paramName, autoCommit };
 }
 
-function isQueryRunnerQuery(node: TSNode, queryRunnerNames: Set<string>): boolean {
+function isQueryRunnerQuery(node: TSNode, queryRunnerNames: Set<string>, managerNames: Set<string>): boolean {
   const callee = node.callee as TSNode;
   if (callee?.type !== 'MemberExpression') return false;
   const prop = callee.property as TSNode;
@@ -249,6 +250,8 @@ function isQueryRunnerQuery(node: TSNode, queryRunnerNames: Set<string>): boolea
   const obj = callee.object as TSNode;
   // queryRunner.query()
   if (obj?.type === 'Identifier' && queryRunnerNames.has(obj.name as string)) return true;
+  // manager.query(), where manager aliases queryRunner.manager
+  if (obj?.type === 'Identifier' && managerNames.has(obj.name as string)) return true;
   // queryRunner.manager.query()
   if (obj?.type === 'MemberExpression') {
     const innerObj = obj.object as TSNode;
@@ -269,6 +272,7 @@ function isQueryFunctionCall(node: TSNode, queryFunctionNames: Set<string>): boo
 function trackTypeORMAlias(
   node: TSNode,
   queryRunnerNames: Set<string>,
+  managerNames: Set<string>,
   queryFunctionNames: Set<string>,
 ): void {
   const id = node.id as TSNode | undefined;
@@ -280,7 +284,12 @@ function trackTypeORMAlias(
     return;
   }
 
-  if (id.type === 'Identifier' && isQueryMember(init, queryRunnerNames)) {
+  if (id.type === 'Identifier' && isManagerMember(init, queryRunnerNames)) {
+    managerNames.add(id.name as string);
+    return;
+  }
+
+  if (id.type === 'Identifier' && isQueryMember(init, queryRunnerNames, managerNames)) {
     queryFunctionNames.add(id.name as string);
     return;
   }
@@ -298,10 +307,20 @@ function trackTypeORMAlias(
   }
 }
 
-function isQueryMember(node: TSNode, queryRunnerNames: Set<string>): boolean {
+function isQueryMember(node: TSNode, queryRunnerNames: Set<string>, managerNames: Set<string>): boolean {
   if (node.type !== 'MemberExpression') return false;
   const prop = node.property as TSNode;
   if (prop?.type !== 'Identifier' || prop.name !== 'query') return false;
+  const obj = node.object as TSNode;
+  if (obj?.type === 'Identifier' && queryRunnerNames.has(obj.name as string)) return true;
+  if (obj?.type === 'Identifier' && managerNames.has(obj.name as string)) return true;
+  return isManagerMember(obj, queryRunnerNames);
+}
+
+function isManagerMember(node: TSNode, queryRunnerNames: Set<string>): boolean {
+  if (node.type !== 'MemberExpression') return false;
+  const prop = node.property as TSNode;
+  if (prop?.type !== 'Identifier' || prop.name !== 'manager') return false;
   const obj = node.object as TSNode;
   return obj?.type === 'Identifier' && queryRunnerNames.has(obj.name as string);
 }

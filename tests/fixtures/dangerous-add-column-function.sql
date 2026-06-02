@@ -1,1 +1,1 @@
-ALTER TABLE users ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT now();
+ALTER TABLE users ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT clock_timestamp();

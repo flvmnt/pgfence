@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { reportJSON } from '../src/reporters/json.js';
 import { reportCLI } from '../src/reporters/cli.js';
 import { reportGitHub } from '../src/reporters/github-pr.js';
@@ -701,6 +702,26 @@ describe('Reporter: GitLab CI', () => {
         expect(coverageEntries).toHaveLength(1);
         expect(coverageEntries[0].description).toContain('Analyzed 3 SQL statements');
         expect(coverageEntries[0].description).toContain('1 dynamic statement not analyzable (lines 9)');
+    });
+
+    it('should anchor coverage summary to a real line in the first file', async () => {
+        const filePath = 'examples/pr-review-demo/migrations/20260415_add_last_seen_at.sql';
+        const lineCount = (await readFile(filePath, 'utf8')).split('\n').length;
+        const results: AnalysisResult[] = [{
+            ...mockResults[0],
+            filePath,
+            checks: Array.from({ length: lineCount + 4 }, (_, index) => ({
+                ...mockCheck,
+                ruleId: `check-${index}`,
+            })),
+            policyViolations: [],
+        }];
+        const parsed = JSON.parse(reportGitLab(results));
+        const coverage = parsed.find((v: { check_name: string }) => v.check_name === 'pgfence-coverage-summary');
+
+        expect(coverage).toBeDefined();
+        expect(coverage.location.lines.begin).toBeGreaterThanOrEqual(1);
+        expect(coverage.location.lines.begin).toBeLessThanOrEqual(lineCount);
     });
 });
 

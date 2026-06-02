@@ -4,6 +4,7 @@ import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { analyze, adjustRisk, detectFormat } from '../src/analyzer.js';
 import { parseTimeoutString } from '../src/rules/policy.js';
+import { reportCLI } from '../src/reporters/cli.js';
 import { createTransactionState, processTransactionStmt, recordLock } from '../src/transaction-state.js';
 import { loadSnapshot } from '../src/schema-snapshot.js';
 import type { SchemaSnapshot } from '../src/schema-snapshot.js';
@@ -231,6 +232,41 @@ export class DropUsers implements MigrationInterface {
     });
   });
 
+  it('should analyze SQL from aliased TypeORM manager objects', async () => {
+    const sql = `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class DropUsers implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    const manager = queryRunner.manager;
+    await manager.query('DROP TABLE users');
+  }
+}`;
+    await withTempSqlFile('pgfence-typeorm-manager-alias-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, format: 'typeorm', requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      expect(results[0].checks.some((check) => check.ruleId === 'drop-table')).toBe(true);
+      expect(results[0].maxRisk).toBe(RiskLevel.CRITICAL);
+      expect(results[0].extractionWarnings?.some((warning) => warning.unanalyzable)).not.toBe(true);
+    });
+  });
+
+  it('should analyze Knex schema builder calls from aliased schema objects', async () => {
+    const sql = `exports.up = async function(knex) {
+  const schema = knex.schema;
+  await schema.dropTable('users');
+};`;
+    await withTempSqlFile('pgfence-knex-schema-alias-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, format: 'knex', requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      expect(results[0].checks.some((check) => check.ruleId === 'drop-table')).toBe(true);
+      expect(results[0].maxRisk).toBe(RiskLevel.CRITICAL);
+      expect(results[0].extractionWarnings?.some((warning) => warning.unanalyzable)).not.toBe(true);
+    });
+  });
+
   it('should reject CREATE INDEX CONCURRENTLY inside default TypeORM transactions', async () => {
     const sql = `import { MigrationInterface, QueryRunner } from 'typeorm';
 export class AddIndex implements MigrationInterface {
@@ -345,6 +381,39 @@ export class AddCheck implements MigrationInterface {
       expect(check).toBeDefined();
       expect(check!.tableKey).toBe('archive.users');
       expect(check!.adjustedRisk).toBe(RiskLevel.CRITICAL);
+    });
+  });
+
+  it('should adjust FK risk using the referenced table stats too', async () => {
+    const results = await analyze(
+      [fixture('dangerous-constraint.sql')],
+      {
+        ...defaultConfig,
+        tableStats: [
+          { schemaName: 'public', tableName: 'appointments', rowCount: 1, totalBytes: 1000 },
+          { schemaName: 'public', tableName: 'workers', rowCount: 20_000_000, totalBytes: 1000 },
+        ],
+      },
+    );
+    const fkCheck = results[0].checks.find((check) => check.ruleId === 'add-constraint-fk-no-not-valid');
+
+    expect(fkCheck).toBeDefined();
+    expect(fkCheck!.adjustedRisk).toBe(RiskLevel.CRITICAL);
+    expect(results[0].maxRisk).toBe(RiskLevel.CRITICAL);
+  });
+
+  it('should exclude DO blocks from analyzed coverage while surfacing UNKNOWN', async () => {
+    const sql = `DO $$ BEGIN EXECUTE 'DROP TABLE users'; END $$;`;
+    await withTempSqlFile('pgfence-do-coverage-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+      );
+      const output = reportCLI(results, defaultConfig);
+
+      expect(results[0].statementCount).toBe(0);
+      expect(results[0].extractionWarnings?.some((warning) => warning.unanalyzable)).toBe(true);
+      expect(output).toContain('Analyzed 0 SQL statements. 1 dynamic statement not analyzable (lines 1). Coverage: 0%');
     });
   });
 
@@ -510,6 +579,22 @@ VACUUM (FULL true) events;`;
     const defaultCheck = checks.find((c) => c.ruleId === 'add-column-non-constant-default');
     expect(defaultCheck).toBeDefined();
     expect(defaultCheck!.risk).toBe(RiskLevel.HIGH);
+  });
+
+  it('should treat known stable ADD COLUMN defaults as low risk on PG11+', async () => {
+    const sql = `ALTER TABLE users ADD COLUMN created_at timestamptz DEFAULT now();
+ALTER TABLE users ADD COLUMN seen_at timestamptz DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE users ADD COLUMN tick_at timestamptz DEFAULT clock_timestamp();`;
+    await withTempSqlFile('pgfence-stable-defaults', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false });
+      const lowDefaults = results[0].checks.filter((check) => check.ruleId === 'add-column-stable-default');
+      const volatileDefault = results[0].checks.find((check) => check.ruleId === 'add-column-non-constant-default');
+
+      expect(lowDefaults).toHaveLength(2);
+      expect(lowDefaults.every((check) => check.risk === RiskLevel.LOW)).toBe(true);
+      expect(volatileDefault).toBeDefined();
+      expect(volatileDefault!.risk).toBe(RiskLevel.HIGH);
+    });
   });
 
   it('should detect ADD COLUMN with constant DEFAULT on pre-PG11 as HIGH risk', async () => {
@@ -779,6 +864,24 @@ DROP TABLE old_data;`;
     expect(genCheck!.safeRewrite).toBeDefined();
   });
 
+  it('should detect ADD COLUMN identity and constrained-domain rewrites', async () => {
+    const sql = `CREATE DOMAIN positive_int AS integer CHECK (VALUE > 0);
+ALTER TABLE users ADD COLUMN score positive_int;
+ALTER TABLE users ADD COLUMN seq_id bigint GENERATED ALWAYS AS IDENTITY;`;
+    await withTempSqlFile('pgfence-add-column-identity-domain', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false });
+      const domainCheck = results[0].checks.find((check) => check.ruleId === 'add-column-constrained-domain');
+      const identityCheck = results[0].checks.find((check) => check.ruleId === 'add-column-identity');
+
+      expect(domainCheck).toBeDefined();
+      expect(domainCheck!.risk).toBe(RiskLevel.HIGH);
+      expect(domainCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+      expect(identityCheck).toBeDefined();
+      expect(identityCheck!.risk).toBe(RiskLevel.HIGH);
+      expect(identityCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
+    });
+  });
+
   it('should detect inline ADD COLUMN REFERENCES as a foreign key lock risk', async () => {
     const results = await analyze(
       [fixture('knex-add-column-references.ts')],
@@ -962,16 +1065,16 @@ DROP TABLE old_data;`;
     expect(uniqueCheck!.safeRewrite).toBeUndefined();
   });
 
-  it('should detect ADD PRIMARY KEY USING INDEX as LOW risk (instant metadata operation)', async () => {
+  it('should not treat ADD PRIMARY KEY USING INDEX as unconditional LOW risk without schema proof', async () => {
     const results = await analyze([fixture('safe-constraint-using-index.sql')], defaultConfig);
     const checks = results[0].checks;
 
     const pkCheck = checks.find((c) => c.ruleId === 'add-pk-using-index');
     expect(pkCheck).toBeDefined();
-    expect(pkCheck!.risk).toBe(RiskLevel.LOW);
+    expect(pkCheck!.risk).toBe(RiskLevel.MEDIUM);
     expect(pkCheck!.lockMode).toBe(LockMode.ACCESS_EXCLUSIVE);
     expect(pkCheck!.tableName).toBe('users');
-    expect(pkCheck!.safeRewrite).toBeUndefined();
+    expect(pkCheck!.message).toContain('may need to set indexed columns NOT NULL');
   });
 
   // --- FP #3: EXCLUDE safeRewrite should not suggest invalid USING INDEX syntax ---
@@ -1031,6 +1134,36 @@ COMMIT;
         expect(concurrentInTx!.severity).toBe('error');
       },
     );
+  });
+
+  it('should treat nested BEGIN as a no-op for transaction depth', async () => {
+    const sql = `SET lock_timeout = '2s';
+SET statement_timeout = '5min';
+SET application_name = 'migrate:nested-begin';
+SET idle_in_transaction_session_timeout = '30s';
+BEGIN;
+BEGIN;
+COMMIT;
+CREATE INDEX CONCURRENTLY idx_users_email ON users(email);`;
+    await withTempSqlFile('pgfence-nested-begin', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], defaultConfig);
+      expect(results[0].policyViolations.find((violation) => violation.ruleId === 'concurrent-in-transaction')).toBeUndefined();
+      expect(results[0].policyViolations.find((violation) => violation.ruleId === 'unclosed-transaction')).toBeUndefined();
+    });
+  });
+
+  it('should warn when lock_timeout is set after an ACCESS EXCLUSIVE RLS toggle', async () => {
+    const sql = `ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+SET lock_timeout = '2s';
+SET application_name = 'migrate:rls';
+SET idle_in_transaction_session_timeout = '30s';`;
+    await withTempSqlFile('pgfence-rls-lock-ordering', sql, async (tmpFile) => {
+      const results = await analyze([tmpFile], { ...defaultConfig, requireStatementTimeout: false });
+      const violation = results[0].policyViolations.find((candidate) => candidate.ruleId === 'lock-timeout-after-dangerous-statement');
+
+      expect(violation).toBeDefined();
+      expect(violation!.severity).toBe('error');
+    });
   });
 
   // --- Gap 3: REINDEX ---

@@ -50,7 +50,6 @@ function normalizePath(filePath: string): string {
 
 export function reportGitLab(results: AnalysisResult[]): string {
   const violations: GitLabViolation[] = [];
-  let coverageLine = 1;
 
   for (const result of results) {
     const path = normalizePath(result.filePath);
@@ -103,15 +102,17 @@ export function reportGitLab(results: AnalysisResult[]): string {
         location: { path, lines: { begin: 1 } },
       }, checkName, syntheticLine++);
     }
-    coverageLine = Math.max(coverageLine, syntheticLine);
   }
 
   const firstPath = normalizePath(results[0]?.filePath ?? 'pgfence-coverage');
+  const firstWarningLine = results
+    .flatMap((result) => result.extractionWarnings ?? [])
+    .find((warning) => typeof warning.line === 'number')?.line;
   violations.push({
     description: formatCoverageLine(summarizeCoverage(results)),
     check_name: 'pgfence-coverage-summary',
     severity: 'info',
-    location: { path: firstPath, lines: { begin: coverageLine } },
+    location: { path: firstPath, lines: { begin: firstWarningLine ?? 1 } },
     fingerprint: fingerprint('pgfence-coverage-summary', firstPath, 'aggregate'),
   });
 

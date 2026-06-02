@@ -69,6 +69,36 @@ export class M implements MigrationInterface {
     expect(result.extractionWarnings.some((warning) => warning.unanalyzable)).toBe(true);
   });
 
+  it('should preserve valid ORM statements when one extracted statement fails to parse', async () => {
+    const content = `import { MigrationInterface, QueryRunner } from "typeorm";
+export class M implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query("ALTER TABLE users ADD COLUMN name text NOT NULL");
+    await queryRunner.query("ALTER TABLE users INVALID SYNTAX");
+  }
+}`;
+    const result = await analyzeText({
+      content,
+      filePath: 'migrations/1700000000000-M.ts',
+      config: { ...defaultConfig, format: 'typeorm', requireLockTimeout: false, requireStatementTimeout: false },
+    });
+
+    expect(result.checks.some((check) => check.ruleId === 'add-column-not-null-no-default')).toBe(true);
+    expect(result.extractionWarnings.some((warning) => warning.unanalyzable && warning.message.includes('SQL parse error'))).toBe(true);
+    expect(result.statementCount).toBe(1);
+  });
+
+  it('should exclude DO blocks from analyzed coverage while surfacing UNKNOWN', async () => {
+    const result = await analyzeText({
+      content: `DO $$ BEGIN EXECUTE 'DROP TABLE users'; END $$;`,
+      filePath: 'migrations/001.sql',
+      config: { ...defaultConfig, requireLockTimeout: false, requireStatementTimeout: false },
+    });
+
+    expect(result.statementCount).toBe(0);
+    expect(result.extractionWarnings.some((warning) => warning.unanalyzable)).toBe(true);
+  });
+
   it('should return empty results for empty content', async () => {
     const result = await analyzeText({
       content: '',
@@ -379,7 +409,7 @@ CREATE INDEX idx ON users (x);`;
 
   it('should detect ADD COLUMN with volatile default', async () => {
     const result = await analyzeText({
-      content: 'ALTER TABLE users ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT now();',
+      content: 'ALTER TABLE users ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT clock_timestamp();',
       filePath: 'migrations/001.sql',
       config: defaultConfig,
     });

@@ -103,6 +103,20 @@ export class DropUsers implements MigrationInterface {
         });
     });
 
+    it('should extract SQL from aliased TypeORM manager variables', async () => {
+        await withTempFile('pgfence-typeorm-manager-alias-', '.ts', `import { MigrationInterface, QueryRunner } from 'typeorm';
+export class DropUsers implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    const manager = queryRunner.manager;
+    await manager.query('DROP TABLE users');
+  }
+}`, async (filePath) => {
+            const result = await extractTypeORMSQL(filePath);
+            expect(result.sql).toContain('DROP TABLE users');
+            expect(result.warnings.some((warning) => warning.unanalyzable)).not.toBe(true);
+        });
+    });
+
     it('should mark conditional SQL as unanalyzable for strict unknown handling', async () => {
         await withTempFile('pgfence-typeorm-conditional-', '.ts', `import { MigrationInterface, QueryRunner } from 'typeorm';
 export class ConditionalDrop implements MigrationInterface {
@@ -208,6 +222,17 @@ describe('Extractor: Knex', () => {
 };`, async (filePath) => {
             const result = await extractKnexSQL(filePath);
             expect(result.sql).toContain('DROP TABLE users');
+        });
+    });
+
+    it('should transpile schema builder calls from aliased Knex schema variables', async () => {
+        await withTempFile('pgfence-knex-schema-alias-', '.js', `exports.up = async function(knex) {
+  const schema = knex.schema;
+  await schema.dropTable('users');
+};`, async (filePath) => {
+            const result = await extractKnexSQL(filePath);
+            expect(result.sql).toContain('DROP TABLE "users"');
+            expect(result.warnings.some((warning) => warning.unanalyzable)).not.toBe(true);
         });
     });
 
@@ -507,6 +532,22 @@ describe('Extractor: Sequelize', () => {
         expect(result.sql).toContain('"legacy_orders"');
         const stmts = await parseSQL(result.sql);
         expect(stmts.some((s) => s.nodeType === 'DropStmt')).toBe(true);
+    });
+
+    it('should fail closed for computed Sequelize createTable column keys', async () => {
+        await withTempFile('pgfence-sequelize-computed-key-', '.js', `module.exports = {
+  async up(queryInterface, Sequelize) {
+    const col = 'runtime_name';
+    await queryInterface.createTable('orders', {
+      [col]: { type: Sequelize.INTEGER, allowNull: false },
+    });
+  },
+};`, async (filePath) => {
+            const result = await extractSequelizeSQL(filePath);
+            expect(result.warnings.some((warning) => warning.unanalyzable)).toBe(true);
+            expect(result.sql).not.toContain('"col" integer NOT NULL');
+            expect(result.sql).not.toContain('CREATE TABLE');
+        });
     });
 
     it('should detect builder calls when the up() parameter is aliased (not named queryInterface)', async () => {

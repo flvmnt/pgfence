@@ -138,8 +138,9 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   let sql: string;
   let autoCommit: boolean | undefined;
   let extractedSourceRanges: SourceRange[] | undefined;
+  let extraction: ExtractionResult;
   try {
-    const extraction = await extractSQLFromContent(content, filePath, format);
+    extraction = await extractSQLFromContent(content, filePath, format);
     sql = extraction.sql;
     autoCommit = extraction.autoCommit;
     extractedSourceRanges = extraction.sourceRanges;
@@ -159,39 +160,55 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   if (!sql.trim()) return result;
 
   // Parse SQL
-  let stmts: ParsedStatement[];
+  const stmts: ParsedStatement[] = [];
+  const statementSourceRanges: SourceRange[] = [];
   try {
-    stmts = await parseSQL(sql);
+    const parsed = await parseSQL(sql);
+    stmts.push(...parsed);
+    for (const [index, stmt] of parsed.entries()) {
+      statementSourceRanges.push(sourceRangeForStatement(stmt, index, extractedSourceRanges));
+    }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    result.parseError = message;
-    result.extractionWarnings.push({
-      message: `SQL parse error: ${message}, this file could not be analyzed`,
-      filePath,
-      line: 1,
-      column: 1,
-      unanalyzable: true,
-    });
-    return result;
+    if (extraction.statements && extraction.statements.length > 1) {
+      for (const [index, piece] of extraction.statements.entries()) {
+        if (!piece.trim()) continue;
+        try {
+          const parsedPiece = await parseSQL(piece);
+          stmts.push(...parsedPiece);
+          for (const stmt of parsedPiece) {
+            statementSourceRanges.push(sourceRangeForStatement(stmt, index, extractedSourceRanges));
+          }
+        } catch (pieceErr) {
+          const message = pieceErr instanceof Error ? pieceErr.message : String(pieceErr);
+          const sourceRange = extractedSourceRanges?.[index];
+          result.extractionWarnings.push({
+            message: `SQL parse error: ${message}, this statement could not be analyzed`,
+            filePath,
+            line: sourceRange ? lineFromOffset(content, sourceRange.startOffset) : 1,
+            column: 1,
+            unanalyzable: true,
+          });
+        }
+      }
+      if (stmts.length === 0) {
+        const message = err instanceof Error ? err.message : String(err);
+        result.parseError = message;
+      }
+    } else {
+      const message = err instanceof Error ? err.message : String(err);
+      result.parseError = message;
+      result.extractionWarnings.push({
+        message: `SQL parse error: ${message}, this file could not be analyzed`,
+        filePath,
+        line: 1,
+        column: 1,
+        unanalyzable: true,
+      });
+      return result;
+    }
   }
 
   result.statementCount = stmts.length;
-  const statementSourceRanges = stmts.map((stmt, index) => {
-    // For ORM formats the extractor emits one source range per extracted literal.
-    // If a single literal (e.g. one queryRunner.query("...; ...")) parsed into
-    // multiple statements, the positional map runs past the available ranges.
-    // Clamp to the last known literal range so the diagnostic still points at a
-    // real location in the source document rather than at an offset into the
-    // joined extracted SQL (which would highlight the wrong place in the editor).
-    if (extractedSourceRanges) {
-      return (
-        extractedSourceRanges[index] ??
-        extractedSourceRanges[extractedSourceRanges.length - 1] ??
-        { startOffset: stmt.startOffset, endOffset: stmt.endOffset }
-      );
-    }
-    return { startOffset: stmt.startOffset, endOffset: stmt.endOffset };
-  });
 
   const schemaLookup: SchemaLookup | undefined = config.snapshotFile
     ? loadSnapshot(await loadSnapshotFile(config.snapshotFile))
@@ -203,9 +220,14 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   // Track tables created in this migration
   const createdTables = new Set<string>();
   const writtenTables = new Set<string>();
+  const constrainedDomains = collectConstrainedDomains(stmts);
+  const ruleConfig: PgfenceConfig = constrainedDomains.size > 0
+    ? { ...config, constrainedDomains }
+    : config;
+  let unanalyzableParsedStatementCount = 0;
 
   // Apply statement-level rules
-  for (const stmt of stmts) {
+  for (const [stmtIndex, stmt] of stmts.entries()) {
     const stmtTableKey = getStatementTableKey(stmt);
     if (stmt.nodeType === 'CreateStmt' && stmtTableKey) {
       createdTables.add(stmtTableKey);
@@ -228,11 +250,13 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
         column: 0,
         unanalyzable: true,
       });
+      unanalyzableParsedStatementCount++;
+      continue;
     }
 
-    const builtInChecks = applyRules(stmt, config, schemaLookup);
+    const builtInChecks = applyRules(stmt, ruleConfig, schemaLookup);
     if (plugins.rules.length > 0) {
-      builtInChecks.push(...runPluginRules(plugins.rules, stmt, config, result.extractionWarnings, filePath));
+      builtInChecks.push(...runPluginRules(plugins.rules, stmt, ruleConfig, result.extractionWarnings, filePath));
     }
     const rawChecks = filterByRulesConfig(builtInChecks, config.rules);
     for (const check of rawChecks) {
@@ -248,9 +272,10 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
       }
 
       result.checks.push(check);
-      result.sourceRanges.push(statementSourceRanges[stmts.indexOf(stmt)]);
+      result.sourceRanges.push(statementSourceRanges[stmtIndex]);
     }
   }
+  result.statementCount = Math.max(0, result.statementCount - unanalyzableParsedStatementCount);
 
   // Apply policy checks
   const builtInPolicies = checkPolicies(stmts, config, { autoCommit });
@@ -289,13 +314,20 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
       if (!ambiguous.has(lower)) statsMap.set(lower, s);
     }
     for (const check of result.checks) {
-      const statsKey = check.tableKey ?? check.tableName?.toLowerCase();
-      if (statsKey) {
+      const statsKeys = new Set<string>();
+      const primaryStatsKey = check.tableKey ?? check.tableName?.toLowerCase();
+      if (primaryStatsKey) statsKeys.add(primaryStatsKey);
+      for (const tableName of check.affectedTableNames ?? []) {
+        statsKeys.add(tableName.toLowerCase());
+      }
+      let adjustedRisk: RiskLevelType | undefined;
+      for (const statsKey of statsKeys) {
         const stats = statsMap.get(statsKey);
         if (stats) {
-          check.adjustedRisk = adjustRisk(check.risk, stats.rowCount);
+          adjustedRisk = maxRiskLevel(adjustedRisk ?? check.risk, adjustRisk(check.risk, stats.rowCount));
         }
       }
+      if (adjustedRisk) check.adjustedRisk = adjustedRisk;
     }
   }
 
@@ -312,6 +344,49 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   result.maxRisk = maxRisk;
 
   return result;
+}
+
+function sourceRangeForStatement(
+  stmt: ParsedStatement,
+  index: number,
+  extractedSourceRanges?: SourceRange[],
+): SourceRange {
+  if (extractedSourceRanges) {
+    return (
+      extractedSourceRanges[index] ??
+      extractedSourceRanges[extractedSourceRanges.length - 1] ??
+      { startOffset: stmt.startOffset, endOffset: stmt.endOffset }
+    );
+  }
+  return { startOffset: stmt.startOffset, endOffset: stmt.endOffset };
+}
+
+function lineFromOffset(content: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < content.length; i++) {
+    if (content.charCodeAt(i) === 10) line++;
+  }
+  return line;
+}
+
+function collectConstrainedDomains(stmts: ParsedStatement[]): Set<string> {
+  const domains = new Set<string>();
+  for (const stmt of stmts) {
+    if (stmt.nodeType !== 'CreateDomainStmt') continue;
+    const node = stmt.node as {
+      domainname?: Array<{ String?: { sval?: string } }>;
+      constraints?: Array<{ Constraint?: { contype?: string } }>;
+    };
+    const hasConstraint = (node.constraints ?? []).some((constraint) => constraint.Constraint?.contype != null);
+    if (!hasConstraint) continue;
+    const names = (node.domainname ?? [])
+      .map((part) => part.String?.sval)
+      .filter((part): part is string => Boolean(part));
+    if (names.length === 0) continue;
+    domains.add(names.join('.').toLowerCase());
+    domains.add(names[names.length - 1].toLowerCase());
+  }
+  return domains;
 }
 
 function isDataModifyingStatement(stmt: ParsedStatement): boolean {

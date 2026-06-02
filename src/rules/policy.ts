@@ -451,7 +451,9 @@ function isAccessExclusiveStatement(stmt: ParsedStatement): boolean {
           sub === 'AT_AlterColumnType' || sub === 'AT_SetNotNull' ||
           sub === 'AT_DropConstraint' ||
           sub === 'AT_AttachPartition' || sub === 'AT_DetachPartition' ||
-          sub === 'AT_SetLogged' || sub === 'AT_SetUnLogged') {
+          sub === 'AT_SetLogged' || sub === 'AT_SetUnLogged' ||
+          sub === 'AT_EnableRowSecurity' || sub === 'AT_DisableRowSecurity' ||
+          sub === 'AT_ForceRowSecurity' || sub === 'AT_NoForceRowSecurity') {
           return true;
         }
       }
@@ -505,21 +507,45 @@ function isAddColumnRewriteRisk(cmd: {
   if (cmd.subtype !== 'AT_AddColumn') return false;
   const constraints = cmd.def?.ColumnDef?.constraints ?? [];
   if (constraints.some((con) => con.Constraint?.contype === 'CONSTR_GENERATED')) return true;
+  if (constraints.some((con) => con.Constraint?.contype === 'CONSTR_IDENTITY')) return true;
   const hasNotNull = constraints.some((con) => con.Constraint?.contype === 'CONSTR_NOTNULL');
   const defaultConstraint = constraints.find((con) => con.Constraint?.contype === 'CONSTR_DEFAULT');
   const defaultExpr = defaultConstraint?.Constraint?.raw_expr;
-  if (defaultExpr && !isConstantDefault(defaultExpr)) return true;
+  if (defaultExpr && !isFastDefault(defaultExpr)) return true;
   return hasNotNull && !defaultExpr;
 }
 
-function isConstantDefault(expr: Record<string, unknown>): boolean {
+function isFastDefault(expr: Record<string, unknown>): boolean {
   if ('A_Const' in expr) return true;
   if ('TypeCast' in expr) {
     const cast = expr.TypeCast as { arg?: Record<string, unknown> };
-    return cast.arg != null && 'A_Const' in cast.arg;
+    if (cast.arg != null && 'A_Const' in cast.arg) return true;
+  }
+  if ('FuncCall' in expr) {
+    const call = expr.FuncCall as { funcname?: Array<{ String?: { sval?: string } }> };
+    const functionName = call.funcname?.map((part) => part.String?.sval).filter(Boolean).join('.').toLowerCase();
+    return functionName != null && STABLE_DEFAULT_FUNCTIONS.has(functionName);
+  }
+  if ('SQLValueFunction' in expr) {
+    const sqlValue = expr.SQLValueFunction as { op?: string };
+    return sqlValue.op != null && STABLE_SQL_VALUE_FUNCTIONS.has(sqlValue.op);
   }
   return false;
 }
+
+const STABLE_DEFAULT_FUNCTIONS = new Set([
+  'now',
+  'transaction_timestamp',
+  'statement_timestamp',
+]);
+
+const STABLE_SQL_VALUE_FUNCTIONS = new Set([
+  'SVFOP_CURRENT_DATE',
+  'SVFOP_CURRENT_TIME',
+  'SVFOP_CURRENT_TIME_N',
+  'SVFOP_CURRENT_TIMESTAMP',
+  'SVFOP_CURRENT_TIMESTAMP_N',
+]);
 
 /**
  * Extract the primary table name from a statement (for lock tracking).

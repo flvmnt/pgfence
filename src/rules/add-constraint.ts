@@ -34,7 +34,7 @@ interface ConstraintDef {
   indexname?: string;
   skip_validation?: boolean;
   initially_valid?: boolean;
-  pktable?: { relname: string };
+  pktable?: { schemaname?: string; relname: string };
   fk_attrs?: Array<{ String: { sval: string } }>;
   keys?: Array<{ String: { sval: string } }>;
 }
@@ -61,6 +61,15 @@ function quoteIdentifier(identifier: string): string {
 function sanitizeIdentifierFragment(fragment: string): string {
   const cleaned = fragment.trim().replace(/[^a-zA-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
   return cleaned || 'fk';
+}
+
+function tableKeyOf(table?: { schemaname?: string; relname?: string }): string | null {
+  if (!table?.relname) return null;
+  return table.schemaname ? `${table.schemaname}.${table.relname}` : table.relname;
+}
+
+function presentTableNames(names: Array<string | null | undefined>): string[] {
+  return names.filter((name): name is string => Boolean(name && !name.startsWith('<')));
 }
 
 function buildIndexColumnsSql(columns: string): string {
@@ -107,7 +116,8 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
 
     switch (constraint.contype) {
       case 'CONSTR_FOREIGN': {
-        const refTable = constraint.pktable?.relname ?? '<unknown>';
+        const refTable = tableKeyOf(constraint.pktable) ?? '<unknown>';
+        const affectedTableNames = presentTableNames([tableName, refTable]);
         const fkCols = (constraint.fk_attrs ?? []).map((a: { String: { sval: string } }) => a.String?.sval ?? '?').join(', ');
         const safeTableName = tableName ? quoteIdentifier(tableName) : null;
         const safeFkCols = fkCols ? buildIndexColumnsSql(fkCols) : null;
@@ -120,6 +130,7 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),
           tableName,
+          affectedTableNames,
           lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
           risk: RiskLevel.LOW,
@@ -150,6 +161,7 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),
           tableName,
+          affectedTableNames,
           lockMode: LockMode.SHARE_ROW_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.SHARE_ROW_EXCLUSIVE),
           risk: RiskLevel.HIGH,
@@ -243,9 +255,16 @@ export function checkAddConstraint(stmt: ParsedStatement): CheckResult[] {
             tableName,
             lockMode: LockMode.ACCESS_EXCLUSIVE,
             blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
-            risk: RiskLevel.LOW,
-            message: `ADD PRIMARY KEY "${conName}" USING INDEX "${constraint.indexname}": brief ACCESS EXCLUSIVE metadata operation, index already built`,
+            risk: RiskLevel.MEDIUM,
+            message: `ADD PRIMARY KEY "${conName}" USING INDEX "${constraint.indexname}": may need to set indexed columns NOT NULL, which can scan the table if nullability is not already proven`,
             ruleId: 'add-pk-using-index',
+            safeRewrite: {
+              description: 'Prove indexed columns are NOT NULL before attaching the primary key',
+              steps: [
+                `-- Ensure every indexed column is already NOT NULL or validated by a prior constraint.`,
+                `ALTER TABLE ${tableName} ADD CONSTRAINT ${conName} PRIMARY KEY USING INDEX ${constraint.indexname};`,
+              ],
+            },
           });
         } else {
           results.push({

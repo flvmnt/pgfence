@@ -190,6 +190,11 @@ export async function analyze(
         }
       }
     }
+    const constrainedDomains = collectConstrainedDomains(stmts);
+    const ruleConfig: PgfenceConfig = constrainedDomains.size > 0
+      ? { ...config, constrainedDomains }
+      : config;
+    let unanalyzableParsedStatementCount = 0;
 
     // Track tables created in this migration for visibility logic (Eugene's pattern).
     // Operations on newly-created tables don't need safety warnings since
@@ -225,9 +230,11 @@ export async function analyze(
           column: colNum,
           unanalyzable: true,
         });
+        unanalyzableParsedStatementCount++;
+        continue;
       }
 
-      const builtInChecks = applyRules(stmt, config, schemaLookup);
+      const builtInChecks = applyRules(stmt, ruleConfig, schemaLookup);
       // Gap 14: Run plugin rules alongside built-in rules
       if (plugins.rules.length > 0) {
         builtInChecks.push(...runPluginRules(plugins.rules, stmt, config, extraction.warnings, filePath));
@@ -264,13 +271,20 @@ export async function analyze(
     // Adjust risk if DB stats available
     if (tableStatsMap) {
       for (const check of checks) {
-        const statsKey = check.tableKey ?? check.tableName?.toLowerCase();
-        if (statsKey) {
+        const statsKeys = new Set<string>();
+        const primaryStatsKey = check.tableKey ?? check.tableName?.toLowerCase();
+        if (primaryStatsKey) statsKeys.add(primaryStatsKey);
+        for (const tableName of check.affectedTableNames ?? []) {
+          statsKeys.add(tableName.toLowerCase());
+        }
+        let adjustedRisk: RiskLevelType | undefined;
+        for (const statsKey of statsKeys) {
           const stats = tableStatsMap.get(statsKey);
           if (stats) {
-            check.adjustedRisk = adjustRisk(check.risk, stats.rowCount);
+            adjustedRisk = maxRiskLevel(adjustedRisk ?? check.risk, adjustRisk(check.risk, stats.rowCount));
           }
         }
+        if (adjustedRisk) check.adjustedRisk = adjustedRisk;
       }
     }
 
@@ -290,7 +304,7 @@ export async function analyze(
       checks,
       policyViolations,
       maxRisk,
-      statementCount: stmts.length,
+      statementCount: Math.max(0, stmts.length - unanalyzableParsedStatementCount),
       extractionWarnings: extraction.warnings.length > 0 ? extraction.warnings : undefined,
       tableStats: allTableStats,
     });
@@ -301,6 +315,26 @@ export async function analyze(
   }
 
   return results;
+}
+
+function collectConstrainedDomains(stmts: ParsedStatement[]): Set<string> {
+  const domains = new Set<string>();
+  for (const stmt of stmts) {
+    if (stmt.nodeType !== 'CreateDomainStmt') continue;
+    const node = stmt.node as {
+      domainname?: Array<{ String?: { sval?: string } }>;
+      constraints?: Array<{ Constraint?: { contype?: string } }>;
+    };
+    const hasConstraint = (node.constraints ?? []).some((constraint) => constraint.Constraint?.contype != null);
+    if (!hasConstraint) continue;
+    const names = (node.domainname ?? [])
+      .map((part) => part.String?.sval)
+      .filter((part): part is string => Boolean(part));
+    if (names.length === 0) continue;
+    domains.add(names.join('.').toLowerCase());
+    domains.add(names[names.length - 1].toLowerCase());
+  }
+  return domains;
 }
 
 /**

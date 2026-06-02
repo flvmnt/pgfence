@@ -54,6 +54,9 @@ export function processTransactionStmt(
   switch (kind) {
     case 'TRANS_STMT_BEGIN':
     case 'TRANS_STMT_START':
+      if (state.active) {
+        break;
+      }
       state.depth++;
       state.active = true;
       break;

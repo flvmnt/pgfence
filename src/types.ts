@@ -41,6 +41,8 @@ export interface CheckResult {
   tableName: string | null;
   /** Schema-qualified table key when known */
   tableKey?: string;
+  /** Additional table names that participate in locking or risk scoring */
+  affectedTableNames?: string[];
   /** Lock mode this statement acquires */
   lockMode: LockMode;
   /** What operations are blocked while this lock is held */
@@ -146,6 +148,8 @@ export interface PgfenceConfig {
   plugins?: string[];
   /** Schema snapshot file for definitive type change analysis */
   snapshotFile?: string;
+  /** Constrained domains declared in the same SQL batch */
+  constrainedDomains?: Set<string>;
   /** How CI treats statements that could not be statically analyzed */
   unknownHandling?: 'warn' | 'block';
 }

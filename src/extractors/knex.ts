@@ -76,6 +76,7 @@ export async function extractKnexSQLFromSource(
   // Gap 11: track conditional depth to warn about conditional SQL
   const conditionalTypes = new Set(['IfStatement', 'ConditionalExpression', 'SwitchCase']);
   const rawFunctionNames = new Set<string>();
+  const schemaNames = new Set<string>();
   let conditionalDepth = 0;
 
   walkNodeWithContext(upFn, {
@@ -83,7 +84,7 @@ export async function extractKnexSQLFromSource(
       if (conditionalTypes.has(node.type)) conditionalDepth++;
 
       if (node.type === 'VariableDeclarator') {
-        trackKnexRawAlias(node, rawFunctionNames);
+        trackKnexAliases(node, rawFunctionNames, schemaNames);
       }
 
       if (node.type !== 'CallExpression') return;
@@ -115,7 +116,7 @@ export async function extractKnexSQLFromSource(
             unanalyzable: true,
           });
         }
-      } else if (isSchemaBuilderCall(node)) {
+      } else if (isSchemaBuilderCall(node, schemaNames)) {
         // Gap 13: Transpile schema builder calls to SQL
         const result = transpileKnexSchemaCall(node, filePath);
         if (result.sql.length > 0) {
@@ -329,13 +330,18 @@ function isRawFunctionCall(node: TSNode, rawFunctionNames: Set<string>): boolean
   return callee?.type === 'Identifier' && rawFunctionNames.has(callee.name as string);
 }
 
-function trackKnexRawAlias(node: TSNode, rawFunctionNames: Set<string>): void {
+function trackKnexAliases(node: TSNode, rawFunctionNames: Set<string>, schemaNames: Set<string>): void {
   const id = node.id as TSNode | undefined;
   const init = node.init as TSNode | undefined;
   if (!id || !init) return;
 
   if (id.type === 'Identifier' && isRawMember(init)) {
     rawFunctionNames.add(id.name as string);
+    return;
+  }
+
+  if (id.type === 'Identifier' && isSchemaMember(init)) {
+    schemaNames.add(id.name as string);
     return;
   }
 
@@ -358,7 +364,13 @@ function isRawMember(node: TSNode): boolean {
   return prop?.type === 'Identifier' && prop.name === 'raw';
 }
 
-function isSchemaBuilderCall(node: TSNode): boolean {
+function isSchemaMember(node: TSNode): boolean {
+  if (node.type !== 'MemberExpression') return false;
+  const prop = node.property as TSNode;
+  return prop?.type === 'Identifier' && prop.name === 'schema';
+}
+
+function isSchemaBuilderCall(node: TSNode, schemaNames: Set<string>): boolean {
   const callee = node.callee as TSNode;
   if (callee?.type !== 'MemberExpression') return false;
   const prop = callee.property as TSNode;
@@ -367,6 +379,7 @@ function isSchemaBuilderCall(node: TSNode): boolean {
   if (!SCHEMA_BUILDER_METHODS.has(name)) return false;
   // Check if callee object looks like knex.schema.X
   const obj = callee.object as TSNode;
+  if (obj?.type === 'Identifier' && schemaNames.has(obj.name as string)) return true;
   if (obj?.type === 'MemberExpression') {
     const schemaProp = obj.property as TSNode;
     return schemaProp?.type === 'Identifier' && (schemaProp.name as string) === 'schema';

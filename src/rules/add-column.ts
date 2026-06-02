@@ -118,6 +118,9 @@ export function checkAddColumn(
     const foreignKeyConstraint = constraints.find(
       (con) => con.Constraint.contype === 'CONSTR_FOREIGN',
     )?.Constraint as ForeignKeyConstraint | undefined;
+    const hasIdentity = constraints.some(
+      (con) => con.Constraint.contype === 'CONSTR_IDENTITY',
+    );
 
     if (foreignKeyConstraint) {
       const refTable = formatQualifiedRelation(foreignKeyConstraint.pktable);
@@ -165,6 +168,26 @@ export function checkAddColumn(
       });
     }
 
+    if (hasIdentity) {
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.HIGH,
+        message: `ADD COLUMN "${colDef.colname}" with IDENTITY: rewrites existing rows to populate the sequence-backed identity value under ACCESS EXCLUSIVE lock`,
+        ruleId: 'add-column-identity',
+        safeRewrite: {
+          description: 'Add the column first, then backfill and attach identity behavior separately',
+          steps: [
+            `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${colDef.colname} ${getTypeName(colDef.typeName) || '<type>'};`,
+            `-- Backfill existing rows out-of-band in batches before adding identity semantics.`,
+          ],
+        },
+      });
+    }
+
     // Case 1: NOT NULL without DEFAULT → HIGH
     if (hasNotNull && !hasDefault) {
       results.push({
@@ -195,12 +218,13 @@ export function checkAddColumn(
       continue;
     }
 
-    // Case 2: Has DEFAULT - check if constant or non-constant
+    // Case 2: Has DEFAULT - check if fast or rewrite-causing
     if (hasDefault && defaultExpr) {
-      const isConstant = isConstantDefault(defaultExpr);
+      const defaultKind = classifyDefault(defaultExpr);
+      const isFastDefault = defaultKind === 'constant' || defaultKind === 'stable';
 
-      if (isConstant && config.minPostgresVersion >= 11) {
-        // Constant default on PG11+ → instant metadata-only, LOW risk
+      if (isFastDefault && config.minPostgresVersion >= 11) {
+        // Constant and stable defaults on PG11+ use fast default storage.
         const notNullNote = hasNotNull
           ? `. NOT NULL is satisfied: the constant DEFAULT fills all existing rows`
           : '';
@@ -211,17 +235,19 @@ export function checkAddColumn(
           lockMode: LockMode.ACCESS_EXCLUSIVE,
           blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
           risk: RiskLevel.LOW,
-          message: `ADD COLUMN "${colDef.colname}" with constant DEFAULT: instant metadata-only on PG11+ (ACCESS EXCLUSIVE lock is brief)${notNullNote}`,
-          ruleId: 'add-column-constant-default',
+          message: defaultKind === 'constant'
+            ? `ADD COLUMN "${colDef.colname}" with constant DEFAULT: instant metadata-only on PG11+ (ACCESS EXCLUSIVE lock is brief)${notNullNote}`
+            : `ADD COLUMN "${colDef.colname}" with stable DEFAULT: instant metadata-only on PG11+ (ACCESS EXCLUSIVE lock is brief)${notNullNote}`,
+          ruleId: defaultKind === 'constant' ? 'add-column-constant-default' : 'add-column-stable-default',
           safeRewrite: {
             description: 'Safe: instant metadata-only on Postgres 11+',
             steps: [
-              `-- This is safe: adding a column with a constant DEFAULT is metadata-only.`,
+              `-- This is safe on Postgres 11+: the DEFAULT is stored metadata-only.`,
             ],
           },
         });
-      } else if (!isConstant) {
-        // Non-constant default → table rewrite, HIGH risk
+      } else if (defaultKind === 'volatile') {
+        // Volatile default causes a table rewrite.
         results.push({
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),
@@ -245,8 +271,8 @@ export function checkAddColumn(
           },
         });
       }
-      // If constant but PG < 11, it's still a rewrite - flag as HIGH
-      if (isConstant && config.minPostgresVersion < 11) {
+      // If fast-default eligible but PG < 11, it is still a rewrite.
+      if (isFastDefault && config.minPostgresVersion < 11) {
         results.push({
           statement: stmt.sql,
           statementPreview: makePreview(stmt.sql),
@@ -272,8 +298,8 @@ export function checkAddColumn(
       }
     }
 
-    // NOT NULL + non-constant default: patch the recipe to include SET NOT NULL steps
-    if (hasNotNull && hasDefault && defaultExpr && !isConstantDefault(defaultExpr)) {
+    // NOT NULL + volatile default: patch the recipe to include SET NOT NULL steps
+    if (hasNotNull && hasDefault && defaultExpr && classifyDefault(defaultExpr) === 'volatile') {
       const lastResult = results[results.length - 1];
       if (lastResult?.ruleId === 'add-column-non-constant-default' && lastResult.safeRewrite) {
         lastResult.message += '. Column is also NOT NULL, requiring an additional constraint step';
@@ -288,6 +314,26 @@ export function checkAddColumn(
 
     // Type-specific checks on ADD COLUMN
     const typeName = getTypeName(colDef.typeName);
+
+    if (config.constrainedDomains?.has(typeName.toLowerCase())) {
+      results.push({
+        statement: stmt.sql,
+        statementPreview: makePreview(stmt.sql),
+        tableName,
+        lockMode: LockMode.ACCESS_EXCLUSIVE,
+        blocks: getBlockedOperations(LockMode.ACCESS_EXCLUSIVE),
+        risk: RiskLevel.HIGH,
+        message: `ADD COLUMN "${colDef.colname}" with constrained domain "${typeName}": validates the domain constraint against existing rows and can rewrite the table under ACCESS EXCLUSIVE lock`,
+        ruleId: 'add-column-constrained-domain',
+        safeRewrite: {
+          description: 'Add a base-type column first, backfill, then enforce the domain constraint in a controlled contract step',
+          steps: [
+            `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${colDef.colname} <base_type>;`,
+            `-- Backfill and validate in a follow-up migration before switching to the constrained domain.`,
+          ],
+        },
+      });
+    }
 
     // ADD COLUMN with json type - should use jsonb instead
     if (typeName === 'json') {
@@ -367,20 +413,42 @@ function getTypeName(tn?: TypeName): string {
 }
 
 /**
- * Check if a default expression is a constant.
- *
- * ONLY A_Const and TypeCast(A_Const) are treated as constant.
- * Everything else (FuncCall, SQLValueFunction, expressions) is non-constant.
+ * Classify default expressions for PG11+ fast-default behavior.
  */
-function isConstantDefault(expr: Record<string, unknown>): boolean {
+function classifyDefault(expr: Record<string, unknown>): 'constant' | 'stable' | 'volatile' {
   // Direct A_Const
-  if ('A_Const' in expr) return true;
+  if ('A_Const' in expr) return 'constant';
 
   // TypeCast wrapping A_Const
   if ('TypeCast' in expr) {
     const cast = expr.TypeCast as { arg?: Record<string, unknown> };
-    if (cast.arg && 'A_Const' in cast.arg) return true;
+    if (cast.arg && 'A_Const' in cast.arg) return 'constant';
   }
 
-  return false;
+  if ('FuncCall' in expr) {
+    const call = expr.FuncCall as { funcname?: Array<{ String?: { sval?: string } }> };
+    const functionName = call.funcname?.map((part) => part.String?.sval).filter(Boolean).join('.').toLowerCase();
+    if (functionName && STABLE_DEFAULT_FUNCTIONS.has(functionName)) return 'stable';
+  }
+
+  if ('SQLValueFunction' in expr) {
+    const sqlValue = expr.SQLValueFunction as { op?: string };
+    if (sqlValue.op && STABLE_SQL_VALUE_FUNCTIONS.has(sqlValue.op)) return 'stable';
+  }
+
+  return 'volatile';
 }
+
+const STABLE_DEFAULT_FUNCTIONS = new Set([
+  'now',
+  'transaction_timestamp',
+  'statement_timestamp',
+]);
+
+const STABLE_SQL_VALUE_FUNCTIONS = new Set([
+  'SVFOP_CURRENT_DATE',
+  'SVFOP_CURRENT_TIME',
+  'SVFOP_CURRENT_TIME_N',
+  'SVFOP_CURRENT_TIMESTAMP',
+  'SVFOP_CURRENT_TIMESTAMP_N',
+]);
