@@ -722,6 +722,23 @@ ALTER TABLE users ADD COLUMN tick_at timestamptz DEFAULT clock_timestamp();`;
     expect(detectFormat('prisma\\migrations\\init\\migration.sql', '')).toBe('prisma');
   });
 
+  it('should auto-detect aliased TypeORM and object-style Knex migrations', () => {
+    const typeorm = `export class M {
+  async up(qr) {
+    await qr.query('DROP TABLE users');
+  }
+}`;
+    const knex = `module.exports = {
+  async up(knex) {
+    const { raw } = knex;
+    await raw('DROP TABLE users');
+  }
+};`;
+
+    expect(detectFormat('migrations/001.ts', typeorm)).toBe('typeorm');
+    expect(detectFormat('migrations/001.js', knex)).toBe('knex');
+  });
+
   it('should throw error for unknown ts formats without proper imports', () => {
     expect(() => detectFormat('test.ts', 'const a = 1;')).toThrow('Cannot auto-detect migration format');
   });
@@ -2517,6 +2534,27 @@ export class Mig implements MigrationInterface {
       expect(r.maxRisk).toBe(RiskLevel.CRITICAL);
       // The invalid statement is surfaced, not silently dropped.
       expect(r.extractionWarnings?.some((w) => w.unanalyzable)).toBe(true);
+    });
+  });
+
+  it('maps fallback parse warnings to the original ORM source line', async () => {
+    const source = `import { MigrationInterface, QueryRunner } from "typeorm";
+export class Mig implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query("CREATE TABLE ok_table (id integer)");
+    await queryRunner.query("THIS IS NOT VALID SQL AT ALL");
+    await queryRunner.query("DROP TABLE users");
+  }
+}
+`;
+    await withTempFileExt('.ts', source, async (file) => {
+      const results = await analyze([file], { ...defaultConfig, format: 'typeorm' });
+      const warning = results[0].extractionWarnings?.find((w) =>
+        w.unanalyzable && w.message.includes('SQL parse error'),
+      );
+      expect(warning).toBeDefined();
+      expect(warning!.line).toBe(5);
+      expect(warning!.column).toBeGreaterThan(1);
     });
   });
 

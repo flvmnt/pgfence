@@ -142,7 +142,7 @@ export async function extractKnexSQLFromSource(
     },
   });
 
-  return { sql: queries.join(';\n'), warnings, autoCommit, sourceRanges, statements: queries };
+  return { sql: queries.join(';\n'), warnings, autoCommit, sourceRanges, sourceText: source, statements: queries };
 }
 
 function findUpFunction(ast: TSNode): TSNode | null {

@@ -217,4 +217,82 @@ describe('LSP cache behavior', () => {
     expect(firstConfig.requireStatementTimeout).toBe(true);
     expect(firstConfig.unknownHandling).toBe('warn');
   });
+
+  it('ignores LSP plugin config unless explicitly trusted', async () => {
+    const previous = process.env.PGFENCE_ALLOW_LOCAL_PLUGINS;
+    delete process.env.PGFENCE_ALLOW_LOCAL_PLUGINS;
+    try {
+      const { connection, handlers } = createMockConnection();
+      createServer(connection);
+      const uri = 'file:///test.sql';
+
+      vi.mocked(analyzeText).mockResolvedValue({
+        checks: [],
+        policyViolations: [],
+        extractionWarnings: [],
+        maxRisk: RiskLevel.SAFE,
+        statementCount: 0,
+        sourceRanges: [],
+        policySourceRanges: [],
+      });
+
+      handlers.initialize?.({
+        capabilities: {},
+        processId: 1,
+        rootUri: null,
+        initializationOptions: { plugins: ['./repo-plugin.mjs'] },
+      });
+      handlers.didOpen?.({
+        textDocument: {
+          uri,
+          languageId: 'sql',
+          version: 1,
+          text: 'CREATE INDEX idx ON users (email);',
+        },
+      });
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+      const config = vi.mocked(analyzeText).mock.calls[0][0].config;
+      expect(config.plugins).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.PGFENCE_ALLOW_LOCAL_PLUGINS;
+      else process.env.PGFENCE_ALLOW_LOCAL_PLUGINS = previous;
+    }
+  });
+
+  it('passes LSP table stats config into analysis', async () => {
+    const { connection, handlers } = createMockConnection();
+    createServer(connection);
+    const uri = 'file:///test.sql';
+
+    vi.mocked(analyzeText).mockResolvedValue({
+      checks: [],
+      policyViolations: [],
+      extractionWarnings: [],
+      maxRisk: RiskLevel.SAFE,
+      statementCount: 0,
+      sourceRanges: [],
+      policySourceRanges: [],
+    });
+
+    const tableStats = [{ schemaName: 'public', tableName: 'users', rowCount: 50_000_000, totalBytes: 1 }];
+    handlers.initialize?.({
+      capabilities: {},
+      processId: 1,
+      rootUri: null,
+      initializationOptions: { tableStats },
+    });
+    handlers.didOpen?.({
+      textDocument: {
+        uri,
+        languageId: 'sql',
+        version: 1,
+        text: 'ALTER TABLE users ADD COLUMN age integer NOT NULL;',
+      },
+    });
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+    const config = vi.mocked(analyzeText).mock.calls[0][0].config;
+    expect(config.tableStats).toEqual(tableStats);
+  });
 });

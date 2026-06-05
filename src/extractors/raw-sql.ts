@@ -9,5 +9,6 @@ import type { ExtractionResult } from '../types.js';
 import { readTextMigrationFile } from './file-guards.js';
 
 export async function extractRawSQL(filePath: string): Promise<ExtractionResult> {
-  return { sql: await readTextMigrationFile(filePath), warnings: [] };
+  const sql = await readTextMigrationFile(filePath);
+  return { sql, warnings: [], sourceText: sql };
 }

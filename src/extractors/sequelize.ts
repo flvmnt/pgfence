@@ -163,7 +163,7 @@ export async function extractSequelizeSQLFromSource(
         });
     }
 
-    return { sql: queries.join(';\n'), warnings, sourceRanges, statements: queries };
+    return { sql: queries.join(';\n'), warnings, sourceRanges, sourceText: source, statements: queries };
 }
 
 function isSequelizeQuery(node: TSNode): boolean {

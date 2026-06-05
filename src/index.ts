@@ -17,7 +17,7 @@ import { reportGitHub } from './reporters/github-pr.js';
 import { reportSARIF } from './reporters/sarif.js';
 import { reportGitLab } from './reporters/gitlab.js';
 import { loadConfigFile, mergeConfig } from './config.js';
-import { RiskLevel } from './types.js';
+import { LockMode, RiskLevel } from './types.js';
 import type { PgfenceConfig, TableStats, TraceResult } from './types.js';
 
 /** Strip credentials from postgres:// URLs in error messages. */
@@ -109,6 +109,40 @@ function shouldFailCI(results: Awaited<ReturnType<typeof analyze>>, config: Pgfe
     if (result.policyViolations.some((v) => v.severity === 'error')) return true;
   }
   return config.unknownHandling === 'block' && hasUnanalyzableStatements(results);
+}
+
+function maxRiskFromChecks(checks: Array<{ risk: RiskLevel; adjustedRisk?: RiskLevel }>): RiskLevel {
+  let maxRisk = RiskLevel.SAFE;
+  for (const check of checks) {
+    const effective = check.adjustedRisk ?? check.risk;
+    if (RISK_ORDER.indexOf(effective) > RISK_ORDER.indexOf(maxRisk)) {
+      maxRisk = effective;
+    }
+  }
+  return maxRisk;
+}
+
+function higherRisk(a: RiskLevel, b: RiskLevel): RiskLevel {
+  return RISK_ORDER.indexOf(a) >= RISK_ORDER.indexOf(b) ? a : b;
+}
+
+function emptyTrace(sql: string, executionError: string): TraceResult['traceChecks'][number] {
+  return {
+    statement: sql,
+    statementPreview: sql.replace(/\s+/g, ' ').trim().slice(0, 200),
+    tableName: null,
+    lockMode: LockMode.ACCESS_SHARE,
+    blocks: { reads: false, writes: false, otherDdl: false },
+    risk: RiskLevel.MEDIUM,
+    message: `Statement execution failed: ${executionError}`,
+    ruleId: 'trace-error',
+    verification: 'error',
+    executionError,
+  };
+}
+
+function hasExplicitTransactionStatement(parsedStatements: Array<{ nodeType: string }>): boolean {
+  return parsedStatements.some((stmt) => stmt.nodeType === 'TransactionStmt');
 }
 
 const program = new Command();
@@ -387,21 +421,34 @@ program
           const traces = [];
           const trackedOids: number[] = [];
           const observer = { client: observerClient, targetPid: traceClientPid };
-          for (const sql of statements) {
-            const isConcurrent = /\bCONCURRENTLY\b/i.test(sql);
-            const trace = await traceStatement(
-              traceClient, sql, trackedOids, isConcurrent,
-              isConcurrent ? observer : undefined,
-            );
-            traces.push(trace);
-            // Add new objects to tracked OIDs for subsequent statements
-            for (const obj of trace.newObjects) {
-              trackedOids.push(obj.oid);
+          let traceChecks;
+          if (hasExplicitTransactionStatement(parsedStatements)) {
+            const executionError = 'trace mode cannot replay explicit transaction blocks faithfully; use analyze mode or remove BEGIN, COMMIT, ROLLBACK, and SAVEPOINT from the traced file';
+            traceChecks = [
+              ...staticResult.checks.map((check) => ({
+                ...check,
+                verification: 'static-only' as const,
+              })),
+              ...statements.map((sql) => emptyTrace(sql, executionError)),
+            ];
+          } else {
+            for (const sql of statements) {
+              const isConcurrent = /\bCONCURRENTLY\b/i.test(sql);
+              const trace = await traceStatement(
+                traceClient, sql, trackedOids, isConcurrent,
+                isConcurrent ? observer : undefined,
+              );
+              traces.push(trace);
+              // Add new objects to tracked OIDs for subsequent statements
+              for (const obj of trace.newObjects) {
+                trackedOids.push(obj.oid);
+              }
             }
+            traceChecks = mergeTraceWithStatic(staticResult.checks, traces, statements);
           }
 
-          // Merge static checks with traces
-          const traceChecks = mergeTraceWithStatic(staticResult.checks, traces, statements);
+          const traceMaxRisk = maxRiskFromChecks(traceChecks);
+          const resultMaxRisk = higherRisk(staticResult.maxRisk, traceMaxRisk);
 
           // Count verification outcomes
           const verified = traceChecks.filter(c => c.verification === 'confirmed' || c.verification === 'mismatch').length;
@@ -412,6 +459,8 @@ program
 
           traceResults.push({
             ...staticResult,
+            checks: traceChecks,
+            maxRisk: resultMaxRisk,
             traceChecks,
             verified,
             mismatches,

@@ -42,6 +42,20 @@ export const DEBOUNCE_MS = 300;
 const FORMAT_VALUES = new Set(['sql', 'typeorm', 'prisma', 'knex', 'drizzle', 'sequelize', 'auto']);
 const OUTPUT_VALUES = new Set(['cli', 'json', 'github', 'sarif', 'gitlab']);
 
+function isTableStatsArray(value: unknown): value is PgfenceConfig['tableStats'] {
+  return Array.isArray(value) && value.every((entry) => (
+    entry != null &&
+    typeof entry === 'object' &&
+    typeof (entry as { schemaName?: unknown }).schemaName === 'string' &&
+    typeof (entry as { tableName?: unknown }).tableName === 'string' &&
+    typeof (entry as { rowCount?: unknown }).rowCount === 'number' &&
+    Number.isFinite((entry as { rowCount: number }).rowCount) &&
+    (entry as { rowCount: number }).rowCount >= 0 &&
+    typeof (entry as { totalBytes?: unknown }).totalBytes === 'number' &&
+    Number.isFinite((entry as { totalBytes: number }).totalBytes)
+  ));
+}
+
 function defaultLspConfig(): PgfenceConfig {
   return {
     format: 'auto',
@@ -73,7 +87,12 @@ function applyLspConfig(target: PgfenceConfig, items: Record<string, unknown>): 
   }
   if (typeof items.snapshot === 'string') target.snapshotFile = items.snapshot;
   if (Array.isArray(items.plugins) && items.plugins.every((plugin) => typeof plugin === 'string')) {
-    target.plugins = items.plugins;
+    if (process.env.PGFENCE_ALLOW_LOCAL_PLUGINS === '1') {
+      target.plugins = items.plugins;
+    }
+  }
+  if (isTableStatsArray(items.tableStats)) {
+    target.tableStats = items.tableStats;
   }
   if (Array.isArray(items.disableRules) && items.disableRules.every((rule) => typeof rule === 'string')) {
     target.rules = { ...target.rules, disable: items.disableRules };

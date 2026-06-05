@@ -312,10 +312,11 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
   });
 
   // Adjust risk with table stats
-  if (tableStats && tableStats.length > 0) {
+  const effectiveTableStats = tableStats ?? config.tableStats;
+  if (effectiveTableStats && effectiveTableStats.length > 0) {
     const statsMap = new Map<string, TableStats>();
     const counts = new Map<string, number>();
-    for (const s of tableStats) {
+    for (const s of effectiveTableStats) {
       const lower = s.tableName.toLowerCase();
       counts.set(lower, (counts.get(lower) ?? 0) + 1);
     }
@@ -324,7 +325,7 @@ export async function analyzeText(options: AnalyzeTextOptions): Promise<AnalyzeT
         .filter(([, count]) => count > 1)
         .map(([table]) => table),
     );
-    for (const s of tableStats) {
+    for (const s of effectiveTableStats) {
       const lower = s.tableName.toLowerCase();
       statsMap.set(`${s.schemaName.toLowerCase()}.${lower}`, s);
       if (!ambiguous.has(lower)) statsMap.set(lower, s);

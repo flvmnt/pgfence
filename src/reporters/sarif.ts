@@ -10,6 +10,7 @@
 import type { AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
 import { summarizeCoverage } from './coverage.js';
+import { checksForReport } from './checks.js';
 
 interface SarifLocation {
   physicalLocation: {
@@ -56,7 +57,7 @@ function toSarifResults(
   const sarifResults: SarifResult[] = [];
   const uri = result.filePath.replace(/\\/g, '/');
 
-  for (const check of result.checks) {
+  for (const check of checksForReport(result)) {
     const effectiveRisk = check.adjustedRisk ?? check.risk;
     if (effectiveRisk === RiskLevel.SAFE) continue;
 

@@ -36,6 +36,35 @@ const mockResults: AnalysisResult[] = [
     },
 ];
 
+const mockTraceOnlyCheck = {
+    statement: 'ALTER TABLE users ENABLE ROW LEVEL SECURITY',
+    statementPreview: 'ALTER TABLE users ENABLE ROW LEVEL SECURITY',
+    tableName: 'users',
+    lockMode: LockMode.ACCESS_EXCLUSIVE,
+    blocks: { reads: true, writes: true, otherDdl: true },
+    risk: RiskLevel.CRITICAL,
+    message: 'Trace observed ACCESS EXCLUSIVE lock on users',
+    ruleId: 'trace-only',
+    verification: 'trace-only',
+    tracedLockMode: LockMode.ACCESS_EXCLUSIVE,
+};
+
+const mockTraceOnlyResults = [{
+    filePath: 'trace.sql',
+    statementCount: 1,
+    checks: [],
+    policyViolations: [],
+    maxRisk: RiskLevel.CRITICAL,
+    traceChecks: [mockTraceOnlyCheck],
+    verified: 0,
+    mismatches: 0,
+    traceOnly: 1,
+    staticOnly: 0,
+    errors: 0,
+    pgVersion: 17,
+    containerLifetimeMs: 1,
+}] as unknown as AnalysisResult[];
+
 const mockConfig: PgfenceConfig = {
     minPostgresVersion: 14,
     maxAllowedRisk: RiskLevel.CRITICAL,
@@ -413,6 +442,13 @@ describe('Reporter: GitHub PR', () => {
         expect(output).toContain('manual review');
         expect(output).not.toContain('No dangerous statements detected.');
     });
+
+    it('should include trace-only checks in trace results', () => {
+        const output = reportGitHub(mockTraceOnlyResults);
+        expect(output).toContain('Trace observed ACCESS EXCLUSIVE lock on users');
+        expect(output).toContain(':rotating_light: CRITICAL');
+        expect(output).not.toContain('No dangerous statements detected.');
+    });
 });
 
 describe('Reporter: SARIF', () => {
@@ -557,6 +593,14 @@ describe('Reporter: SARIF', () => {
         expect(warning.locations[0].physicalLocation.region.startLine).toBe(7);
         expect(warning.locations[0].physicalLocation.region.startColumn).toBe(4);
     });
+
+    it('should include trace-only checks in trace results', () => {
+        const output = reportSARIF(mockTraceOnlyResults);
+        const sarif = JSON.parse(output);
+        const traceOnly = sarif.runs[0].results.find((r: { ruleId: string }) => r.ruleId === 'trace-only');
+        expect(traceOnly).toBeDefined();
+        expect(traceOnly.level).toBe('error');
+    });
 });
 
 describe('Reporter: GitLab CI', () => {
@@ -637,6 +681,16 @@ describe('Reporter: GitLab CI', () => {
         expect(parsed[0].location.path).toBe('migrations/001.sql');
     });
 
+    it('should normalize absolute paths under the current working directory', () => {
+        const resultsWithAbsPath: AnalysisResult[] = [{
+            ...mockResults[0],
+            filePath: `${process.cwd()}/tests/fixtures/dynamic-typeorm.ts`,
+        }];
+        const output = reportGitLab(resultsWithAbsPath);
+        const parsed = JSON.parse(output);
+        expect(parsed[0].location.path).toBe('tests/fixtures/dynamic-typeorm.ts');
+    });
+
     it('should include both checks and policy violations', () => {
         const output = reportGitLab(mockResults);
         const parsed = JSON.parse(output);
@@ -702,6 +756,31 @@ describe('Reporter: GitLab CI', () => {
         expect(coverageEntries).toHaveLength(1);
         expect(coverageEntries[0].description).toContain('Analyzed 3 SQL statements');
         expect(coverageEntries[0].description).toContain('1 dynamic statement not analyzable (lines 9)');
+    });
+
+    it('anchors aggregate coverage to the file that supplied the first warning line', () => {
+        const results: AnalysisResult[] = [
+            { ...mockResults[0], filePath: 'one.sql', statementCount: 1 },
+            {
+                ...mockResults[0],
+                filePath: 'two.sql',
+                statementCount: 1,
+                extractionWarnings: [
+                    { filePath: 'two.sql', line: 900, column: 0, message: 'Dynamic SQL', unanalyzable: true },
+                ],
+            },
+        ];
+        const parsed = JSON.parse(reportGitLab(results));
+        const coverage = parsed.find((v: { check_name: string }) => v.check_name === 'pgfence-coverage-summary');
+        expect(coverage.location.path).toBe('two.sql');
+        expect(coverage.location.lines.begin).toBe(900);
+    });
+
+    it('should include trace-only checks in trace results', () => {
+        const parsed = JSON.parse(reportGitLab(mockTraceOnlyResults));
+        const traceOnly = parsed.find((v: { check_name: string }) => v.check_name === 'trace-only');
+        expect(traceOnly).toBeDefined();
+        expect(traceOnly.severity).toBe('blocker');
     });
 
     it('should anchor coverage summary to a real line in the first file', async () => {

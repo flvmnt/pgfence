@@ -98,17 +98,18 @@ export async function parseExtractedStatements(
     return await parseSQL(extraction.sql);
   } catch (err) {
     if (extraction.statements && extraction.statements.length > 1) {
-      for (const piece of extraction.statements) {
+      for (const [index, piece] of extraction.statements.entries()) {
         if (!piece.trim()) continue;
         try {
           stmts.push(...(await parseSQL(piece)));
         } catch (pieceErr) {
           const message = pieceErr instanceof Error ? pieceErr.message : String(pieceErr);
+          const location = sourceLocationForExtractedStatement(extraction, index);
           extraction.warnings.push({
             message: `SQL parse error: ${message}, this statement could not be analyzed`,
             filePath,
-            line: 1,
-            column: 1,
+            line: location.line,
+            column: location.column,
             unanalyzable: true,
           });
         }
@@ -452,19 +453,24 @@ export function detectFormat(filePath: string, content: string): PgfenceConfig['
   }
 
   if (filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+    // Check for Sequelize markers before generic `.query()` patterns.
+    if (content.includes('queryInterface')) {
+      return 'sequelize';
+    }
     // Check for strong TypeORM markers
-    if (content.includes('MigrationInterface') || content.includes('queryRunner.query')) {
+    const typeormUpQuery = /\b(?:public\s+)?(?:async\s+)?up\s*\(\s*([A-Za-z_$][\w$]*)[^)]*\)[\s\S]*?\b\1\.query\s*\(/.test(content);
+    if (content.includes('MigrationInterface') || content.includes('queryRunner.query') || typeormUpQuery) {
       return 'typeorm';
     }
     // Check for strong Knex markers - require knex/trx reference alongside exports.up
     const hasKnexRef = content.includes('knex.raw') || content.includes('trx.raw') || content.includes('knex.schema');
-    const hasKnexExport = content.includes('exports.up') && (content.includes('knex') || content.includes('Knex'));
+    const hasKnexExport = (
+      /\bexports\.up\b/.test(content) ||
+      /\bmodule\.exports\.up\b/.test(content) ||
+      /\bmodule\.exports\s*=/.test(content)
+    ) && /\bup\s*\(\s*(knex|trx)\b/.test(content);
     if (hasKnexRef || hasKnexExport) {
       return 'knex';
-    }
-    // Check for Sequelize markers
-    if (content.includes('queryInterface')) {
-      return 'sequelize';
     }
     throw new Error(
       `Cannot auto-detect migration format for ${filePath}. ` +
@@ -518,4 +524,28 @@ export async function extractSQL(
     default:
       throw new Error(`Unknown format: ${format}`);
   }
+}
+
+function sourceLocationForExtractedStatement(
+  extraction: ExtractionResult,
+  index: number,
+): { line: number; column: number } {
+  const sourceRange = extraction.sourceRanges?.[index];
+  const sourceText = extraction.sourceText;
+  if (!sourceRange || !sourceText) return { line: 1, column: 1 };
+
+  let line = 1;
+  let lineStart = 0;
+  const end = Math.min(sourceRange.startOffset, sourceText.length);
+  for (let i = 0; i < end; i++) {
+    if (sourceText.charCodeAt(i) === 10) {
+      line++;
+      lineStart = i + 1;
+    }
+  }
+
+  return {
+    line,
+    column: end - lineStart + 1,
+  };
 }

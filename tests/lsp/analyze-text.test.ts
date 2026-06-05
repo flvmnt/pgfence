@@ -219,6 +219,21 @@ CREATE INDEX idx ON b (col);`;
     expect(check!.adjustedRisk).toBe(RiskLevel.CRITICAL);
   });
 
+  it('should also adjust risk with table stats from config', async () => {
+    const result = await analyzeText({
+      content: 'ALTER TABLE big_table ADD COLUMN x int NOT NULL;',
+      filePath: 'migrations/001.sql',
+      config: {
+        ...defaultConfig,
+        tableStats: [{ schemaName: 'public', tableName: 'big_table', rowCount: 50_000_000, totalBytes: 1e10 }],
+      },
+    });
+    const check = result.checks.find(c => c.ruleId === 'add-column-not-null-no-default');
+    expect(check).toBeDefined();
+    expect(check!.adjustedRisk).toBe(RiskLevel.CRITICAL);
+    expect(result.maxRisk).toBe(RiskLevel.CRITICAL);
+  });
+
   it('should compute maxRisk correctly', async () => {
     const result = await analyzeText({
       content: 'DROP TABLE users;',

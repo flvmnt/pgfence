@@ -13,9 +13,11 @@
  */
 
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type { AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
 import { formatCoverageLine, summarizeCoverage } from './coverage.js';
+import { checksForReport } from './checks.js';
 
 type GitLabSeverity = 'info' | 'minor' | 'major' | 'critical' | 'blocker';
 
@@ -45,6 +47,12 @@ function fingerprint(...parts: Array<string | number>): string {
 }
 
 function normalizePath(filePath: string): string {
+  if (filePath.startsWith('/')) {
+    const relative = path.relative(process.cwd(), filePath);
+    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+      return relative;
+    }
+  }
   return filePath.replace(/^\.\//, '').replace(/^\//, '');
 }
 
@@ -73,7 +81,7 @@ export function reportGitLab(results: AnalysisResult[]): string {
     };
 
     let syntheticLine = 1;
-    for (const check of result.checks) {
+    for (const check of checksForReport(result)) {
       const effectiveRisk = check.adjustedRisk ?? check.risk;
       pushViolation({
         description: check.message,
@@ -104,10 +112,14 @@ export function reportGitLab(results: AnalysisResult[]): string {
     }
   }
 
-  const firstPath = normalizePath(results[0]?.filePath ?? 'pgfence-coverage');
-  const firstWarningLine = results
-    .flatMap((result) => result.extractionWarnings ?? [])
-    .find((warning) => typeof warning.line === 'number')?.line;
+  const firstWarningResult = results.find((result) =>
+    result.extractionWarnings?.some((warning) => typeof warning.line === 'number'),
+  );
+  const firstPath = normalizePath(
+    firstWarningResult?.filePath ?? results[0]?.filePath ?? 'pgfence-coverage',
+  );
+  const firstWarningLine = firstWarningResult?.extractionWarnings
+    ?.find((warning) => typeof warning.line === 'number')?.line;
   violations.push({
     description: formatCoverageLine(summarizeCoverage(results)),
     check_name: 'pgfence-coverage-summary',

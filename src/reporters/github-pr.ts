@@ -7,6 +7,7 @@
 import type { AnalysisResult, CheckResult } from '../types.js';
 import { RiskLevel } from '../types.js';
 import { summarizeCoverage, formatCoverageLine } from './coverage.js';
+import { checksForReport } from './checks.js';
 
 const GITHUB_COMMENT_MAX_LENGTH = 65000;
 const TRUNCATION_NOTICE = '\n\n> :warning: Report truncated to stay below the GitHub PR comment size limit. Run `pgfence analyze --output json` locally for the full result.\n';
@@ -56,6 +57,7 @@ export function reportGitHub(results: AnalysisResult[]): string {
   lines.push('');
 
   for (const result of results) {
+    const checks = checksForReport(result);
     const hasUnanalyzable = result.extractionWarnings?.some((warning) => warning.unanalyzable) ?? false;
     const displayRisk = hasUnanalyzable ? 'UNANALYZABLE' : result.maxRisk;
     const emoji = displayRisk === 'UNANALYZABLE' ? ':warning:' : riskEmoji(result.maxRisk);
@@ -71,11 +73,11 @@ export function reportGitHub(results: AnalysisResult[]): string {
     }
 
     // Statement checks
-    if (result.checks.length > 0) {
+    if (checks.length > 0) {
       lines.push('| # | Statement | Lock Mode | Blocks | Risk | Message |');
       lines.push('|---|-----------|-----------|--------|------|---------|');
-      for (let i = 0; i < result.checks.length; i++) {
-        const c = result.checks[i];
+      for (let i = 0; i < checks.length; i++) {
+        const c = checks[i];
         const effectiveRisk = c.adjustedRisk ?? c.risk;
         const riskStr = c.adjustedRisk
           ? `${riskEmoji(effectiveRisk)} ${effectiveRisk} (was ${c.risk})`
@@ -87,8 +89,8 @@ export function reportGitHub(results: AnalysisResult[]): string {
       lines.push('');
 
       // Safe rewrite recipes (MEDIUM+ risk only, matching CLI reporter behavior)
-      const rewrites = result.checks.filter((c) => c.safeRewrite && (c.adjustedRisk ?? c.risk) !== RiskLevel.LOW && (c.adjustedRisk ?? c.risk) !== RiskLevel.SAFE);
-      const safeNotes = result.checks.filter((c) => c.safeRewrite && ((c.adjustedRisk ?? c.risk) === RiskLevel.LOW || (c.adjustedRisk ?? c.risk) === RiskLevel.SAFE));
+      const rewrites = checks.filter((c) => c.safeRewrite && (c.adjustedRisk ?? c.risk) !== RiskLevel.LOW && (c.adjustedRisk ?? c.risk) !== RiskLevel.SAFE);
+      const safeNotes = checks.filter((c) => c.safeRewrite && ((c.adjustedRisk ?? c.risk) === RiskLevel.LOW || (c.adjustedRisk ?? c.risk) === RiskLevel.SAFE));
       if (rewrites.length > 0) {
         lines.push('<details>');
         lines.push('<summary>Safe Rewrite Recipes</summary>');

@@ -95,6 +95,8 @@ export interface ExtractionResult {
   warnings: ExtractionWarning[];
   autoCommit?: boolean;
   sourceRanges?: Array<{ startOffset: number; endOffset: number }>;
+  /** Original migration source text when SQL was extracted from an ORM file */
+  sourceText?: string;
   /**
    * Individual SQL statements before they were joined into `sql`.
    * ORM extractors populate this so the analyzer can re-parse statements in

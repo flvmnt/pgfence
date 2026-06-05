@@ -179,7 +179,7 @@ export async function extractTypeORMSQLFromSource(
     },
   });
 
-  return { sql: queries.join(';\n'), warnings, autoCommit: upInfo.autoCommit, sourceRanges, statements: queries };
+  return { sql: queries.join(';\n'), warnings, autoCommit: upInfo.autoCommit, sourceRanges, sourceText: source, statements: queries };
 }
 
 function findUpMethod(ast: TSNode): UpMethodInfo | null {
