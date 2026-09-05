@@ -139,7 +139,7 @@ export interface PgfenceConfig {
   /** Output format */
   output: 'cli' | 'json' | 'github' | 'sarif' | 'gitlab';
   /** Migration file format */
-  format: 'sql' | 'typeorm' | 'prisma' | 'knex' | 'drizzle' | 'sequelize' | 'auto';
+  format: 'sql' | 'typeorm' | 'prisma' | 'knex' | 'drizzle' | 'sequelize' | 'kysely' | 'auto';
   /** Maximum lock_timeout value in ms before warning (default: 5000) */
   maxLockTimeoutMs?: number;
   /** Maximum statement_timeout value in ms before warning (default: 600000) */
