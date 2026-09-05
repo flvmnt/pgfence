@@ -477,6 +477,31 @@ export class AddCheck implements MigrationInterface {
     });
   });
 
+  it('should escalate DROP INDEX risk using the parent table stats via schema snapshot', async () => {
+    const sql = 'DROP INDEX users_email_idx;';
+    await withTempSqlFile('pgfence-drop-index-stats-test', sql, async (tmpFile) => {
+      const results = await analyze(
+        [tmpFile],
+        {
+          ...defaultConfig,
+          requireLockTimeout: false,
+          requireStatementTimeout: false,
+          snapshotFile: fixture('pgfence-snapshot-sample.json'),
+          tableStats: [
+            { schemaName: 'public', tableName: 'users', rowCount: 20_000_000, totalBytes: 1_000_000 },
+          ],
+        },
+      );
+      const dropCheck = results[0].checks.find((check) => check.ruleId === 'drop-index-not-concurrent');
+
+      expect(dropCheck).toBeDefined();
+      // The index resolves to its parent table "users" (20M rows) via the schema
+      // snapshot, so a bare DROP INDEX escalates from MEDIUM to CRITICAL.
+      expect(dropCheck!.tableName).toBe('users');
+      expect(dropCheck!.adjustedRisk).toBe(RiskLevel.CRITICAL);
+    });
+  });
+
   it('should exclude DO blocks from analyzed coverage while surfacing UNKNOWN', async () => {
     const sql = `DO $$ BEGIN EXECUTE 'DROP TABLE users'; END $$;`;
     await withTempSqlFile('pgfence-do-coverage-test', sql, async (tmpFile) => {
@@ -737,6 +762,14 @@ ALTER TABLE users ADD COLUMN tick_at timestamptz DEFAULT clock_timestamp();`;
 
     expect(detectFormat('migrations/001.ts', typeorm)).toBe('typeorm');
     expect(detectFormat('migrations/001.js', knex)).toBe('knex');
+  });
+
+  it('should auto-detect Kysely migrations from the kysely import', () => {
+    const kysely = `import { sql, type Kysely } from 'kysely';
+export async function up(db: Kysely<any>): Promise<void> {
+  await sql\`ALTER TABLE users ADD COLUMN age integer\`.execute(db);
+}`;
+    expect(detectFormat('migrations/001.ts', kysely)).toBe('kysely');
   });
 
   it('should throw error for unknown ts formats without proper imports', () => {

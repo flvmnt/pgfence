@@ -405,7 +405,7 @@ export function applyRules(
 ): CheckResult[] {
   const results: CheckResult[] = [];
   results.push(...checkAddColumn(stmt, config));
-  results.push(...checkCreateIndex(stmt));
+  results.push(...checkCreateIndex(stmt, schemaLookup));
   results.push(...checkAlterColumn(stmt, config, schemaLookup));
   results.push(...checkAddConstraint(stmt));
   results.push(...checkCreateTableConstraints(stmt));
@@ -462,6 +462,12 @@ export function detectFormat(filePath: string, content: string): PgfenceConfig['
     if (content.includes('MigrationInterface') || content.includes('queryRunner.query') || typeormUpQuery) {
       return 'typeorm';
     }
+    // Check for Kysely markers: an import/require of the 'kysely' package
+    // (needed for both the `sql` tagged template and the `Kysely<any>` type).
+    const hasKyselyImport = /from\s+['"]kysely['"]/.test(content) || /require\(\s*['"]kysely['"]\s*\)/.test(content);
+    if (hasKyselyImport) {
+      return 'kysely';
+    }
     // Check for strong Knex markers - require knex/trx reference alongside exports.up
     const hasKnexRef = content.includes('knex.raw') || content.includes('trx.raw') || content.includes('knex.schema');
     const hasKnexExport = (
@@ -474,7 +480,7 @@ export function detectFormat(filePath: string, content: string): PgfenceConfig['
     }
     throw new Error(
       `Cannot auto-detect migration format for ${filePath}. ` +
-      `No TypeORM (MigrationInterface, queryRunner), Knex (knex.raw), or Sequelize (queryInterface) markers found. ` +
+      `No TypeORM (MigrationInterface, queryRunner), Knex (knex.raw), Kysely (import from 'kysely'), or Sequelize (queryInterface) markers found. ` +
       `Use --format to specify explicitly.`,
     );
   }
@@ -520,6 +526,10 @@ export async function extractSQL(
     case 'sequelize': {
       const { extractSequelizeSQL } = await import('./extractors/sequelize.js');
       return extractSequelizeSQL(filePath);
+    }
+    case 'kysely': {
+      const { extractKyselySQL } = await import('./extractors/kysely.js');
+      return extractKyselySQL(filePath);
     }
     default:
       throw new Error(`Unknown format: ${format}`);

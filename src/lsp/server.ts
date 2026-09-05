@@ -39,7 +39,7 @@ import type { PgfenceConfig } from '../types.js';
 
 export const DEBOUNCE_MS = 300;
 
-const FORMAT_VALUES = new Set(['sql', 'typeorm', 'prisma', 'knex', 'drizzle', 'sequelize', 'auto']);
+const FORMAT_VALUES = new Set(['sql', 'typeorm', 'prisma', 'knex', 'drizzle', 'sequelize', 'kysely', 'auto']);
 const OUTPUT_VALUES = new Set(['cli', 'json', 'github', 'sarif', 'gitlab']);
 
 function isTableStatsArray(value: unknown): value is PgfenceConfig['tableStats'] {

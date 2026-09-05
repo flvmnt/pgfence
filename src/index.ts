@@ -19,6 +19,7 @@ import { reportGitLab } from './reporters/gitlab.js';
 import { loadConfigFile, mergeConfig } from './config.js';
 import { LockMode, RiskLevel } from './types.js';
 import type { PgfenceConfig, TableStats, TraceResult } from './types.js';
+import type { FileFixReport } from './fix/index.js';
 
 /** Strip credentials from postgres:// URLs in error messages. */
 function sanitizeError(msg: string): string {
@@ -169,7 +170,7 @@ program
   .command('analyze')
   .description('Analyze migration files for safety issues')
   .argument('<files...>', 'Migration files to analyze')
-  .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, drizzle, sequelize, auto', 'auto')
+  .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, drizzle, sequelize, kysely, auto', 'auto')
   .option('--output <output>', 'Output format: cli, json, github, sarif, gitlab', 'cli')
   .option('--db-url <url>', 'Database URL for size-aware risk scoring')
   .option('--stats-file <path>', 'Path to pgfence-stats.json for size-aware risk scoring (alternative to --db-url)')
@@ -185,6 +186,22 @@ program
   .option('--snapshot <path>', 'Schema snapshot JSON for definitive type analysis')
   .option('--plugin <paths...>', 'Plugin file paths for custom rules')
   .option('--unknown <mode>', 'How CI handles unanalyzable SQL: warn or block', 'warn')
+  .option(
+    '--fix',
+    'Auto-fix a small, explicit allowlist of safe single-statement findings in place ' +
+    '(CREATE/DROP INDEX CONCURRENTLY, missing lock_timeout/statement_timeout/idle timeout). ' +
+    'Only rewrites files that resolve to the raw "sql" format. Everything else is reported, never guessed. ' +
+    'With --ci, fixed files are re-analyzed from disk before CI gating, so --ci can never pass on stale ' +
+    'pre-fix findings and still fails on anything --fix could not or did not resolve.',
+    false,
+  )
+  .option(
+    '--split',
+    'With --fix: also scaffold new sibling *.sql files for the multi-migration safe-rewrite ' +
+    'recipes (ADD COLUMN NOT NULL, ADD FOREIGN KEY, ADD UNIQUE) instead of leaving them manual. ' +
+    'Never edits the original file. Has no effect without --fix.',
+    false,
+  )
   .action(async (files: string[], opts, command: Command) => {
     try {
       // Load config file (.pgfence.toml or .pgfence.json)
@@ -246,27 +263,69 @@ program
 
       const results = await analyze(files, config);
 
+      // --fix / --split: apply Tier 1 in-place fixes and (with --split) generate
+      // Tier 2 multi-file scaffolds. See src/fix/ for the exact allowlist and the
+      // reasoning behind every included/excluded ruleId.
+      //
+      // --fix + --ci decision (documented here, not just in code): fixes are
+      // applied FIRST, then the touched files are re-analyzed from disk before
+      // CI gating and reporting use their result. This is deliberate: it means
+      // --ci can never pass on stale pre-fix findings, and it doubles as a
+      // sanity check on the fixer itself (a fix that failed to actually clear
+      // its finding, or introduced a new one, shows up immediately instead of
+      // being silently trusted). If unfixable findings remain above
+      // --max-risk (or an error-severity policy violation remains), --ci still
+      // fails, exactly as if --fix had not been passed.
+      let finalResults = results;
+      let fixReports: FileFixReport[] | undefined;
+      if (opts.split && !opts.fix) {
+        process.stderr.write('pgfence: --split has no effect without --fix; ignoring.\n');
+      }
+      if (opts.fix) {
+        const { applyFixesToFile } = await import('./fix/index.js');
+        fixReports = [];
+        for (let i = 0; i < files.length; i++) {
+          fixReports.push(await applyFixesToFile(files[i], results[i], config, { split: Boolean(opts.split) }));
+        }
+        if (fixReports.some((r) => r.modified)) {
+          finalResults = await analyze(files, config);
+        }
+      }
+
       // Output
       switch (config.output) {
         case 'json':
-          process.stdout.write(reportJSON(results) + '\n');
+          process.stdout.write(reportJSON(finalResults) + '\n');
           break;
         case 'github':
-          process.stdout.write(reportGitHub(results) + '\n');
+          process.stdout.write(reportGitHub(finalResults) + '\n');
           break;
         case 'sarif':
-          process.stdout.write(reportSARIF(results) + '\n');
+          process.stdout.write(reportSARIF(finalResults) + '\n');
           break;
         case 'gitlab':
-          process.stdout.write(reportGitLab(results) + '\n');
+          process.stdout.write(reportGitLab(finalResults) + '\n');
           break;
         case 'cli':
         default:
-          process.stdout.write(reportCLI(results, config) + '\n');
+          process.stdout.write(reportCLI(finalResults, config) + '\n');
           break;
       }
 
-      if (opts.ci && shouldFailCI(results, config)) {
+      if (fixReports) {
+        const { formatFixSummary } = await import('./fix/report.js');
+        const summary = formatFixSummary(fixReports);
+        // Machine-readable formats must stay parseable on stdout; the fix
+        // summary goes to stderr for those, and to stdout (alongside the
+        // human-facing report) for cli/github.
+        if (config.output === 'json' || config.output === 'sarif' || config.output === 'gitlab') {
+          process.stderr.write(summary);
+        } else {
+          process.stdout.write(summary);
+        }
+      }
+
+      if (opts.ci && shouldFailCI(finalResults, config)) {
         process.exit(1);
       }
     } catch (err) {
@@ -280,7 +339,7 @@ program
   .command('trace')
   .description('Trace migration files against a disposable Docker Postgres container')
   .argument('<files...>', 'Migration files to trace')
-  .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, drizzle, sequelize, auto', 'auto')
+  .option('--format <format>', 'Migration format: sql, typeorm, prisma, knex, drizzle, sequelize, kysely, auto', 'auto')
   .option('--output <output>', 'Output format: cli, json, github, sarif, gitlab', 'cli')
   .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume for static analysis', '14')
   .option('--max-risk <risk>', 'Maximum allowed risk level for CI mode', 'high')

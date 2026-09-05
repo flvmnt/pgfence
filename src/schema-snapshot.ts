@@ -55,6 +55,7 @@ export interface SchemaSnapshot {
 export interface SchemaLookup {
   getColumn(table: string, column: string): ColumnSnapshot | null;
   getTable(table: string): TableSnapshot | null;
+  getTableByIndex(indexName: string): TableSnapshot | null;
   getDomain(typeName: string): DomainSnapshot | null;
   getDomains(): DomainSnapshot[];
   hasTable(table: string): boolean;
@@ -68,6 +69,11 @@ export function loadSnapshot(snapshot: SchemaSnapshot): SchemaLookup {
   const bareTableMap = new Map<string, TableSnapshot | null>();
   const exactDomainMap = new Map<string, DomainSnapshot>();
   const bareDomainMap = new Map<string, DomainSnapshot | null>();
+  // Reverse map: index name -> owning table. DROP INDEX names only the index,
+  // never its table, so this is the only way to resolve a bare DROP INDEX back
+  // to a table for size-aware risk scoring. Ambiguous names (same index name
+  // under two schemas) map to null and are treated as unresolved.
+  const indexToTableMap = new Map<string, TableSnapshot | null>();
 
   for (const table of snapshot.tables) {
     const key = table.tableName.toLowerCase();
@@ -79,6 +85,16 @@ export function loadSnapshot(snapshot: SchemaSnapshot): SchemaLookup {
       bareTableMap.set(key, table);
     } else if (existing !== table) {
       bareTableMap.set(key, null);
+    }
+
+    for (const index of table.indexes) {
+      const indexKey = index.indexName.toLowerCase();
+      const existingIndex = indexToTableMap.get(indexKey);
+      if (existingIndex === undefined) {
+        indexToTableMap.set(indexKey, table);
+      } else if (existingIndex !== table) {
+        indexToTableMap.set(indexKey, null);
+      }
     }
   }
 
@@ -105,6 +121,9 @@ export function loadSnapshot(snapshot: SchemaSnapshot): SchemaLookup {
     getTable(table: string): TableSnapshot | null {
       const tableKey = table.toLowerCase();
       return exactTableMap.get(tableKey) ?? bareTableMap.get(tableKey) ?? null;
+    },
+    getTableByIndex(indexName: string): TableSnapshot | null {
+      return indexToTableMap.get(indexName.toLowerCase()) ?? null;
     },
     getDomain(typeName: string): DomainSnapshot | null {
       const typeKey = typeName.toLowerCase();

@@ -96,6 +96,10 @@ async function extractSQLFromContent(
       const { extractSequelizeSQLFromSource } = await import('../extractors/sequelize.js');
       return extractSequelizeSQLFromSource(content, filePath);
     }
+    case 'kysely': {
+      const { extractKyselySQLFromSource } = await import('../extractors/kysely.js');
+      return extractKyselySQLFromSource(content, filePath);
+    }
     default:
       return { sql: content, warnings: [] };
   }

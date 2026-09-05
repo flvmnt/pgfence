@@ -29,7 +29,7 @@ export interface PgfenceConfigFile {
   plugins?: string[];
 }
 
-const VALID_FORMATS = new Set(['sql', 'typeorm', 'prisma', 'knex', 'drizzle', 'sequelize', 'auto']);
+const VALID_FORMATS = new Set(['sql', 'typeorm', 'prisma', 'knex', 'drizzle', 'sequelize', 'kysely', 'auto']);
 const VALID_OUTPUTS = new Set(['cli', 'json', 'github', 'sarif', 'gitlab']);
 const VALID_RISKS = new Set(Object.values(RiskLevel));
 const VALID_UNKNOWN_HANDLING = new Set(['warn', 'block']);
