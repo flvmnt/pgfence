@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 (2026-09-05)
+
+### New surfaces
+
+- **`pgfence analyze --fix`**: auto-fixes a small, explicit allowlist of safe single-statement findings in place: adds `CONCURRENTLY` (and `IF NOT EXISTS` where safe) to `CREATE`/`DROP INDEX`, and prepends missing `lock_timeout`/`statement_timeout`/`idle_in_transaction_session_timeout` `SET` statements. Only rewrites files that resolve to the raw `sql` format; everything else is reported, never guessed. Refuses to fix a statement sitting inside an explicit transaction block, since `CONCURRENTLY` cannot run there. Combined with `--ci`, fixed files are re-analyzed from disk before CI gating, so `--ci` can never pass on stale pre-fix findings.
+- **`pgfence analyze --fix --split`**: scaffolds new sibling migration files for the multi-step expand/backfill/contract recipes (`ADD COLUMN NOT NULL`, `ADD FOREIGN KEY`, `ADD UNIQUE`) instead of leaving them manual. Never edits the original file. The generated backfill file is always an inert, fully-commented-out template that states plainly it needs manual scheduling.
+- **Kysely extractor** (`--format kysely`, also auto-detected): extracts literal `sql\`...\`.execute()` statements and transpiles the common `createTable`/`alterTable`/`createIndex`/`dropIndex` schema-builder subset into SQL for analysis. Unsupported builder calls fail closed with an `ExtractionWarning` instead of being silently dropped.
+
+### Trust Contract
+
+- Fixed a `CREATE INDEX` safe-rewrite bug where an unnamed index could get `IF NOT EXISTS` inserted into invalid syntax.
+- Fixed `DROP INDEX`'s safe rewrite reconstructing the target name from parsed AST fields, which silently dropped schema qualification and quoting on anything but a plain lowercase identifier; it now preserves the original text exactly.
+- Added `DROP INDEX` -> owning table resolution via the schema snapshot, so size-aware risk scoring can see drops on indexes belonging to large tables.
+
 ## 0.6.1 (2026-06-02)
 
 ### Trust Contract
