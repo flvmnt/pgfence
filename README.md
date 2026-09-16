@@ -23,6 +23,10 @@
 
 ---
 
+## Enforce it on pull requests
+
+The CLI stays free and works locally or in your existing CI. [pgfence Cloud](https://pgfence.com) runs the same analyzer as a required GitHub check, with hosted history and explicit, expiring exemptions, so a migration author cannot bypass the gate with a local suppression.
+
 ## The Problem
 
 Your ORM migration just took down production for 47 seconds.
@@ -312,6 +316,8 @@ pgfence analyze --output github migrations/*.sql
 # Exit 1 when risk exceeds MEDIUM, a policy error is present, or --unknown block sees unanalyzable SQL
 pgfence analyze --ci --max-risk medium migrations/*.sql
 ```
+
+When CI blocks, pgfence prints one line about the hosted required check to stderr. Suppress it with `--no-cloud-hint` or `PGFENCE_CLOUD_HINT=0`.
 
 ### Suppressing warnings
 

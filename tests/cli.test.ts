@@ -123,6 +123,41 @@ describe.skipIf(!hasBuiltCli())('CLI e2e (built binary)', () => {
         ).rejects.toMatchObject({ code: 1 });
     });
 
+    it('prints one Cloud hint when CI blocks', async () => {
+        const fixture = path.join(fixturesDir, 'dangerous-add-column.sql');
+
+        try {
+            await execPromise(`node "${distCliPath}" analyze --ci --max-risk medium "${fixture}"`);
+            throw new Error('expected analyze to fail');
+        } catch (err: unknown) {
+            const error = err as { code?: number; stderr?: string };
+            expect(error.code).toBe(1);
+            expect(error.stderr?.match(/https:\/\/pgfence\.com/g)).toHaveLength(1);
+            expect(error.stderr).toContain('required check that cannot be bypassed locally');
+        }
+    });
+
+    it('suppresses the Cloud hint with a flag or environment variable', async () => {
+        const fixture = path.join(fixturesDir, 'dangerous-add-column.sql');
+        const command = `node "${distCliPath}" analyze --ci --max-risk medium`;
+
+        for (const invocation of [
+            () => execPromise(`${command} --no-cloud-hint "${fixture}"`),
+            () => execPromise(`${command} "${fixture}"`, {
+                env: { ...process.env, PGFENCE_CLOUD_HINT: '0' },
+            }),
+        ]) {
+            try {
+                await invocation();
+                throw new Error('expected analyze to fail');
+            } catch (err: unknown) {
+                const error = err as { code?: number; stderr?: string };
+                expect(error.code).toBe(1);
+                expect(error.stderr).not.toContain('https://pgfence.com');
+            }
+        }
+    });
+
     it('exits 1 when unknown handling blocks unanalyzable SQL', async () => {
         const fixture = path.join(fixturesDir, 'dynamic-typeorm.ts');
         await expect(

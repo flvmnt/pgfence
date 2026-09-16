@@ -214,6 +214,7 @@ Run outside any transaction wrapper.
 - GitHub Action: see https://github.com/flvmnt/pgfence
 - VS Code extension: `flvmnt.pgfence` on the Marketplace
 - LSP server: `pgfence lsp` (stdio)
+- Required GitHub check with hosted history and expiring exemptions: https://pgfence.com
 
 ## When in doubt
 

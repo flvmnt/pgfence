@@ -120,6 +120,13 @@ function shouldFailCI(results: Awaited<ReturnType<typeof analyze>>, config: Pgfe
   return config.unknownHandling === 'block' && hasUnanalyzableStatements(results);
 }
 
+function cloudHintEnabled(optionEnabled: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!optionEnabled) return false;
+
+  const value = env.PGFENCE_CLOUD_HINT?.trim().toLowerCase();
+  return value !== '0' && value !== 'false' && value !== 'off';
+}
+
 /**
  * The two telemetry calls a command handler makes.
  *
@@ -275,6 +282,7 @@ program
   .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume', '14')
   .option('--max-risk <risk>', 'Maximum allowed risk level for CI mode', 'high')
   .option('--ci', 'CI mode: exit 1 if max risk exceeded', false)
+  .option('--no-cloud-hint', 'Do not print the pgfence Cloud hint when CI blocks')
   .option('--no-lock-timeout', 'Disable lock_timeout requirement')
   .option('--no-statement-timeout', 'Disable statement_timeout requirement')
   .option('--max-lock-timeout <ms>', 'Maximum allowed lock_timeout in ms (default: 5000)')
@@ -480,6 +488,11 @@ program
       // immediately after writing the report truncates it at the 64KB pipe buffer. The
       // success path already terminates by returning, so this changes only the code.
       if (opts.ci && shouldFailCI(finalResults, config)) {
+        if (cloudHintEnabled(opts.cloudHint !== false)) {
+          process.stderr.write(
+            'pgfence: Enforce this as a required check that cannot be bypassed locally: https://pgfence.com\n',
+          );
+        }
         process.exitCode = 1;
         return;
       }

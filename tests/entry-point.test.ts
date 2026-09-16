@@ -251,7 +251,9 @@ describe.skipIf(!hasBuiltCli || !canSymlink)('CLI entry through symlinked launch
       expect(run.stdout).toContain('[CRITICAL]');
       expect(run.stdout).toContain('drop-table');
       expect(run.stdout).toContain('Analyzed 1 SQL statement');
-      expect(run.stderr).toBe('');
+      expect(run.stderr).toBe(
+        'pgfence: Enforce this as a required check that cannot be bypassed locally: https://pgfence.com\n',
+      );
       expect(run.code).toBe(1);
     } finally {
       await cleanupWorkspace(work, [link]);
@@ -752,7 +754,9 @@ describe.skipIf(!hasBuiltCli)('zero-analysis gate', () => {
       expect(run.stdout).toContain('drop-table');
       expect(run.stdout).toContain('[NO STATEMENTS]');
       expect(run.stdout).toContain('0 SQL statements found. Nothing in this file was checked.');
-      expect(run.stderr).toBe('');
+      expect(run.stderr).toBe(
+        'pgfence: Enforce this as a required check that cannot be bypassed locally: https://pgfence.com\n',
+      );
       expect(run.code).toBe(1);
     } finally {
       await cleanupWorkspace(work);
