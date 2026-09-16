@@ -81,7 +81,7 @@
   },
   "pnpm": {
     "overrides": {
-      "brace-expansion": "^2.0.3",
+      "brace-expansion": "^2.1.4",
       "flatted": "^3.4.2",
       "minimatch": "^9.0.7",
       "picomatch": "^4.0.4",
