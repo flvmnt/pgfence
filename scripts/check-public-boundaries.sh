@@ -90,4 +90,36 @@ if (orphanArtifacts.length > 0) {
 }
 NODE
 
+# src/telemetry must import only node: builtins and its own siblings. The payload can only
+# stay a closed vocabulary if the module is structurally incapable of reading an analysis
+# result, a check or a file path, and that property is an import graph, not a promise.
+TELEMETRY_BAD_IMPORTS=$(grep -REn "^[[:space:]]*(import|export|\}|import\()[^;]*from[[:space:]]+['\"](\.|\.\.)/" src/telemetry || true)
+if [ -n "$TELEMETRY_BAD_IMPORTS" ]; then
+  # Sibling imports inside src/telemetry itself are the only relative ones allowed. The
+  # closing-brace form is matched above because multi-line imports put `} from` on its own
+  # line, and both store.ts and session.ts use them.
+  TELEMETRY_BAD_IMPORTS=$(printf '%s\n' "$TELEMETRY_BAD_IMPORTS" | grep -Ev "from[[:space:]]+['\"]\./(types|env|store|post)\.js['\"]" || true)
+fi
+if [ -n "$TELEMETRY_BAD_IMPORTS" ]; then
+  echo "ERROR: src/telemetry must import only node: builtins and its own siblings:"
+  echo "$TELEMETRY_BAD_IMPORTS"
+  exit 1
+fi
+
+TELEMETRY_BAD_DYNAMIC=$(grep -REn "import\([[:space:]]*['\"](\.|\.\.)/" src/telemetry | grep -Ev "import\([[:space:]]*['\"]\./(types|env|store|post)\.js['\"]" || true)
+if [ -n "$TELEMETRY_BAD_DYNAMIC" ]; then
+  echo "ERROR: src/telemetry must import only node: builtins and its own siblings:"
+  echo "$TELEMETRY_BAD_DYNAMIC"
+  exit 1
+fi
+
+# The LSP server's stdout is the JSON-RPC transport, so one stray byte corrupts a protocol
+# frame. The editor path is covered by the absence of the import, never by a runtime flag.
+LSP_TELEMETRY=$(grep -REn "telemetry" src/lsp || true)
+if [ -n "$LSP_TELEMETRY" ]; then
+  echo "ERROR: src/lsp must not reference telemetry (stdout is the LSP transport):"
+  echo "$LSP_TELEMETRY"
+  exit 1
+fi
+
 echo "Public repo boundaries look good."

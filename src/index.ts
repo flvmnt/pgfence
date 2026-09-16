@@ -11,15 +11,23 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { Command } from 'commander';
 import { analyze, RISK_ORDER } from './analyzer.js';
+import { isEntryPoint, launchedAs, refuseSilentExit } from './entry-point.js';
 import { reportCLI } from './reporters/cli.js';
 import { reportJSON } from './reporters/json.js';
 import { reportGitHub } from './reporters/github-pr.js';
 import { reportSARIF } from './reporters/sarif.js';
 import { reportGitLab } from './reporters/gitlab.js';
-import { loadConfigFile, mergeConfig } from './config.js';
+import {
+  summarizeCoverage,
+  formatNothingAnalyzed,
+  formatPartialNoStatements,
+} from './reporters/coverage.js';
+import { loadConfigFile, mergeConfig, resolveProjectTelemetry } from './config.js';
 import { LockMode, RiskLevel } from './types.js';
-import type { PgfenceConfig, TableStats, TraceResult } from './types.js';
+import type { AnalysisResult, PgfenceConfig, TableStats, TraceResult } from './types.js';
 import type { FileFixReport } from './fix/index.js';
+import type { TelemetryOutcome } from './telemetry/session.js';
+import type { TelemetryCommand, TelemetryFormat, TelemetryRulesMode } from './telemetry/types.js';
 
 /** Strip credentials from postgres:// URLs in error messages. */
 function sanitizeError(msg: string): string {
@@ -112,6 +120,96 @@ function shouldFailCI(results: Awaited<ReturnType<typeof analyze>>, config: Pgfe
   return config.unknownHandling === 'block' && hasUnanalyzableStatements(results);
 }
 
+/**
+ * The two telemetry calls a command handler makes.
+ *
+ * Loaded lazily, and behind a catch, because telemetry must never be able to fail a run:
+ * an import that rejects inside a command handler would do exactly that. session.ts
+ * itself imports only node: builtins, so this costs a few hundred microseconds even on
+ * an opted-out run, and node:https is loaded deeper still, only when a run actually
+ * sends something.
+ */
+interface TelemetryApi {
+  beginTelemetry(command: TelemetryCommand, projectSetting: boolean | undefined): void;
+  finishTelemetry(outcome: TelemetryOutcome): Promise<void>;
+}
+
+async function loadTelemetry(): Promise<TelemetryApi> {
+  try {
+    return await import('./telemetry/session.js');
+  } catch {
+    // A pruned, patched or otherwise unloadable telemetry module changes nothing about
+    // the command the user actually asked for.
+    return {
+      beginTelemetry: () => { /* telemetry unavailable */ },
+      finishTelemetry: () => Promise.resolve(),
+    };
+  }
+}
+
+/** Whether the run used the stock ruleset or a customized one. A count, never rule ids. */
+function telemetryRulesMode(config: PgfenceConfig): TelemetryRulesMode {
+  const enabled = config.rules?.enable?.length ?? 0;
+  const disabled = config.rules?.disable?.length ?? 0;
+  if (enabled > 0 && disabled > 0) return 'both';
+  if (enabled > 0) return 'enable';
+  if (disabled > 0) return 'disable';
+  return 'default';
+}
+
+/**
+ * Finding counts for telemetry.
+ *
+ * Effective risk is always `adjustedRisk ?? risk`, never `risk` alone: --db-url and
+ * --stats-file escalate risk, and the escalated value is the one the user saw.
+ */
+function telemetryFindings(
+  checks: Array<{ risk: RiskLevel; adjustedRisk?: RiskLevel }>,
+  violations: Array<{ severity: 'error' | 'warning' }>,
+): NonNullable<TelemetryOutcome['findings']> {
+  const countAt = (level: RiskLevel): number =>
+    checks.filter((check) => (check.adjustedRisk ?? check.risk) === level).length;
+  const policyErrors = violations.filter((violation) => violation.severity === 'error').length;
+  return {
+    safe: countAt(RiskLevel.SAFE),
+    low: countAt(RiskLevel.LOW),
+    medium: countAt(RiskLevel.MEDIUM),
+    high: countAt(RiskLevel.HIGH),
+    critical: countAt(RiskLevel.CRITICAL),
+    policyErrors,
+    policyWarnings: violations.length - policyErrors,
+  };
+}
+
+/**
+ * Telemetry outcome for a completed analyze or trace run.
+ *
+ * Everything here is a count or a value from a closed list. A file path, a file name, a
+ * rule id, a table name and a SQL fragment are all unrepresentable in a TelemetryOutcome,
+ * so the privacy boundary is enforced by the type system at the call site rather than by
+ * review. See docs/telemetry.md.
+ */
+function telemetryOutcome(
+  results: Awaited<ReturnType<typeof analyze>>,
+  config: PgfenceConfig,
+): TelemetryOutcome {
+  const formats = new Set<TelemetryFormat>();
+  for (const result of results) {
+    if (result.detectedFormat != null) formats.add(result.detectedFormat);
+  }
+  return {
+    errored: false,
+    format: formats.size === 0 ? 'none' : formats.size === 1 ? [...formats][0] : 'mixed',
+    rulesMode: telemetryRulesMode(config),
+    pluginCount: config.plugins?.length ?? 0,
+    fileCount: results.length,
+    findings: telemetryFindings(
+      results.flatMap((result) => result.checks),
+      results.flatMap((result) => result.policyViolations),
+    ),
+  };
+}
+
 function maxRiskFromChecks(checks: Array<{ risk: RiskLevel; adjustedRisk?: RiskLevel }>): RiskLevel {
   let maxRisk = RiskLevel.SAFE;
   for (const check of checks) {
@@ -150,7 +248,7 @@ const program = new Command();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const isMainModule = process.argv[1] != null && path.resolve(process.argv[1]) === __filename;
+const isMainModule = isEntryPoint(import.meta);
 const pkgPath = path.resolve(__dirname, '../package.json');
 let pkg: { version: string };
 try {
@@ -203,9 +301,16 @@ program
     false,
   )
   .action(async (files: string[], opts, command: Command) => {
+    // Loaded above the try so the catch below can still reach finishTelemetry.
+    const { beginTelemetry, finishTelemetry } = await loadTelemetry();
     try {
       // Load config file (.pgfence.toml or .pgfence.json)
       const fileConfig = await loadConfigFile(process.cwd());
+      // The timer starts here, not after mergeConfig, so that a failure while loading
+      // --stats-file is still recorded as an errored run. The project opt-out is resolved
+      // from the whole repository, not just this directory, so a committed
+      // `telemetry = false` still applies when pgfence runs from a subdirectory.
+      beginTelemetry('analyze', await resolveProjectTelemetry(process.cwd(), fileConfig));
 
       // Load stats file if provided (alternative to --db-url)
       let tableStats: TableStats[] | undefined;
@@ -292,6 +397,25 @@ program
         }
       }
 
+      // Coverage is computed here, above telemetry, only so telemetry can see whether
+      // this run is about to fail the zero-analysis gate. The gate itself stays where it
+      // has to be, after the report is written. See the comment on it below.
+      const runCoverage = summarizeCoverage(finalResults);
+
+      // Telemetry: recorded once, before any reporter output, so that a single call site
+      // covers every terminal path out of this handler (natural fall-through, the
+      // zero-analysis gate and the --ci exit alike). Counts come from finalResults,
+      // which under --fix is the post-fix analysis the reporters and the CI gate use.
+      //
+      // errored is forced true on the zero-analysis path. That run exits 2, and recording
+      // it as a clean analyze would give the maintainers' own numbers exactly the false
+      // safety this release exists to remove: a run that checked nothing would be
+      // indistinguishable from a run that checked five files and found them clean.
+      await finishTelemetry({
+        ...telemetryOutcome(finalResults, config),
+        errored: runCoverage.analyzedNothing,
+      });
+
       // Output
       switch (config.output) {
         case 'json':
@@ -325,10 +449,42 @@ program
         }
       }
 
+      // Trust Contract: a run that analyzed zero SQL statements has not checked
+      // anything, and exiting 0 would report "your migrations are safe" about
+      // migrations that were never read. This runs after any --fix re-analysis and
+      // before the --ci gate, and it is not conditional on --ci: two documented CI
+      // jobs (SARIF upload, GitLab Code Quality) deliberately run without it.
+      // process.exitCode plus a return, never process.exit: on macOS a pipe is an
+      // asynchronous stdout, and process.exit() right after writing truncates at the
+      // 64KB pipe buffer (measured). `> pgfence.sarif` and `> gl-code-quality-report.json`
+      // are documented jobs, and a half-written artifact fails their parser with an error
+      // that has nothing to do with pgfence. Returning lets the report flush, and the
+      // exit code is identical.
+      if (runCoverage.analyzedNothing) {
+        process.stderr.write(formatNothingAnalyzed(finalResults.map((r) => r.filePath)));
+        process.exitCode = 2;
+        return;
+      }
+      if (runCoverage.filesWithNoStatements.length > 0 &&
+          (config.output === 'json' || config.output === 'sarif' || config.output === 'gitlab')) {
+        // cli and github carry this per file inside the report body on stdout; the
+        // machine formats must keep stdout byte-clean, so it goes to stderr there.
+        process.stderr.write(
+          formatPartialNoStatements(runCoverage.filesWithNoStatements, finalResults.length),
+        );
+      }
+
+      // process.exitCode plus a return, for the same reason as the gate above: the
+      // documented `--output sarif > pgfence.sarif` and `--output gitlab > report.json`
+      // jobs pass --ci, and on macOS a piped stdout is asynchronous, so process.exit()
+      // immediately after writing the report truncates it at the 64KB pipe buffer. The
+      // success path already terminates by returning, so this changes only the code.
       if (opts.ci && shouldFailCI(finalResults, config)) {
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
     } catch (err) {
+      await finishTelemetry({ errored: true });
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence error: ${sanitizeError(message)}\n`);
       process.exit(2);
@@ -356,6 +512,7 @@ program
   .option('--pg-version <version>', 'PostgreSQL version for the Docker container', '17')
   .option('--docker-image <image>', 'Custom Docker image (overrides --pg-version)')
   .action(async (files: string[], opts, command: Command) => {
+    const { beginTelemetry, finishTelemetry } = await loadTelemetry();
     try {
       // 1. Check Docker availability (fail fast)
       const { checkDockerAvailable, startContainer, waitForReady, stopContainer, traceStatement } = await import('./tracer.js');
@@ -366,6 +523,9 @@ program
 
       // 2. Load config (same as analyze, minus db-url/stats-file)
       const fileConfig = await loadConfigFile(process.cwd());
+      // After the Docker check on purpose: a missing Docker daemon exits before this and
+      // is not a pgfence run worth counting.
+      beginTelemetry('trace', await resolveProjectTelemetry(process.cwd(), fileConfig));
 
       const cliOverrides: Partial<PgfenceConfig> = {};
       applyAnalyzeOptionOverrides(command, opts, cliOverrides);
@@ -541,6 +701,21 @@ program
           r.containerLifetimeMs = containerLifetimeMs;
         }
 
+        // Coverage first, so telemetry can see whether this run is about to fail the
+        // zero-analysis gate below; the gate itself still runs after the report.
+        const traceCoverage = summarizeCoverage(traceResults as unknown as AnalysisResult[]);
+
+        // Telemetry before output, and never after the CI gate below: process.exit(1)
+        // does not unwind the stack, so the finally that stops the container never runs
+        // on that path and anything placed there would be dead code. errored is forced
+        // true on the zero-analysis path for the same reason as in analyze: that run
+        // exits 2, and counting it as a clean trace hides exactly the population worth
+        // watching after shipping an always-on gate.
+        await finishTelemetry({
+          ...telemetryOutcome(traceResults, config),
+          errored: traceCoverage.analyzedNothing,
+        });
+
         // 8. Output
         switch (config.output) {
           case 'json':
@@ -561,6 +736,16 @@ program
             break;
         }
 
+        // Trust Contract: same zero-analysis gate as `analyze`. process.exitCode plus a
+        // return, never process.exit, so the enclosing finally still stops the container
+        // and closes both clients. Leaking a Docker Postgres is not an acceptable price
+        // for a correct exit code.
+        if (traceCoverage.analyzedNothing) {
+          process.stderr.write(formatNothingAnalyzed(traceResults.map((r) => r.filePath)));
+          process.exitCode = 2;
+          return;
+        }
+
         // 9. CI mode
         if (opts.ci) {
           let shouldFail = false;
@@ -578,6 +763,7 @@ program
         stopContainer(container.name);
       }
     } catch (err) {
+      await finishTelemetry({ errored: true });
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence trace error: ${sanitizeError(message)}\n`);
       process.exit(2);
@@ -590,12 +776,28 @@ program
   .requiredOption('--db-url <url>', 'Database URL for schema snapshot')
   .option('--output <path>', 'Output file path', 'pgfence-snapshot.json')
   .action(async (opts) => {
+    const { beginTelemetry, finishTelemetry } = await loadTelemetry();
     try {
+      // snapshot does not otherwise read a project config, and reading one here must not
+      // be able to change this command's exit code.
+      let projectTelemetry: boolean | undefined;
+      try {
+        projectTelemetry = await resolveProjectTelemetry(process.cwd());
+      } catch {
+        // resolveProjectTelemetry already fails closed on its own, so this is defense in
+        // depth: a malformed project config must not change this command's exit code, and
+        // an unknown project setting is never read as consent.
+        projectTelemetry = false;
+      }
+      beginTelemetry('snapshot', projectTelemetry);
+
       const { fetchSchemaSnapshot } = await import('./schema-snapshot.js');
       const snapshot = await fetchSchemaSnapshot(opts.dbUrl);
       await writeFile(opts.output, JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
       process.stdout.write(`Schema snapshot written to ${opts.output} (${snapshot.tables.length} tables)\n`);
+      await finishTelemetry({ errored: false });
     } catch (err) {
+      await finishTelemetry({ errored: true });
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence snapshot error: ${sanitizeError(message)}\n`);
       process.exit(2);
@@ -608,15 +810,52 @@ program
   .option('--prisma-github-action', 'Write a GitHub Actions workflow for Prisma migrations')
   .action(async (opts) => {
     const { installHooks, installPrismaGitHubAction } = await import('./init.js');
+    const { beginTelemetry, finishTelemetry } = await loadTelemetry();
     try {
+      // Same shape as snapshot: init does not otherwise read a project config, and
+      // reading one here must not be able to change this command's exit code.
+      let projectTelemetry: boolean | undefined;
+      try {
+        projectTelemetry = await resolveProjectTelemetry(process.cwd());
+      } catch {
+        // resolveProjectTelemetry already fails closed on its own, so this is defense in
+        // depth: a malformed project config must not change this command's exit code, and
+        // an unknown project setting is never read as consent.
+        projectTelemetry = false;
+      }
+      beginTelemetry('init', projectTelemetry);
+
       if (opts.prismaGithubAction) {
         await installPrismaGitHubAction();
       } else {
         await installHooks();
       }
+      await finishTelemetry({ errored: false });
     } catch (err) {
+      await finishTelemetry({ errored: true });
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence init error: ${message}\n`);
+      process.exit(2);
+    }
+  });
+
+program
+  .command('telemetry')
+  .description('Show or change anonymous usage telemetry (status, enable, disable, reset)')
+  .argument('[action]', 'status, enable, disable, or reset', 'status')
+  .action(async (action: string) => {
+    // This command emits no telemetry event of its own and never prints the first-run
+    // notice: it prints its own, fuller report instead.
+    try {
+      const { runTelemetryCommand } = await import('./telemetry/session.js');
+      // Resolved here rather than inside session.ts, which may not import the config
+      // loader. Without it `status` could never report the project-config reason, so a
+      // repo that committed `telemetry = false` would be told telemetry is enabled.
+      const code = runTelemetryCommand(action, await resolveProjectTelemetry(process.cwd()));
+      if (code !== 0) process.exit(code);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`pgfence telemetry error: ${message}\n`);
       process.exit(2);
     }
   });
@@ -642,6 +881,7 @@ program
   .option('--min-pg-version <version>', 'Minimum PostgreSQL version to assume')
   .option('--output <output>', 'Output format: cli, json', 'cli')
   .action(async (sqlParts: string[], opts, command: Command) => {
+    const { beginTelemetry, finishTelemetry } = await loadTelemetry();
     try {
       if (opts.output !== 'cli' && opts.output !== 'json') {
         throw new Error(`Invalid --output value: "${opts.output}" (must be cli or json)`);
@@ -665,6 +905,7 @@ program
 
       const { analyzeText } = await import('./lsp/analyze-text.js');
       const fileConfig = await loadConfigFile(process.cwd());
+      beginTelemetry('explain', await resolveProjectTelemetry(process.cwd(), fileConfig));
       const cliOverrides: Partial<PgfenceConfig> = {
         requireLockTimeout: false,
         requireStatementTimeout: false,
@@ -684,6 +925,17 @@ program
         const risk = check.adjustedRisk ?? check.risk;
         return RISK_ORDER.indexOf(risk) > RISK_ORDER.indexOf(max) ? risk : max;
       }, RiskLevel.SAFE);
+
+      // One call site covers all four terminal paths below: the JSON return, the
+      // parse-error exit(1), the no-issues return, and the final write.
+      await finishTelemetry({
+        errored: false,
+        format: 'sql',
+        fileCount: 0,
+        pluginCount: 0,
+        rulesMode: telemetryRulesMode(config),
+        findings: telemetryFindings(result.checks, result.policyViolations),
+      });
 
       if (opts.output === 'json') {
         process.stdout.write(JSON.stringify({
@@ -761,6 +1013,7 @@ program
 
       process.stdout.write(lines.join('\n'));
     } catch (err) {
+      await finishTelemetry({ errored: true });
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`pgfence explain error: ${sanitizeError(message)}\n`);
       process.exit(2);
@@ -769,4 +1022,6 @@ program
 
 if (isMainModule) {
   program.parse();
+} else if (launchedAs('pgfence')) {
+  refuseSilentExit(import.meta, 'pgfence');
 }

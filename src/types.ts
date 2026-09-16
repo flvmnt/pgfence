@@ -104,6 +104,8 @@ export interface ExtractionResult {
    * generated statement from voiding analysis of the whole file.
    */
   statements?: string[];
+  /** Format actually used to extract, after `auto` detection. Internal. */
+  format?: PgfenceConfig['format'];
 }
 
 export interface AnalysisResult {
@@ -121,6 +123,8 @@ export interface AnalysisResult {
   extractionWarnings?: ExtractionWarning[];
   /** Table stats if DB connection was provided */
   tableStats?: TableStats[];
+  /** Migration format that produced this result, after `auto` detection. */
+  detectedFormat?: Exclude<PgfenceConfig['format'], 'auto'>;
 }
 
 export interface PgfenceConfig {
@@ -156,6 +160,12 @@ export interface PgfenceConfig {
   knownCustomTypes?: Set<string>;
   /** How CI treats statements that could not be statically analyzed */
   unknownHandling?: 'warn' | 'block';
+  /**
+   * Project-level telemetry setting from .pgfence.toml or .pgfence.json.
+   * Undefined means the project did not configure it, which is deliberately not the
+   * same as `true`: an explicit opt-in has to stay distinguishable from the default.
+   */
+  telemetry?: boolean;
 }
 
 export interface RulesConfig {

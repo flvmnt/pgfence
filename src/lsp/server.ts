@@ -19,8 +19,7 @@ import {
   type Connection,
 } from 'vscode-languageserver';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isEntryPoint, launchedAs, refuseSilentExit } from '../entry-point.js';
 import { analyzeText } from './analyze-text.js';
 import type { AnalyzeTextResult } from './analyze-text.js';
 import {
@@ -337,16 +336,12 @@ export async function startStdioServer(): Promise<void> {
   server.connection.listen();
 }
 
-function isMainModule(moduleUrl: string): boolean {
-  const entryPoint = process.argv[1];
-  if (!entryPoint) return false;
-  return path.resolve(entryPoint) === fileURLToPath(moduleUrl);
-}
-
-if (isMainModule(import.meta.url)) {
+if (isEntryPoint(import.meta)) {
   void startStdioServer().catch((err) => {
     process.stderr.write(`pgfence LSP server failed to start: ${err}\n`);
     process.stderr.write('Use --stdio, --node-ipc, or --socket=<port> to specify transport.\n');
     process.exit(1);
   });
+} else if (launchedAs('pgfence-lsp')) {
+  refuseSilentExit(import.meta, 'pgfence-lsp');
 }

@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
-import { formatCoverageLine, summarizeCoverage } from './coverage.js';
+import { countUnanalyzable, formatCoverageLine, summarizeCoverage } from './coverage.js';
 import { checksForReport } from './checks.js';
 
 type GitLabSeverity = 'info' | 'minor' | 'major' | 'critical' | 'blocker';
@@ -110,6 +110,17 @@ export function reportGitLab(results: AnalysisResult[]): string {
         location: { path, lines: { begin: 1 } },
       }, checkName, syntheticLine++);
     }
+
+    // 'major', not 'info': a file that was never checked has to be able to fail a
+    // realistic GitLab Code Quality threshold.
+    if (result.statementCount === 0 && countUnanalyzable(result) === 0) {
+      pushViolation({
+        description: '0 SQL statements found. Nothing in this file was checked.',
+        check_name: 'pgfence-no-statements',
+        severity: 'major',
+        location: { path, lines: { begin: 1 } },
+      }, 'pgfence-no-statements', syntheticLine++);
+    }
   }
 
   const firstWarningResult = results.find((result) =>
@@ -120,10 +131,11 @@ export function reportGitLab(results: AnalysisResult[]): string {
   );
   const firstWarningLine = firstWarningResult?.extractionWarnings
     ?.find((warning) => typeof warning.line === 'number')?.line;
+  const coverage = summarizeCoverage(results);
   violations.push({
-    description: formatCoverageLine(summarizeCoverage(results)),
+    description: formatCoverageLine(coverage),
     check_name: 'pgfence-coverage-summary',
-    severity: 'info',
+    severity: coverage.analyzedNothing ? 'major' : 'info',
     location: { path: firstPath, lines: { begin: firstWarningLine ?? 1 } },
     fingerprint: fingerprint('pgfence-coverage-summary', firstPath, 'aggregate'),
   });

@@ -67,4 +67,28 @@ runs:
         ARGS+=("--" "${FILES[@]}")
 
         PACKAGE_VERSION=$(node -p "require(process.env.PGFENCE_ACTION_PATH + '/package.json').version")
-        npx --yes "@flvmnt/pgfence@$PACKAGE_VERSION" analyze "${ARGS[@]}"
+
+        # pgfence 0.5.0 through 0.7.0 skip execution entirely when launched through a symlink,
+        # exiting 0 with no output. npx bin entries are symlinks, so this Action was a silent
+        # no-op on those versions: a green migration gate that never analyzed anything.
+        # Install, then resolve to the real file before running. This stays correct once the
+        # CLI guard itself is fixed, so it is safe to leave in place permanently.
+        PGFENCE_HOME="$(mktemp -d)"
+        npm install --prefix "$PGFENCE_HOME" --no-audit --no-fund --silent "@flvmnt/pgfence@$PACKAGE_VERSION"
+        PGFENCE_ENTRY="$(node -p "require('node:fs').realpathSync(process.argv[1])" \
+          "$PGFENCE_HOME/node_modules/@flvmnt/pgfence/dist/index.js")"
+
+        PGFENCE_OUT="$(mktemp)"
+        set +e
+        node "$PGFENCE_ENTRY" analyze "${ARGS[@]}" | tee "$PGFENCE_OUT"
+        PGFENCE_EXIT=${PIPESTATUS[0]}
+        set -e
+
+        # A safety gate that produces no output and exits 0 is indistinguishable from a pass.
+        # Refuse to report success unless pgfence actually said something. This is what turns
+        # the whole class of silent-skip bug into a loud failure rather than a green check.
+        if [ "$PGFENCE_EXIT" -eq 0 ] && [ ! -s "$PGFENCE_OUT" ]; then
+          echo "pgfence exited 0 with no output. Treating as a failure: the gate did not run." >&2
+          exit 1
+        fi
+        exit "$PGFENCE_EXIT"

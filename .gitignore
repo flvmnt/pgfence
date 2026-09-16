@@ -35,9 +35,16 @@ coverage/
 press-releases/
 blog/
 website/
-docs/
+# docs/ is local-only except for the tracked telemetry disclosure, which README.md
+# links by relative path and which therefore has to exist on GitHub.
+docs/*
+!docs/telemetry.md
 src/cloud/
 src/agent/
 tests/cloud/
 tests/agent/
 packages/vscode-pgfence/
+
+# Telemetry worker (deployed separately, never part of the npm package)
+telemetry-worker/node_modules/
+telemetry-worker/.wrangler/

@@ -78,6 +78,11 @@ export async function extractKnexSQLFromSource(
   const rawFunctionNames = new Set<string>();
   const schemaNames = new Set<string>();
   let conditionalDepth = 0;
+  // Whether a query call was RECOGNIZED, not whether one was successfully extracted.
+  // A knex.raw(someVar) that could not be read is a found call that already warned on
+  // its own line; claiming below that no raw call exists would contradict that warning
+  // and inflate the unanalyzable count the coverage line is computed from.
+  let foundQuery = false;
 
   walkNodeWithContext(upFn, {
     enter(node: TSNode) {
@@ -90,6 +95,7 @@ export async function extractKnexSQLFromSource(
       if (node.type !== 'CallExpression') return;
 
       if (isRawCall(node) || isRawFunctionCall(node, rawFunctionNames)) {
+        foundQuery = true;
         const args = node.arguments as TSNode[];
         if (args.length === 0) return;
         const extracted = extractStringLiteral(args[0]);
@@ -117,6 +123,7 @@ export async function extractKnexSQLFromSource(
           });
         }
       } else if (isSchemaBuilderCall(node, schemaNames)) {
+        foundQuery = true;
         // Gap 13: Transpile schema builder calls to SQL
         const result = transpileKnexSchemaCall(node, filePath);
         if (result.sql.length > 0) {
@@ -141,6 +148,25 @@ export async function extractKnexSQLFromSource(
       if (conditionalTypes.has(node.type)) conditionalDepth--;
     },
   });
+
+  // Trust Contract: an up() that yielded no recognized query call is not an empty
+  // migration, it is SQL pgfence could not see. Surfacing it as unanalyzable keeps it
+  // out of a [SAFE] report and inside the --unknown warn/block policy. Sequelize has
+  // had this guard since its extractor landed; these three did not.
+  //
+  // Keyed on foundQuery, exactly as sequelize is, and NOT on queries.length: a file
+  // whose only raw() call is dynamic already carries a warning naming that line, and a
+  // second warning saying no call was found would be factually false and would double
+  // count that one statement in the coverage denominator.
+  if (!foundQuery) {
+    warnings.push({
+      filePath,
+      line: 1,
+      column: 0,
+      message: 'No knex.raw() or schema builder calls found in Knex migration up(); any SQL it runs was not analyzed',
+      unanalyzable: true,
+    });
+  }
 
   return { sql: queries.join(';\n'), warnings, autoCommit, sourceRanges, sourceText: source, statements: queries };
 }

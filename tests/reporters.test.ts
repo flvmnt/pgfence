@@ -88,7 +88,7 @@ describe('Reporter: JSON', () => {
         const output = reportJSON(mockResults);
         const parsed = JSON.parse(output);
 
-        expect(parsed.version).toBe('1.0');
+        expect(parsed.version).toBe('1.1');
         expect(parsed.coverage.totalStatements).toBe(1);
         expect(parsed.coverage.coveragePercent).toBe(100);
         expect(parsed.results[0].filePath).toBe('test.sql');

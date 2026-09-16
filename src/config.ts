@@ -27,6 +27,7 @@ export interface PgfenceConfigFile {
   'enable-rules'?: string[];
   snapshot?: string;
   plugins?: string[];
+  telemetry?: boolean;
 }
 
 const VALID_FORMATS = new Set(['sql', 'typeorm', 'prisma', 'knex', 'drizzle', 'sequelize', 'kysely', 'auto']);
@@ -108,6 +109,12 @@ function validateConfigFile(configPath: string, parsed: PgfenceConfigFile): Pgfe
     expectBoolean(parsed['require-statement-timeout'], 'require-statement-timeout', configPath);
   }
 
+  // `!= null`, never truthiness: `telemetry = false` is the whole point of the key, and
+  // `if (parsed.telemetry)` would make the opt-out a silent no-op.
+  if (parsed.telemetry != null) {
+    expectBoolean(parsed.telemetry, 'telemetry', configPath);
+  }
+
   const unknownHandling = parsed.unknown ?? parsed['unknown-handling'];
   if (unknownHandling != null) {
     const value = expectString(unknownHandling, 'unknown', configPath);
@@ -164,6 +171,10 @@ function isWithinRoot(root: string, candidate: string): boolean {
 /**
  * Load config from .pgfence.toml or .pgfence.json in cwd only.
  * Returns null if no file found.
+ *
+ * The one exception is the `telemetry` key, which `resolveProjectTelemetry` below also
+ * looks for in parent directories up to the repository root, because it is the only key
+ * one person sets on behalf of a whole team.
  */
 export async function loadConfigFile(cwd: string): Promise<PgfenceConfigFile | null> {
   const configDir = await realpath(path.resolve(cwd));
@@ -184,6 +195,62 @@ export async function loadConfigFile(cwd: string): Promise<PgfenceConfigFile | n
     return loadJson(jsonPath);
   }
   return null;
+}
+
+/** Hard stop on the upward walk, so a pathological path can never turn into a long loop. */
+const MAX_CONFIG_WALK_DEPTH = 64;
+
+/**
+ * Resolve the project-level `telemetry` key for the directory pgfence was run in.
+ *
+ * `loadConfigFile` reads the current directory only, which is right for rules, formats and
+ * thresholds: those describe the migrations you are pointing pgfence at. It is wrong for
+ * `telemetry`, which is the one key a team lead sets on behalf of other people. A
+ * `telemetry = false` committed at a monorepo root would otherwise do nothing for anyone
+ * running pgfence from a package subdirectory, and a privacy control that depends on which
+ * directory you happened to be standing in is not a control.
+ *
+ * So this one key, and only this key, is resolved by walking up from `cwd` to the
+ * repository root (the directory holding `.git`), or to the filesystem root when there is
+ * none. The nearest config file that actually sets `telemetry` wins. Nothing else about
+ * config resolution changes.
+ *
+ * Pass `cwdConfig` when the caller already loaded the current directory's config, to avoid
+ * reading it twice; passing it also means "the current directory has been checked", even
+ * when it is null.
+ *
+ * Never throws. A config anywhere up the tree that cannot be read or is malformed resolves
+ * to `false`, because we cannot know whether that repository opted out and telemetry is the
+ * side that must fail closed.
+ */
+export async function resolveProjectTelemetry(
+  cwd: string,
+  cwdConfig?: PgfenceConfigFile | null,
+): Promise<boolean | undefined> {
+  try {
+    if (cwdConfig?.telemetry != null) return cwdConfig.telemetry;
+
+    let dir = path.resolve(cwd);
+    let checked = cwdConfig !== undefined;
+    for (let depth = 0; depth < MAX_CONFIG_WALK_DEPTH; depth += 1) {
+      if (!checked) {
+        const found = await loadConfigFile(dir);
+        if (found?.telemetry != null) return found.telemetry;
+      }
+      checked = false;
+      // The repository root is the last directory the promise "this repo, for everyone on
+      // it" covers, so the walk stops there rather than reaching into a home directory.
+      if (existsSync(path.join(dir, '.git'))) return undefined;
+      const parent = path.dirname(dir);
+      if (parent === dir) return undefined;
+      dir = parent;
+    }
+    return undefined;
+  } catch {
+    // A malformed or unreadable config must never change a command's exit code, and an
+    // unknown project setting must never be read as consent. Fail closed.
+    return false;
+  }
 }
 
 /**
@@ -214,6 +281,9 @@ export function mergeConfig(
     }
     if (fileConfig['require-lock-timeout'] != null) base.requireLockTimeout = fileConfig['require-lock-timeout'];
     if (fileConfig['require-statement-timeout'] != null) base.requireStatementTimeout = fileConfig['require-statement-timeout'];
+    // Left undefined when the project did not set it. `base` deliberately has no
+    // `telemetry: true` default, so an explicit opt-in stays distinguishable from silence.
+    if (fileConfig.telemetry != null) base.telemetry = fileConfig.telemetry;
     if (fileConfig.unknown != null || fileConfig['unknown-handling'] != null) {
       base.unknownHandling = (fileConfig.unknown ?? fileConfig['unknown-handling']) as PgfenceConfig['unknownHandling'];
     }

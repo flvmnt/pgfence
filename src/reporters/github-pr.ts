@@ -59,8 +59,9 @@ export function reportGitHub(results: AnalysisResult[]): string {
   for (const result of results) {
     const checks = checksForReport(result);
     const hasUnanalyzable = result.extractionWarnings?.some((warning) => warning.unanalyzable) ?? false;
-    const displayRisk = hasUnanalyzable ? 'UNANALYZABLE' : result.maxRisk;
-    const emoji = displayRisk === 'UNANALYZABLE' ? ':warning:' : riskEmoji(result.maxRisk);
+    const noStatements = !hasUnanalyzable && result.statementCount === 0;
+    const displayRisk = hasUnanalyzable ? 'UNANALYZABLE' : noStatements ? 'NO STATEMENTS' : result.maxRisk;
+    const emoji = hasUnanalyzable ? ':warning:' : noStatements ? ':grey_question:' : riskEmoji(result.maxRisk);
     lines.push(`### ${renderInline(result.filePath)} ${emoji} ${displayRisk}`);
     lines.push('');
 
@@ -125,6 +126,9 @@ export function reportGitHub(results: AnalysisResult[]): string {
       }
     } else if (hasUnanalyzable) {
       lines.push(':warning: File contains unanalyzable statements requiring manual review.');
+      lines.push('');
+    } else if (result.statementCount === 0) {
+      lines.push(':grey_question: 0 SQL statements found. Nothing in this file was checked.');
       lines.push('');
     } else {
       lines.push(':white_check_mark: No dangerous statements detected.');

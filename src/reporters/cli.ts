@@ -46,8 +46,9 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
 
   for (const result of results) {
     const hasUnanalyzable = result.extractionWarnings?.some(w => w.unanalyzable);
-    const displayRisk = hasUnanalyzable ? 'UNANALYZABLE' : result.maxRisk;
-    const color = displayRisk === 'UNANALYZABLE' ? chalk.yellow : riskColor(result.maxRisk);
+    const noStatements = !hasUnanalyzable && result.statementCount === 0;
+    const displayRisk = hasUnanalyzable ? 'UNANALYZABLE' : noStatements ? 'NO STATEMENTS' : result.maxRisk;
+    const color = hasUnanalyzable || noStatements ? chalk.yellow : riskColor(result.maxRisk);
 
     lines.push('');
     lines.push(chalk.bold(`  ${result.filePath}`) + '  ' + color(`[${displayRisk}]`));
@@ -186,6 +187,11 @@ export function reportCLI(results: AnalysisResult[], config: PgfenceConfig): str
       const hasUnanalyzable = result.extractionWarnings?.some(w => w.unanalyzable);
       if (hasUnanalyzable) {
         lines.push(chalk.yellow('  File contains unanalyzable statements requiring manual review.'));
+      } else if (result.statementCount === 0) {
+        lines.push(chalk.yellow('  0 SQL statements found. Nothing in this file was checked.'));
+        lines.push(chalk.dim('  Empty files, comment-only files, and ORM migrations with no recognized query'));
+        lines.push(chalk.dim('  call all land here. If this no-op is intentional, add a statement such as'));
+        lines.push(chalk.dim('  SELECT 1; so it stays visible in coverage.'));
       } else {
         lines.push(chalk.green('  No dangerous statements detected.'));
       }

@@ -1,0 +1,27 @@
+name = "pgfence-telemetry"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+# No *.workers.dev URL. The only address this Worker answers on is the custom domain
+# below, so there is no second, undocumented endpoint for anyone to find.
+workers_dev = false
+
+# Request logs off. Cloudflare's request logs include the client IP, and the whole point
+# of this receiver is that no IP is ever retained anywhere. Do not turn this on, and do
+# not configure Logpush for this Worker.
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pgfence-telemetry"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+
+[[routes]]
+pattern = "telemetry.pgfence.com"
+custom_domain = true
+
+# Daily retention sweep at 04:17 UTC. See the scheduled handler in src/index.ts and the
+# DELETE at the bottom of queries.sql.
+[triggers]
+crons = ["17 4 * * *"]

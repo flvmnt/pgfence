@@ -17,14 +17,23 @@ echo "Running pgfence safety checks..."
 
 if [ -x ./node_modules/.bin/pgfence ]; then
   ./node_modules/.bin/pgfence analyze --ci --max-risk medium migrations/*.sql
+  status=$?
 elif command -v pgfence >/dev/null 2>&1; then
   pgfence analyze --ci --max-risk medium migrations/*.sql
+  status=$?
 else
   echo "pgfence not found. Install it: npm install -D @flvmnt/pgfence"
   exit 1
 fi
 
-if [ $? -ne 0 ]; then
+# Exit 2 is not a risk finding: pgfence could not do its job (nothing analyzed,
+# bad glob, unreadable config). Raising --max-risk will not help, so say so.
+if [ "$status" -eq 2 ]; then
+  echo "pgfence could not analyze your migrations. Check the output above."
+  exit 1
+fi
+
+if [ "$status" -ne 0 ]; then
   echo "pgfence found dangerous migrations. Fix them or use an exemption."
   exit 1
 fi

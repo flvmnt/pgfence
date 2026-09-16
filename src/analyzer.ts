@@ -325,6 +325,7 @@ export async function analyze(
       statementCount: Math.max(0, stmts.length - unanalyzableParsedStatementCount),
       extractionWarnings: extraction.warnings.length > 0 ? extraction.warnings : undefined,
       tableStats: allTableStats,
+      detectedFormat: extraction.format === 'auto' ? undefined : extraction.format,
     });
   }
 
@@ -502,6 +503,17 @@ export async function extractSQL(
     format = detectFormat(filePath, content);
   }
 
+  // Attach the format that was actually used. It is computed here either way, and
+  // callers (the analyzer's own result, and telemetry through it) otherwise have no way
+  // to know what `auto` resolved to for a given file.
+  const result = await extractForFormat(filePath, format);
+  return { ...result, format };
+}
+
+async function extractForFormat(
+  filePath: string,
+  format: PgfenceConfig['format'],
+): Promise<ExtractionResult> {
   switch (format) {
     case 'sql': {
       const { extractRawSQL } = await import('./extractors/raw-sql.js');

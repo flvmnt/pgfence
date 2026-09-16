@@ -9,7 +9,7 @@
 
 import type { AnalysisResult } from '../types.js';
 import { RiskLevel } from '../types.js';
-import { summarizeCoverage } from './coverage.js';
+import { countUnanalyzable, summarizeCoverage } from './coverage.js';
 import { checksForReport } from './checks.js';
 
 interface SarifLocation {
@@ -145,6 +145,27 @@ function toSarifResults(
     });
   }
 
+  // level 'error', not 'warning': a default GitHub code-scanning gate does not fail on
+  // a warning, and a file that was never checked must not upload as a clean run.
+  if (result.statementCount === 0 && countUnanalyzable(result) === 0) {
+    const noStmtRuleId = 'pgfence-no-statements';
+    if (!rules.has(noStmtRuleId)) {
+      rules.set(noStmtRuleId, {
+        id: noStmtRuleId,
+        name: 'PgfenceNoStatements',
+        shortDescription: { text: 'File produced no SQL statements' },
+        helpUri: 'https://pgfence.com/docs/ci-cd#nothing-analyzed',
+        properties: { tags: ['postgres', 'migration', 'coverage'] },
+      });
+    }
+    sarifResults.push({
+      ruleId: noStmtRuleId,
+      level: 'error',
+      message: { text: '0 SQL statements found. Nothing in this file was checked.' },
+      locations: [{ physicalLocation: { artifactLocation: { uri, uriBaseId: '%SRCROOT%' } } }],
+    });
+  }
+
   return sarifResults;
 }
 
@@ -177,6 +198,8 @@ export function reportSARIF(results: AnalysisResult[]): string {
             dynamicStatements: coverage.unanalyzableStatements,
             dynamicStatementLines: coverage.unanalyzableLines,
             coveragePercent: coverage.coveragePercent,
+            analyzedNothing: coverage.analyzedNothing,
+            filesWithNoStatements: coverage.filesWithNoStatements,
           },
         },
       },

@@ -1,0 +1,16 @@
+{
+  "name": "pgfence-telemetry-worker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Receiver for pgfence anonymous usage telemetry. Not published, not part of the pgfence npm package.",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "schema": "wrangler d1 execute pgfence-telemetry --remote --file=./schema.sql",
+    "tail": "wrangler tail --format pretty"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "wrangler": "^4.0.0"
+  }
+}

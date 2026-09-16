@@ -315,7 +315,7 @@ printf '%s\\n' "\${FILES[@]}"
     it('runs json output analysis', async () => {
         const fixture = path.join(fixturesDir, 'safe-migration.sql');
         const { stdout } = await execPromise(cliCommand(`analyze --output json "${fixture}"`));
-        expect(stdout).toContain('"version": "1.0"');
+        expect(stdout).toContain('"version": "1.1"');
     });
 
     it('runs github output analysis', async () => {

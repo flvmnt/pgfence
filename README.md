@@ -50,6 +50,7 @@ Works with **raw SQL**, **TypeORM**, **Prisma**, **Knex**, **Drizzle**, and **Se
 - The tracked rule-family reference lives in [checks-overview.md](checks-overview.md), and the concrete risky-migration walkthrough lives in [examples/pr-review-demo](examples/pr-review-demo/README.md).
 - [RULES.md](RULES.md) is a curated single-file rule catalog. Drop it into your repo so your in-editor coding assistant learns pgfence conventions and suggests safe migrations from the first keystroke.
 - `pgfence explain "<statement>"` returns the lock mode, what it blocks, and the safe rewrite for a single SQL statement (handy in Slack/Discord threads).
+- pgfence sends an anonymous usage count so we can tell how many people actually use it. No SQL, file names, paths, table or column names, or rule ids, ever. Turn it off with `PGFENCE_TELEMETRY=0`, `DO_NOT_TRACK=1`, or `pgfence telemetry disable`. Every field it does send is documented in [docs/telemetry.md](docs/telemetry.md).
 
 ## External Mentions
 
@@ -139,6 +140,23 @@ When dynamic SQL is detected, pgfence surfaces warnings on the supported extract
 
 To explicitly acknowledge a statement pgfence cannot analyze, add `-- pgfence-ignore` before it, see [Suppressing warnings](#suppressing-warnings).
 
+## Telemetry
+
+pgfence sends an anonymous usage count, because npm download numbers cannot answer the one question that matters to a solo-maintained tool: how many real people use it, as opposed to CI runners and registry mirrors. An event is 25 fields, every one a number, a boolean, or a value from a closed list. A random install id, the command, the pgfence/Node/OS versions, whether the run was in CI, how long it took, and counts of findings by severity.
+
+SQL, file names, paths, table names, column names, rule ids, repository names, hostnames, usernames, environment variable values and database URLs are never collected. No IP address, and nothing derived from one, is ever put in a payload, read by the receiver or stored: the endpoint is served through Cloudflare, which sees the connection's source address as any HTTPS server does, and the receiver reads no header beyond `content-length` and has no column that could hold one. The first run on a machine prints a notice and sends nothing at all. The language server never sends anything.
+
+```bash
+PGFENCE_TELEMETRY=0 pgfence analyze migrations/*.sql  # one run, or one shell
+export DO_NOT_TRACK=1                                 # machine wide, cross vendor
+pgfence telemetry disable                             # this machine, persisted
+echo 'telemetry = false' >> .pgfence.toml             # this repo, for everyone on it
+```
+
+Any one of those four is sufficient on its own. The config key is read from the directory you run pgfence in and from every parent up to the repository root, so committing it once at the root of a monorepo covers every package in it. `rm -rf ~/.config/pgfence`, like `pgfence telemetry reset`, erases the install id and anything queued, but it is a reset and not an opt-out: the next interactive run mints a new id, prints the notice again and carries on.
+
+`pgfence telemetry status` prints the current state, and `PGFENCE_TELEMETRY_DEBUG=1` prints the exact payload to stderr without sending it. Every field, real sample payloads, the state file path per platform, and the honest limits of the resulting numbers are in [docs/telemetry.md](docs/telemetry.md) and at [pgfence.com/telemetry](https://pgfence.com/telemetry).
+
 ## Alternatives
 
 Other tools in this space worth knowing about:
@@ -211,8 +229,10 @@ pgfence init --prisma-github-action
 This writes `.github/workflows/pgfence-prisma.yml`. The workflow runs on pull requests that touch `prisma/migrations/**/migration.sql`, finds every Prisma `migration.sql` file, and checks them with:
 
 ```bash
-npx --yes @flvmnt/pgfence@0.6.1 analyze --format prisma --ci --max-risk medium
+npx --yes @flvmnt/pgfence@0.8.0 analyze --format prisma --ci --max-risk medium
 ```
+
+The generated workflow pins the version of pgfence that wrote it, so the number above is whatever `pgfence init` you ran, not a fixed value.
 
 The command refuses to overwrite an existing `pgfence-prisma.yml`, so you can review or rename your current workflow first.
 
@@ -464,11 +484,13 @@ Use a concrete migration path or a glob here. The composite action expands `path
 
 ```yaml
 - name: Check migration safety
-  uses: flvmnt/pgfence@v0.6.1
+  uses: flvmnt/pgfence@v1
   with:
     path: migrations/add-users.sql
     max-risk: medium
 ```
+
+`v1` is a moving major tag, so it picks up fixes to the action itself. Pin `@v0.8.0` if you want it frozen. Do not pin any tag older than `v0.8.0`: every earlier tag runs the CLI through an npx symlink, and CLI versions 0.5.0 through 0.7.0 skipped analysis entirely when launched that way, so the gate reported success without checking anything.
 
 ### GitHub PR Comments
 

@@ -72,6 +72,11 @@ export async function extractKyselySQLFromSource(
   const conditionalTypes = new Set(['IfStatement', 'ConditionalExpression', 'SwitchCase']);
   const schemaNames = new Set<string>();
   let conditionalDepth = 0;
+  // Whether a query call was RECOGNIZED, not whether one was successfully extracted.
+  // An interpolated sql`` template already warned on its own line; claiming below that
+  // no call exists would contradict that warning and inflate the unanalyzable count the
+  // coverage line is computed from.
+  let foundQuery = false;
 
   walkNodeWithContext(upFn, {
     enter(node: TSNode) {
@@ -84,6 +89,7 @@ export async function extractKyselySQLFromSource(
       if (node.type !== 'CallExpression') return;
 
       if (isSqlExecuteCall(node)) {
+        foundQuery = true;
         const tte = (node.callee as TSNode).object as TSNode;
         const extracted = extractTaggedTemplateLiteral(tte);
         if (extracted !== null) {
@@ -114,6 +120,7 @@ export async function extractKyselySQLFromSource(
 
       const chain = collectSchemaChain(node, schemaNames);
       if (chain) {
+        foundQuery = true;
         const result = transpileKyselySchemaChain(chain, filePath);
         if (result.sql.length > 0) {
           queries.push(...result.sql);
@@ -147,6 +154,25 @@ export async function extractKyselySQLFromSource(
       if (conditionalTypes.has(node.type)) conditionalDepth--;
     },
   });
+
+  // Trust Contract: an up() that yielded no recognized query call is not an empty
+  // migration, it is SQL pgfence could not see. Surfacing it as unanalyzable keeps it
+  // out of a [SAFE] report and inside the --unknown warn/block policy. Sequelize has
+  // had this guard since its extractor landed; these three did not.
+  //
+  // Keyed on foundQuery, exactly as sequelize is, and NOT on queries.length: a file
+  // whose only sql`` template is interpolated already carries a warning naming that
+  // line, and a second warning saying no call was found would be factually false and
+  // would double count that one statement in the coverage denominator.
+  if (!foundQuery) {
+    warnings.push({
+      filePath,
+      line: 1,
+      column: 0,
+      message: 'No sql`...`.execute() or schema builder calls found in Kysely migration up(); any SQL it runs was not analyzed',
+      unanalyzable: true,
+    });
+  }
 
   return { sql: queries.join(';\n'), warnings, sourceRanges, sourceText: source, statements: queries };
 }

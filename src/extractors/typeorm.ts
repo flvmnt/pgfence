@@ -110,6 +110,11 @@ export async function extractTypeORMSQLFromSource(
   const managerNames = new Set<string>();
   const queryFunctionNames = new Set<string>();
   let conditionalDepth = 0;
+  // Whether a query call was RECOGNIZED, not whether one was successfully extracted.
+  // A dynamic queryRunner.query(`...${x}`) or a builder call already warned on its own
+  // line; claiming below that no call exists would contradict that warning and inflate
+  // the unanalyzable count the coverage line is computed from.
+  let foundQuery = false;
 
   walkNodeWithContext(upInfo.body, {
     enter(node: TSNode) {
@@ -129,6 +134,7 @@ export async function extractTypeORMSQLFromSource(
           (callee.property as TSNode)?.type === 'Identifier' &&
           TYPEORM_BUILDER_METHODS.has((callee.property as TSNode).name as string)
         ) {
+          foundQuery = true;
           const methodName = (callee.property as TSNode).name as string;
           const loc = node.loc?.start ?? { line: 0, column: 0 };
           warnings.push({
@@ -143,6 +149,7 @@ export async function extractTypeORMSQLFromSource(
 
         // Check for queryRunner.query() calls
         if (isQueryRunnerQuery(node, queryRunnerNames, managerNames) || isQueryFunctionCall(node, queryFunctionNames)) {
+          foundQuery = true;
           const args = node.arguments as TSNode[];
           if (args.length === 0) return;
 
@@ -178,6 +185,25 @@ export async function extractTypeORMSQLFromSource(
       if (conditionalTypes.has(node.type)) conditionalDepth--;
     },
   });
+
+  // Trust Contract: an up() that yielded no recognized query call is not an empty
+  // migration, it is SQL pgfence could not see. Surfacing it as unanalyzable keeps it
+  // out of a [SAFE] report and inside the --unknown warn/block policy. Sequelize has
+  // had this guard since its extractor landed; these three did not.
+  //
+  // Keyed on foundQuery, exactly as sequelize is, and NOT on queries.length: a file
+  // whose only query() call is dynamic, or which uses the builder API, already carries a
+  // warning naming that line, and a second warning saying no call was found would be
+  // factually false and would double count that one statement in the coverage denominator.
+  if (!foundQuery) {
+    warnings.push({
+      filePath,
+      line: 1,
+      column: 0,
+      message: 'No queryRunner.query() calls found in TypeORM migration up(); any SQL it runs was not analyzed',
+      unanalyzable: true,
+    });
+  }
 
   return { sql: queries.join(';\n'), warnings, autoCommit: upInfo.autoCommit, sourceRanges, sourceText: source, statements: queries };
 }
