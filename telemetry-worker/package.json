@@ -7,7 +7,8 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "schema": "wrangler d1 execute pgfence-telemetry --remote --file=./schema.sql",
-    "tail": "wrangler tail --format pretty"
+    "tail": "wrangler tail --format pretty",
+    "stats": "./stats.sh"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",
