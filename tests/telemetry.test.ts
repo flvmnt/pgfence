@@ -1237,6 +1237,7 @@ describe('telemetry delivery and network failure', () => {
     try {
       await seedState(root);
       const restore = applyEnv(telemetryEnvPatch(root, { PGFENCE_TELEMETRY_ENDPOINT: receiver.endpoint }));
+      let settled: boolean;
       try {
         // Run 1 queues, and opens no socket.
         beginTelemetry('analyze', undefined);
@@ -1248,6 +1249,12 @@ describe('telemetry delivery and network failure', () => {
         beginTelemetry('analyze', undefined);
         expect(await receiver.waitFor(1)).toBe(true);
         await finishTelemetry(sampleOutcome);
+
+        // Inside the patch on purpose. The spool write that commits the delivered
+        // batch happens on a tick this test does not own, and restoring the
+        // environment first puts VITEST and NODE_ENV=test back, which disable
+        // telemetry and strand the commit. See the refused-endpoint test below.
+        settled = await waitUntil(() => spoolEvents(root).length === 1);
       } finally {
         restore();
       }
@@ -1258,7 +1265,7 @@ describe('telemetry delivery and network failure', () => {
       expect(receiver.envelopes[0].v).toBe(1);
 
       // The delivered batch is committed, so only run 2's own event is left queued.
-      expect(await waitUntil(() => spoolEvents(root).length === 1)).toBe(true);
+      expect(settled).toBe(true);
       const attempt = readAttempt(spoolDirOf(root));
       expect(attempt.fails).toBe(0);
       expect(attempt.nextAt).toBeGreaterThan(Date.now());
@@ -1276,11 +1283,20 @@ describe('telemetry delivery and network failure', () => {
 
       const restore = applyEnv(telemetryEnvPatch(root, { PGFENCE_TELEMETRY_ENDPOINT: REFUSED_ENDPOINT }));
       let elapsed: number;
+      let recorded: boolean;
       try {
         const started = Date.now();
         beginTelemetry('analyze', undefined);
         elapsed = Date.now() - started;
         await finishTelemetry(sampleOutcome);
+
+        // Waiting INSIDE the patch is load bearing. The flush is fire and forget,
+        // so it lands on a tick this test does not own, and restoring the
+        // environment first puts VITEST and NODE_ENV=test back, which disable
+        // telemetry outright. A flush that had not finished yet was then killed
+        // by the restore rather than by anything under test, so the assertion
+        // failed whenever the machine was busy enough to lose that race.
+        recorded = await waitUntil(() => readAttempt(spoolDirOf(root)).fails === 1);
       } finally {
         restore();
       }
@@ -1289,7 +1305,7 @@ describe('telemetry delivery and network failure', () => {
       expect(elapsed).toBeLessThan(150);
 
       // The failure is recorded as backoff, and the undelivered event stays queued.
-      expect(await waitUntil(() => readAttempt(spoolDirOf(root)).fails === 1)).toBe(true);
+      expect(recorded).toBe(true);
       const attempt = readAttempt(spoolDirOf(root));
       expect(attempt.fails).toBe(1);
       expect(attempt.nextAt).toBeGreaterThanOrEqual(Date.now() + 3_500_000);
