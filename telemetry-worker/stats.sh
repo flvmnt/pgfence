@@ -34,3 +34,19 @@ FROM (SELECT install_id, COUNT(DISTINCT day) AS active_days FROM events
 
 q "TOTALS" "SELECT count(*) AS events, count(DISTINCT install_id) AS installs,
   min(day) AS first_day, max(day) AS last_day FROM events;"
+
+# The receiver is unauthenticated by necessity: an anonymous client cannot prove it is
+# genuine, so anyone can POST a well-formed event. Nothing can be stolen (the schema has
+# no column that could hold anything sensitive), but the counts can be inflated. These
+# two queries make that visible rather than preventing it.
+q "POISONING CHECK: install ids by volume (a real human is single digits/day)" "SELECT
+  install_id, COUNT(*) AS events, COUNT(DISTINCT day) AS days,
+  MIN(day) AS first_day, MAX(day) AS last_day
+FROM events WHERE received_at >= (unixepoch() - 7 * 86400) * 1000
+GROUP BY install_id ORDER BY events DESC LIMIT 5;"
+
+q "POISONING CHECK: busiest hours (a flood shows up as one hour)" "SELECT
+  strftime('%Y-%m-%d %H:00', received_at/1000, 'unixepoch') AS hour,
+  COUNT(*) AS events, COUNT(DISTINCT install_id) AS installs
+FROM events WHERE received_at >= (unixepoch() - 7 * 86400) * 1000
+GROUP BY hour ORDER BY events DESC LIMIT 5;"
