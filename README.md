@@ -173,7 +173,7 @@ Other tools in this space worth knowing about:
 | [pgroll](https://github.com/xataio/pgroll) | Go | Teams that need a migration executor | Migration **execution** with rollback support |
 | **pgfence** | **TypeScript** | **Node.js and TypeScript teams using SQL or ORMs** | **Multi-ORM migration safety, risk scoring, and safe rewrite guidance** |
 
-pgfence analyzes ORM migration files (TypeORM, Prisma, Knex, Drizzle, Sequelize) directly, which is the wedge over SQL-only linters. It also provides DB-size-aware risk scoring and safe rewrite guidance for common migration patterns.
+pgfence analyzes ORM migration files (TypeORM, Prisma, Knex, Kysely, Drizzle, Sequelize) directly, which is the wedge over SQL-only linters. It also provides DB-size-aware risk scoring and safe rewrite guidance for common migration patterns.
 
 pgroll is not a competitor: it is a runtime executor (runs migrations with automatic rollback). pgfence analyzes before you run; pgroll handles how you run. They are complementary.
 
