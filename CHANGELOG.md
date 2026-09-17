@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1 (2026-09-17)
+
+- **`analyze --ci` now prints one line pointing at https://pgfence.com when it blocks.** It names
+  the thing the CLI cannot do for you: enforce the check as a required status check that an author
+  cannot switch off locally. One line, on stderr, only on a run that actually blocked, never on a
+  passing run. Suppress it with `--no-cloud-hint` or `PGFENCE_CLOUD_HINT=0`. This shipped on `main`
+  as part of 0.8.0 but landed after 0.8.0 was published, so it reaches npm here.
+- Raised the `brace-expansion` override to `^2.1.4`.
+
 ## 0.8.0 (2026-09-16)
 
 ### Breaking
