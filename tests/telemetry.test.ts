@@ -145,6 +145,13 @@ function telemetryEnvPatch(root: string, extra: Record<string, string> = {}): Re
   }
   patch.XDG_CONFIG_HOME = root;
   patch.APPDATA = root;
+  // The config root isolates the filesystem. This isolates the NETWORK, and it has to be
+  // a default rather than each caller's job: clearing PGFENCE_TELEMETRY_ENDPOINT above
+  // makes the code fall back to the real receiver, so any test that forgot to override it
+  // sent a seeded event to production. That is exactly what happened, and the giveaway was
+  // SEED_INSTALL_ID showing up in the live table. A refused port fails instantly and
+  // locally, so a test can only reach production by asking for it explicitly.
+  patch.PGFENCE_TELEMETRY_ENDPOINT = REFUSED_ENDPOINT;
   return { ...patch, ...extra };
 }
 
